@@ -1206,7 +1206,7 @@ impl Plugins {
             match (row, m) {
                 (Some(row), crate::plugin_window::LinkMsg::Note(k, v, on)) => out.push(Request::Note(row, k, v, on)),
                 (Some(row), crate::plugin_window::LinkMsg::Automate(i)) => out.push(Request::Automate(row, i)),
-                (_, crate::plugin_window::LinkMsg::Audio(_)) => out.extend(os_hostlink::take_audio().into_iter().map(|(p, ch)| Request::Audio(p, ch))),
+                (_, crate::plugin_window::LinkMsg::Audio(_)) => out.extend(os_hostlink::take_audio().into_iter().map(|(p, to)| Request::Audio(p, to != os_hostlink::AudioTo::Playlist))),
                 _ => {}
             }
         }
