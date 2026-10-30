@@ -50,7 +50,7 @@ fifteen effects; these are the gaps a project made in FL Studio runs into most.
 
 Greyed-out controls and partial features. These can land alongside the blockers.
 
-- [ ] **Event editor window.** Edit events is greyed out in five menus (playlist, channel rack, parameter menus)
+- [x] **Event editor window.** Edit events is greyed out in five menus (playlist, channel rack, parameter menus)
 - [ ] **Undo for a plugin editor's own changes**
 - [ ] **Undo for mixer track commands.** Mute, routing, names and slots are not in the history yet
 - [x] **Undo for the remaining edits.** A generator inserted higher up the rack, Replace, project info and the

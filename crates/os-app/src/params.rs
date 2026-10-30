@@ -279,6 +279,9 @@ fn parameter_items(s: &State, param: Option<(usize, usize)>, create: Option<(u32
         Some(ch) => PItem::new("Edit automation clip...", Cmd::Param(PCmd::EditClip(ch))),
         None => PItem::new("Edit automation clip...", Cmd::Nothing).off(),
     };
+    // spec: ui/event-editor.md §1
+    let range = param.and_then(|(key, index)| s.params.plugin(key).and_then(|p| p.lock().ok()?.param_info(index))).map(|i| (i.min, i.max));
+    let events = crate::events::menu_item(create.as_ref(), range);
     let create = match create {
         Some((tgt, name, v)) => PItem::new("Create automation clip", Cmd::CreateAutomation(tgt, name, v)),
         None => PItem::new("Create automation clip", Cmd::Nothing).off(),
@@ -293,10 +296,10 @@ fn parameter_items(s: &State, param: Option<(usize, usize)>, create: Option<(u32
     };
     let set = param.map(|(key, index)| set_items(s, key, index)).filter(|v| !v.is_empty());
     let mut v = vec![
-        // Lemon Studio has no event editor yet; FL showed the other two disabled.
-        PItem::not_yet("Edit events"),
-        PItem::new("Edit events in new window", Cmd::Nothing).off(),
-        PItem::new("Edit events in piano roll", Cmd::Nothing).off(),
+        // FL showed the other two disabled.
+        events,
+        PItem::new("Edit automation in a window", Cmd::Nothing).off(),
+        PItem::new("Edit automation in piano roll", Cmd::Nothing).off(),
         init,
         delete,
         PItem::sep(),
@@ -781,9 +784,10 @@ mod tests {
     fn parameter_menu_set_edit_clip_and_link() {
         let (mut a, key) = eq_app();
         let m = row_menu(&mut a, key, 35);
-        let ev = entry(&m, "Edit events");
-        assert!(!ev.enabled && matches!(ev.cmd, Cmd::NotYet(_)));
-        for label in ["Edit events in new window", "Edit events in piano roll"] {
+        // spec: ui/event-editor.md §1: the parameter's events, in the range the plugin states.
+        let ev = entry(&m, "Edit automation");
+        assert!(ev.enabled && matches!(ev.cmd, Cmd::EditEvents(_, _, _, Some(_))), "{:?}", ev.cmd);
+        for label in ["Edit automation in a window", "Edit automation in piano roll"] {
             let i = entry(&m, label);
             assert!(!i.enabled && i.cmd == Cmd::Nothing, "{label}");
         }
