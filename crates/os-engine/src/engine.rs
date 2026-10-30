@@ -3382,6 +3382,8 @@ impl Engine {
                 }
             }
             let rate = self.rate;
+            // The tick being mixed is the one before `tick` (controllers that work on the song's ticks).
+            let tick = (self.tick.saturating_sub(1), self.ppq);
             let (dry, l, r) = (&mut self.fx_dry, &mut self.scratch.0, &mut self.scratch.1);
             let busy = (&mut self.busy_until, self.busy_wait, self.exporting, &mut self.missed);
             let bus = &mut self.bus;
@@ -3394,7 +3396,7 @@ impl Engine {
                     let key = feed(fx.key).map(|k| (k, &mut *key_buf));
                     let main = feed(fx.main).map(|k| (k, &mut *main_buf));
                     let extra = (t, &track.routes[..], &mut bus[..]);
-                    run_slot(fx, &mut buf, rate, limit, song, dry, l, r, (&mut *busy.0, busy.1, busy.2, &mut *busy.3), &mut moved, extra, (key, main));
+                    run_slot(fx, &mut buf, rate, limit, (song, tick), dry, l, r, (&mut *busy.0, busy.1, busy.2, &mut *busy.3), &mut moved, extra, (key, main));
                 }
             }
             track.eq.process(&mut buf);
@@ -3816,7 +3818,7 @@ fn run_slot(
     buf: &mut [f32],
     rate: u32,
     limit: f32,
-    song: &TransportInfo,
+    (song, tick): (&TransportInfo, (u64, u16)),
     dry: &mut Vec<f32>,
     l: &mut Vec<f32>,
     r: &mut Vec<f32>,
@@ -3862,6 +3864,7 @@ fn run_slot(
             if fresh {
                 e.reset();
             }
+            e.transport(song, tick);
             match key {
                 Some(key) => e.process_keyed(buf, key),
                 None => e.process(buf),
