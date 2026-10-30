@@ -1164,6 +1164,9 @@ pub struct State {
     /// The current theme's rule for the colours of new audio and automation clips' channels (`App::clip_colors`, kept
     /// up to date by `App::follow_settings`).
     pub clip_colors: crate::clip_colors::ClipColors,
+    /// A setting inside a hosted plugin changed since the project was opened or saved (its knobs, its own window): the
+    /// project counts as unsaved, as the plugin's state is saved with it.
+    pub plugin_edited: bool,
 }
 
 impl State {
@@ -1538,6 +1541,7 @@ impl App {
                 dialogs: Vec::new(),
                 credits: Default::default(),
                 clip_colors: Default::default(),
+                plugin_edited: false,
             },
             theme: load_theme(),
             transport,
@@ -1989,12 +1993,12 @@ impl App {
     /// The project as it is now counts as saved (opened, saved, new).
     pub(crate) fn mark_saved(&mut self) {
         self.saved = (self.state.project.clone(), self.state.tempo);
+        self.state.plugin_edited = false;
     }
 
-    /// Whether the project changed since it was last opened, saved or created. Settings kept inside hosted plugins are
-    /// not compared.
+    /// Whether the project changed since it was last opened, saved or created, a hosted plugin's settings included.
     pub fn unsaved(&self) -> bool {
-        self.saved.0 != self.state.project || self.saved.1 != self.state.tempo
+        self.saved.0 != self.state.project || self.saved.1 != self.state.tempo || self.state.plugin_edited
     }
 
     /// The system asks the window to close (its close shortcut, a taskbar or dock). The dialog-like windows drawn
