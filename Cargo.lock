@@ -2086,6 +2086,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lemon-peak-controller"
+version = "0.6.1"
+dependencies = [
+ "lemon-small-fx",
+ "nih_plug",
+ "os-engine",
+ "os-plugkit",
+]
+
+[[package]]
 name = "lemon-phaser"
 version = "0.6.1"
 dependencies = [
@@ -3215,6 +3225,7 @@ dependencies = [
  "lemon-limiter",
  "lemon-mini",
  "lemon-parametric-eq-2",
+ "lemon-peak-controller",
  "lemon-phaser",
  "lemon-pluck",
  "lemon-reverb",
@@ -3286,7 +3297,9 @@ dependencies = [
  "clap-sys 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "lemon-limiter",
  "lemon-parametric-eq-2",
+ "lemon-peak-controller",
  "lemon-sampler",
+ "lemon-small-fx",
  "libloading 0.8.9",
  "os-engine",
  "os-host",

@@ -476,6 +476,7 @@ Mango Studio is a Cargo workspace of focused crates:
 | [`lemon-flanger`](plugins/lemon-flanger) | Mango Flanger effect (VST3 + CLAP) |
 | [`lemon-phaser`](plugins/lemon-phaser) | Mango Phaser effect (VST3 + CLAP) |
 | [`mango-beat`](plugins/mango-beat) | Mango Beat effect, a Gross Beat-style time manipulator (VST3 + CLAP) |
+| [`lemon-peak-controller`](plugins/lemon-peak-controller) | Mango Peak Controller: a peak follower and LFO whose outputs drive linked controls (VST3 + CLAP) |
 | [`citrus`](plugins/citrus) | Citrus instrument, a six-operator synthesizer (VST3 + CLAP) |
 | [`tesla`](plugins/tesla) | Tesla, the audio editor and recorder (VST3 + CLAP) |
 | [`press`](plugins/press) | Press effect, a multiband maximiser (VST3 + CLAP) |

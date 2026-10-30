@@ -922,7 +922,7 @@ mod gui {
 mod tests {
     use super::*;
     use crate::tests::SPECS;
-    use crate::{balance, chorus, fast_distortion, filter, flanger, phaser, soft_clipper, stereo_enhancer, stereo_shaper, twelve, transient_processor, vocoder, Control};
+    use crate::{balance, chorus, fast_distortion, filter, flanger, peak_controller, phaser, soft_clipper, stereo_enhancer, stereo_shaper, twelve, transient_processor, vocoder, Control};
 
     fn logic(spec: &'static Spec) -> Logic {
         let mut l = Logic::new(spec, Arc::new(FxParams::new(spec)), Arc::new(Shared::default()), None);
@@ -1162,7 +1162,7 @@ mod tests {
             }
             pm.save_png(std::path::Path::new(&dir).join(format!("{name}.png"))).unwrap();
         };
-        let settings: [(&Spec, &str, &[(&str, i32)]); 12] = [
+        let settings: [(&Spec, &str, &[(&str, i32)]); 13] = [
             (soft_clipper::SPEC, "soft_clipper", &[("threshold", 64), ("post", 150)]),
             (fast_distortion::SPEC, "fast_distortion", &[("pre", 192), ("threshold", 3), ("type", 1), ("mix", 100), ("post", 110)]),
             (balance::SPEC, "balance", &[("balance", -70), ("volume", 220)]),
@@ -1179,6 +1179,7 @@ mod tests {
             (phaser::SPEC, "phaser", &[("sweep", 4000), ("range", 1024), ("stages", 15), ("feedback", 850), ("dry_wet", 0), ("gain", 2500)]),
             (vocoder::SPEC, "vocoder", &[("car", 8000), ("noise", 6400), ("mod_input", 1), ("car_input", 0), ("rms", 1), ("order", 4), ("bands", 16), ("lr", 1)]),
             (twelve::SPEC, "twelve", &[("tune", 30), ("in", 60), ("route", 7), ("crush", 1)]),
+            (peak_controller::SPEC, "peak_controller", &[("base", 13568), ("amount", -120), ("decay", 30), ("lfo_amount", 200), ("speed", 13000), ("shape", 3), ("ramp", 1)]),
         ];
         for (spec, name, values) in settings {
             let mut l = logic(spec);
