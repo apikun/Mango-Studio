@@ -180,6 +180,10 @@ pub enum Request {
     /// playlist.
     #[cfg_attr(not(plugin_windows), allow(dead_code))]
     Audio(String, bool),
+    /// Notes a Lemon plugin sent for its channel's current pattern (host link `Notes`, Tesla's Convert to score): row,
+    /// notes. An effect's (a mixer slot's key) go to the selected channel.
+    #[cfg_attr(not(plugin_windows), allow(dead_code))]
+    Notes(usize, Vec<os_hostlink::NoteOut>),
     /// The window was clicked (or docked / detached): it goes to the front of the app's window stack.
     Raise(usize),
     /// An undo key was pressed in the plugin's own window (`FrameEvent::Undo`).
@@ -1206,7 +1210,9 @@ impl Plugins {
             match (row, m) {
                 (Some(row), crate::plugin_window::LinkMsg::Note(k, v, on)) => out.push(Request::Note(row, k, v, on)),
                 (Some(row), crate::plugin_window::LinkMsg::Automate(i)) => out.push(Request::Automate(row, i)),
-                (_, crate::plugin_window::LinkMsg::Audio(_)) => out.extend(os_hostlink::take_audio().into_iter().map(|(p, ch)| Request::Audio(p, ch))),
+                (_, crate::plugin_window::LinkMsg::Audio(_)) => out.extend(os_hostlink::take_audio().into_iter().map(|(p, to)| Request::Audio(p, to != os_hostlink::AudioTo::Playlist))),
+                (Some(row), crate::plugin_window::LinkMsg::Notes(token)) => out.push(Request::Notes(row, os_hostlink::take_notes(token))),
+                (None, crate::plugin_window::LinkMsg::Notes(token)) => drop(os_hostlink::take_notes(token)),
                 _ => {}
             }
         }
