@@ -1,6 +1,6 @@
 // Copyright (C) 2026 mikobuntu
 // SPDX-License-Identifier: GPL-3.0-or-later
-// This file is part of Mango Studio: https://github.com/mikobuntu/Mango-Studio-Mikobuntu
+// This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
 //! Renders the Mango Sfxr editor offscreen:
 //! `cargo run -p mango-sfxr --example shot -- out.png [roll] [x,y]`.

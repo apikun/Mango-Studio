@@ -1,6 +1,6 @@
 // Copyright (C) 2026 mikobuntu
 // SPDX-License-Identifier: GPL-3.0-or-later
-// This file is part of Mango Studio: https://github.com/mikobuntu/Mango-Studio-Mikobuntu
+// This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
 //! Mango Sfxr's synthesis: a Rust port of sfxr, drPetter's retro sound effect generator, following
 //! LMMS's port of it (the Sfxr instrument, Wong Cho Ching) for the parameter scalings and the preset

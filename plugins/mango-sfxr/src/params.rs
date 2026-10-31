@@ -1,6 +1,6 @@
 // Copyright (C) 2026 mikobuntu
 // SPDX-License-Identifier: GPL-3.0-or-later
-// This file is part of Mango Studio: https://github.com/mikobuntu/Mango-Studio-Mikobuntu
+// This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
 //! Mango Sfxr's parameters: sfxr's full slider set (LMMS's models, one to one), plus the waveform
 //! and an output volume.

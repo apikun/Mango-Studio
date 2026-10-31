@@ -1,6 +1,6 @@
 // Copyright (C) 2026 mikobuntu
 // SPDX-License-Identifier: GPL-3.0-or-later
-// This file is part of Mango Studio: https://github.com/mikobuntu/Mango-Studio-Mikobuntu
+// This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
 //! Mango Sfxr: Mango Studio's retro sound effect generator (a port of drPetter's sfxr, after LMMS's
 //! Sfxr instrument) as a VST3 / CLAP plugin (nih-plug). A key press rolls a fresh effect from the
