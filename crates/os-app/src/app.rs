@@ -2833,6 +2833,10 @@ impl App {
                         self.sample_from_plugin(path, channel);
                         continue;
                     }
+                    Request::Notes(row, notes) => {
+                        self.notes_from_plugin(row, &notes);
+                        continue;
+                    }
                     Request::NotAvailable(name) => {
                         self.state.message = Some(off_text(name));
                         self.invalidate();
@@ -4699,6 +4703,31 @@ impl App {
         s.rack.select_only(row);
         s.piano.dirty = true;
         s.message = Some(format!("{} loaded in Mango Sampler", stem.unwrap_or_default()));
+        self.invalidate();
+    }
+
+    /// Notes a plugin sent for channel row `row` (Tesla's Convert to score): they replace the channel's notes in the
+    /// current pattern, positions rounded to the project's ticks, as one undo step. An effect's notes (`row` a mixer
+    /// slot's key) go to the selected channel.
+    pub(crate) fn notes_from_plugin(&mut self, row: usize, notes: &[os_hostlink::NoteOut]) {
+        let row = if crate::plugins::fx_of(row).is_some() { self.state.selected_channel } else { row };
+        let s = &mut self.state;
+        let Some(ch) = s.project.channels.get(row).map(|c| c.index) else { return };
+        if notes.is_empty() {
+            return;
+        }
+        let ppq = f64::from(s.project.ppq.max(1));
+        crate::piano::snapshot_as(s, "Dump to piano roll");
+        let p = crate::piano::pattern_mut(s);
+        p.notes.retain(|n| n.channel != ch);
+        for n in notes {
+            let start = (n.start * ppq).round().max(0.0) as u32;
+            let end = ((n.end * ppq).round().max(0.0) as u32).max(start);
+            p.notes.push(os_model::Note { length: end - start, key: u16::from(n.key), velocity: n.velocity, ..os_model::Note::step(ch, start) });
+        }
+        crate::piano::finish_edit(s);
+        s.piano.dirty = true;
+        s.message = Some(format!("Dumped {} notes to the piano roll", notes.len()));
         self.invalidate();
     }
 
@@ -23037,6 +23066,26 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let slot = saved.mixer[1].slots[0].clone().unwrap();
         assert_eq!((slot.name.as_str(), &slot.state), (VOCODEX_FILE_NAME, &fl));
+    }
+
+    /// Notes a plugin sent (Tesla's Convert to score) replace the channel's notes in the current pattern as one undo
+    /// step; an effect's notes (a mixer slot's key) go to the selected channel.
+    #[test]
+    fn notes_from_a_plugin_replace_the_channels_notes() {
+        let mut a = App::new(None);
+        a.state.project = test_project();
+        a.state.selected_channel = 0;
+        a.state.pattern = 1;
+        let ch = a.state.project.channels[0].index;
+        let ppq = u32::from(a.state.project.ppq);
+        let notes = [os_hostlink::NoteOut { start: 0.0, end: 1.0, key: 60, velocity: 100 }, os_hostlink::NoteOut { start: 1.0, end: 2.5, key: 64, velocity: 90 }];
+        a.notes_from_plugin(crate::plugins::fx_key(1, 0), &notes);
+        let mine = |a: &App| -> Vec<(u32, u32, u16)> { crate::piano::notes(&a.state).iter().filter(|n| n.channel == ch).map(|n| (n.position, n.length, n.key)).collect() };
+        assert_eq!(mine(&a), [(0, ppq, 60), (ppq, ppq * 3 / 2, 64)], "the effect's notes reach the selected channel");
+        a.notes_from_plugin(crate::plugins::fx_key(1, 0), &notes[..1]);
+        assert_eq!(mine(&a), [(0, ppq, 60)], "they replace what was there");
+        crate::history::undo(&mut a.state);
+        assert_eq!(mine(&a).len(), 2, "one undo step brings the earlier notes back");
     }
 
     #[test]
