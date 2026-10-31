@@ -242,7 +242,7 @@ pub fn start(prefs: &db::Prefs, old: Cache, mode: Mode, windows: Vec<PathBuf>) -
 
 impl App {
     /// Startup (spec: ui/plugin-manager.md §4 "When"): the built-in plugins and the cached plugins are listed at once
-    /// (no plugin file is loaded), then a background scan starts when "Scan for new plugins at startup" is on (always
+    /// (no plugin file is loaded), then a background scan starts when "Find new plugins at startup" is on (always
     /// when there is no cache yet).
     pub fn start_plugins(&mut self) {
         let first = !self.load_plugins();

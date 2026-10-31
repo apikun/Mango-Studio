@@ -160,7 +160,7 @@ pub const VIEWS: &[(&str, MenuView)] = &[("Categories", MenuView::Categories), (
 fn footer(s: &State) -> Vec<PItem> {
     let view = s.plugdb.prefs.menu_view;
     let scanning = s.plugdb.progress.is_some();
-    let find = PItem::new(if scanning { "Scan for new plugins (scanning...)" } else { "Scan for new plugins" }, Cmd::Plugin(PlugCmd::Find));
+    let find = PItem::new(if scanning { "Find new plugins (scanning...)" } else { "Find new plugins" }, Cmd::Plugin(PlugCmd::Find));
     let mut v = vec![PItem::sep(), if scanning { find.off() } else { find }, PItem::new("Manage plugins...", Cmd::Plugin(PlugCmd::Manage)), PItem::sep()];
     v.extend(VIEWS.iter().map(|&(label, m)| PItem::new(label, Cmd::Plugin(PlugCmd::View(m))).mark(Mark::Radio(view == m))));
     v
@@ -294,17 +294,18 @@ fn note_recent(app: &mut App, uid: &str) {
 
 /// A new channel for generator `index` (spec §1): at the bottom of the rack, or right below row `after`; selected and
 /// in view. Lemon Sampler makes an empty sampler channel (hosted on the next tick); any other generator a plugin
-/// channel hosting it. Its plugin window opens once it is hosted. One undo step, "Add channel" (`control::edit_app`):
-/// undone, the channel goes and its instance is kept; redone, it comes back with it (`control::host`).
+/// channel hosting it. Its plugin window opens once it is hosted.
 pub fn add_generator(app: &mut App, index: usize, after: Option<usize>) -> Option<String> {
-    crate::control::edit_app(app, crate::history::ADD_CHANNEL, crate::control::command::Region::Project, |app| add_generator_now(app, index, after))
-}
-
-fn add_generator_now(app: &mut App, index: usize, after: Option<usize>) -> Option<String> {
     let d = app.plugins.available.get(index)?.desc.clone();
     note_recent(app, &d.uid());
     let s = &mut app.state;
     let sampler = d.name == crate::plugins::LEMON_SAMPLER && crate::project_plugins::is_builtin(&d);
+    // One step, at the bottom (`history::add_channel`) or inserted higher up (`history::insert_channel`).
+    let plugin = (!sampler).then_some(index);
+    match after.filter(|&r| r + 1 < s.project.channels.len()) {
+        Some(r) => crate::history::insert_channel(s, r + 1, plugin),
+        None => crate::history::add_channel(s, plugin),
+    }
     let mut ch = if sampler { crate::app::add_channel(&mut s.project) } else { crate::app::add_plugin_channel(&mut s.project, &d.name) };
     if sampler {
         s.pending_open = Some(ch);
@@ -379,28 +380,20 @@ pub fn add_generator_on_track(app: &mut App, index: usize, track: u16, tick: u32
 /// Generator `index` in place of rack row `row`'s (channel menu and plugin window menu > Replace ▸; FL: "the plugin list
 /// of Add one", spec ui/channel-rack.md §18). The channel keeps its row, notes and steps, mixer track, levels and
 /// Misc settings; its old instance goes, the new one starts from its defaults, and the channel takes the new
-/// plugin's name. Lemon Studio choice where FL was not measured: the name follows the plugin. One undo step, "Replace
-/// channel" (`control::edit_app`): the channel takes a new id, so its old instrument, kept by the old one's
-/// (`Plugins::keep`), comes back with an undo and the new one with a redo (`control::host`).
+/// plugin's name. Lemon Studio choice where FL was not measured: the name follows the plugin.
 pub fn replace_generator(app: &mut App, index: usize, row: usize) -> Option<String> {
-    crate::control::edit_app(app, crate::history::REPLACE_CHANNEL, crate::control::command::Region::Project, |app| replace_generator_now(app, index, row))
-}
-
-fn replace_generator_now(app: &mut App, index: usize, row: usize) -> Option<String> {
     let d = app.plugins.available.get(index)?.desc.clone();
     app.state.project.channels.get(row)?;
     let sampler = d.name == crate::plugins::LEMON_SAMPLER && crate::project_plugins::is_builtin(&d);
-    app.plugins.keep(row);
+    // One step, with the old instrument's state (`history::replace_channel`).
+    let old = app.plugin_copy(row);
+    crate::history::replace_channel(&mut app.state, row, old, (!sampler).then_some(index));
     app.plugins.drop_key(row);
     app.state.hosted_rows.retain(|&r| r != row);
     app.transport.set_instruments(app.plugins.instruments());
     let s = &mut app.state;
     let ch = &mut s.project.channels[row];
     ch.plugin_state = None;
-    // A new id at once, before the new instance is hosted and takes its channel's.
-    ch.id = os_model::Id::NONE;
-    s.control.settle(&mut s.project);
-    let ch = &mut s.project.channels[row];
     if sampler {
         ch.kind = os_model::ChannelKind::Sampler;
         ch.plugin = None;
