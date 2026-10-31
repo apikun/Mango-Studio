@@ -25,13 +25,9 @@ os-vst2.workspace = true
 os-paths.workspace = true
 os-smf.workspace = true
 lemon-sampler = { path = "../../plugins/lemon-sampler", features = ["linked"] }
-soundfont-player = { path = "../../plugins/soundfont-player", features = ["linked"] }
 lemon-parametric-eq-2 = { path = "../../plugins/lemon-parametric-eq-2", features = ["linked"] }
 lemon-3x-osc = { path = "../../plugins/lemon-3x-osc", features = ["linked"] }
 citrus = { path = "../../plugins/citrus", features = ["linked"] }
-<<<<<<< HEAD
-lemon-drum-sampler = { path = "../../plugins/lemon-drum-sampler", features = ["linked"] }
-=======
 lemon-kick = { path = "../../plugins/lemon-kick", features = ["linked"] }
 lemon-pluck = { path = "../../plugins/lemon-pluck", features = ["linked"] }
 lemon-mini = { path = "../../plugins/lemon-mini", features = ["linked"] }
@@ -51,12 +47,13 @@ mango-flex = { path = "../../plugins/mango-flex", features = ["linked"] }
 mango-slayer = { path = "../../plugins/mango-slayer", features = ["linked"] }
 # The hardware panel (a recreation of FL's Dashboard), compiled in like the other small generators.
 mango-dashboard = { path = "../../plugins/mango-dashboard", features = ["linked"] }
+# The sampler (a recreation of FL's DirectWave), compiled in like the drum sampler.
+mango-directwave = { path = "../../plugins/mango-directwave", features = ["linked"] }
 lemon-boom = { path = "../../plugins/lemon-boom", features = ["linked"] }
 lemon-bass = { path = "../../plugins/lemon-bass", features = ["linked"] }
 lemon-acid = { path = "../../plugins/lemon-acid", features = ["linked"] }
 # The chanting monk (a port of MonkSynth), compiled in like the other small generators.
 mango-monk = { path = "../../plugins/mango-monk", features = ["linked"] }
->>>>>>> main
 lemon-limiter = { path = "../../plugins/lemon-limiter", features = ["linked"] }
 lemon-reverb = { path = "../../plugins/lemon-reverb", features = ["linked"] }
 lemon-delay = { path = "../../plugins/lemon-delay", features = ["linked"] }
@@ -75,16 +72,9 @@ pulp-filter = { path = "../../plugins/pulp-filter", features = ["linked"] }
 press = { path = "../../plugins/press", features = ["linked"] }
 lemon-flanger = { path = "../../plugins/lemon-flanger", features = ["linked"] }
 lemon-phaser = { path = "../../plugins/lemon-phaser", features = ["linked"] }
-<<<<<<< HEAD
-lemon-peak-controller = { path = "../../plugins/lemon-peak-controller", features = ["linked"] }
-lemon-formula-controller = { path = "../../plugins/lemon-formula-controller", features = ["linked"] }
-lemon-slicer = { path = "../../plugins/lemon-slicer", features = ["linked"] }
-lemon-vocoder = { path = "../../plugins/lemon-vocoder", features = ["linked"] }
-=======
 lemon-crusher = { path = "../../plugins/lemon-crusher", features = ["linked"] }
 lemon-vocoder = { path = "../../plugins/lemon-vocoder", features = ["linked"] }
 lemon-twelve = { path = "../../plugins/lemon-twelve", features = ["linked"] }
->>>>>>> main
 winit = "0.30"
 softbuffer = "0.4"
 cpal = "0.18"
@@ -122,7 +112,7 @@ jni = "0.21"
 asio-sys = "0.4"
 # WASAPI exclusive and low-latency shared output (`device::wasapi`): the version cpal is built with.
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Media_Audio", "Win32_Media_KernelStreaming", "Win32_Media_Multimedia", "Win32_Devices_Properties", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Threading", "Win32_System_Variant", "Win32_UI_Shell_PropertiesSystem"] }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_LibraryLoader", "Win32_Storage_Xps", "Win32_System_Threading", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Diagnostics_ToolHelp", "Win32_UI_Shell", "Win32_System_Com", "Win32_System_Diagnostics_Debug", "Win32_System_Console", "Win32_UI_HiDpi", "Win32_System_Registry", "Win32_System_SystemInformation"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_LibraryLoader", "Win32_Storage_Xps", "Win32_System_Threading", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Diagnostics_ToolHelp", "Win32_UI_Shell", "Win32_System_Com", "Win32_System_Diagnostics_Debug", "Win32_UI_HiDpi", "Win32_System_Registry"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Shared mode plays through the sound server (PulseAudio, or PipeWire's pipewire-pulse) as other programs do; the
