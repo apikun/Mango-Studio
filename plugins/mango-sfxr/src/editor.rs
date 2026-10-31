@@ -333,7 +333,7 @@ mod win32 {
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::Graphics::Gdi::InvalidateRect;
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, SetFocus};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, SetFocus, VK_RETURN, VK_SPACE};
     use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
     use super::{Logic, target_at};
@@ -476,7 +476,7 @@ mod win32 {
                     win.logic.up();
                     0
                 }
-                WM_KEYDOWN if wp as u32 == VK_SPACE || wp as u32 == VK_RETURN => {
+                WM_KEYDOWN if wp as u16 == VK_SPACE || wp as u16 == VK_RETURN => {
                     win.logic.play();
                     InvalidateRect(hwnd, std::ptr::null(), 0);
                     0
