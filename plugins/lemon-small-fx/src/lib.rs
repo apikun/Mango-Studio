@@ -3,21 +3,6 @@
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
 //! Lemon Studio's small effects as VST3 / CLAP plugins (nih-plug): Lemon Soft Clipper, Lemon Fast Distortion, Lemon
-<<<<<<< HEAD
-//! Balance, Lemon Stereo Enhancer, Lemon Transient Processor, Lemon Chorus, Lemon Stereo Shaper, Lemon Filter, Lemon
-//! Flanger and Lemon Phaser (and the settings and editors of the controllers, Lemon Peak Controller's
-//! [`peak_controller`] and Lemon Formula Controller's [`formula_controller`], with the ticks they share, [`ticks`], and
-//! Lemon Vocoder's, [`vocoder`]).
-//! Each is a handful of settings over a sound of `os_engine::effects`, so they share everything but their
-//! description: the plugin, its parameters and saved state ([`params`]), the Pith editor ([`editor`], [`view`]). A
-//! description ([`Spec`]) gives the settings, their value texts, the editor's cards and controls, and the sound. The
-//! plugin modules (`plugins/lemon-soft-clipper` and the others) export one each.
-//!
-// spec: plugins/lemon-small-effects.md (§1 how they are built, §5 parameters and state), the plugin pages
-// (plugins/lemon-soft-clipper.md, lemon-fast-distortion.md, lemon-balance.md, lemon-stereo-enhancer.md,
-// lemon-transient-processor.md, lemon-chorus.md, lemon-stereo-shaper.md, lemon-filter.md, lemon-flanger.md,
-// lemon-phaser.md), plugins/plugin-formats.md
-=======
 //! Balance, Lemon Stereo Enhancer, Lemon Transient Processor, Lemon Chorus, Lemon Stereo Shaper, Lemon Filter,
 //! Lemon Flanger, Lemon Phaser and Mango 12. Each is a handful
 //! of settings over a sound of
@@ -31,7 +16,6 @@
 // lemon-transient-processor.md, lemon-chorus.md, lemon-stereo-shaper.md, lemon-filter.md,
 // lemon-flanger.md, lemon-phaser.md),
 // plugins/plugin-formats.md
->>>>>>> main
 #![allow(semicolon_in_expressions_from_non_local_macros)]
 
 pub mod balance;
@@ -41,22 +25,12 @@ pub mod editor;
 pub mod fast_distortion;
 pub mod filter;
 pub mod flanger;
-<<<<<<< HEAD
-pub mod formula_controller;
 pub mod params;
-pub mod peak_controller;
-=======
-pub mod params;
->>>>>>> main
 pub mod phaser;
 pub mod soft_clipper;
 pub mod stereo_enhancer;
 pub mod stereo_shaper;
-<<<<<<< HEAD
-pub mod ticks;
-=======
 pub mod twelve;
->>>>>>> main
 pub mod transient_processor;
 pub mod view;
 pub mod vocoder;
@@ -108,10 +82,6 @@ pub enum Control {
     /// A tile (Lemon Chorus's grid): its own card over `x0..x1`, `y0..y1`, a small dial at the left, the caption in a
     /// field at the top right and the value text under it.
     Tile { id: &'static str, x0: f32, y0: f32, x1: f32, y1: f32, caption: &'static str },
-    /// A line of text kept in the saved state, not a parameter (Lemon Formula Controller's formula): a field over
-    /// `x0..x1`, `y0..y1` showing the text, a status line under it. `show` reads the text and the status from the saved
-    /// state, `edit` gives the saved state with a typed text. A click opens the type-in box on it.
-    Text { id: &'static str, x0: f32, y0: f32, x1: f32, y1: f32, show: fn(&[u8]) -> (String, String), edit: fn(&[u8], &str) -> Vec<u8> },
 }
 
 impl Control {
@@ -121,13 +91,8 @@ impl Control {
             | Control::Choice { id, .. }
             | Control::Fader { id, .. }
             | Control::Shape { id, .. }
-<<<<<<< HEAD
-            | Control::Tile { id, .. }
-            | Control::Text { id, .. } => id,
-=======
             | Control::Switch { id, .. }
             | Control::Tile { id, .. } => id,
->>>>>>> main
         }
     }
 }
@@ -385,15 +350,9 @@ mod tests {
         filter::SPEC,
         flanger::SPEC,
         phaser::SPEC,
-<<<<<<< HEAD
-        peak_controller::SPEC,
-        formula_controller::SPEC,
-        vocoder::SPEC,
-=======
         crusher::SPEC,
         vocoder::SPEC,
         twelve::SPEC,
->>>>>>> main
     ];
 
     /// Every effect: ids unique, starts inside the ranges, a control per setting, the plugin ids distinct.
@@ -428,11 +387,8 @@ mod tests {
             <filter::LemonFilter as ClapPlugin>::CLAP_ID,
             <flanger::LemonFlanger as ClapPlugin>::CLAP_ID,
             <phaser::LemonPhaser as ClapPlugin>::CLAP_ID,
-<<<<<<< HEAD
-=======
             <crusher::MangoCrusher as ClapPlugin>::CLAP_ID,
             <twelve::MangoTwelve as ClapPlugin>::CLAP_ID,
->>>>>>> main
         ];
         let classes = [
             <soft_clipper::LemonSoftClipper as Vst3Plugin>::VST3_CLASS_ID,
@@ -445,11 +401,8 @@ mod tests {
             <filter::LemonFilter as Vst3Plugin>::VST3_CLASS_ID,
             <flanger::LemonFlanger as Vst3Plugin>::VST3_CLASS_ID,
             <phaser::LemonPhaser as Vst3Plugin>::VST3_CLASS_ID,
-<<<<<<< HEAD
-=======
             <crusher::MangoCrusher as Vst3Plugin>::VST3_CLASS_ID,
             <twelve::MangoTwelve as Vst3Plugin>::VST3_CLASS_ID,
->>>>>>> main
         ];
         for i in 0..ids.len() {
             for j in i + 1..ids.len() {
@@ -518,13 +471,9 @@ mod tests {
             }
             v.into_iter().map(|x| x.expect("every parameter listed")).collect()
         };
-<<<<<<< HEAD
-        for spec in [soft_clipper::SPEC, fast_distortion::SPEC, stereo_enhancer::SPEC, transient_processor::SPEC, chorus::SPEC, stereo_shaper::SPEC, filter::SPEC] {
-=======
         for spec in
             [soft_clipper::SPEC, fast_distortion::SPEC, stereo_enhancer::SPEC, transient_processor::SPEC, chorus::SPEC, stereo_shaper::SPEC, filter::SPEC, twelve::SPEC]
         {
->>>>>>> main
             for name in all(spec) {
                 read(spec, &name);
             }

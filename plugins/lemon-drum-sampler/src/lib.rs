@@ -2,11 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
-<<<<<<< HEAD
-//! Lemon Drum Sampler: Lemon Studio's recreation of FPC as a VST3 / CLAP plugin (nih-plug). Sixteen pads in two
-=======
 //! Mango Drum Sampler: Lemon Studio's recreation of FPC as a VST3 / CLAP plugin (nih-plug). Sixteen pads in two
->>>>>>> main
 //! banks, each on its own key, each playing one or more velocity layers of samples; it keeps the original's saved
 //! state, so a project's FPC channel opens with its pads and samples and saves back unchanged.
 //!
@@ -153,11 +149,7 @@ impl LemonDrumSampler {
 }
 
 impl Plugin for LemonDrumSampler {
-<<<<<<< HEAD
-    const NAME: &'static str = "Lemon Drum Sampler";
-=======
     const NAME: &'static str = "Mango Drum Sampler";
->>>>>>> main
     const VENDOR: &'static str = "Lemon Studio";
     const URL: &'static str = "";
     const EMAIL: &'static str = "";

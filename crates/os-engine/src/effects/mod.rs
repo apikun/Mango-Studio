@@ -13,17 +13,9 @@ pub mod eq;
 pub mod fast_dist;
 pub mod filter;
 pub mod flanger;
-<<<<<<< HEAD
-pub mod formula_ctrl;
 pub mod limiter;
 pub mod love_philter;
 pub mod maximus;
-pub mod peak_ctrl;
-=======
-pub mod limiter;
-pub mod love_philter;
-pub mod maximus;
->>>>>>> main
 pub mod phaser;
 pub mod reverb;
 pub mod soft_clipper;
@@ -61,14 +53,6 @@ pub trait Effect: Send {
     fn process_keyed(&mut self, buf: &mut [f32], _key: &[f32]) {
         self.process(buf);
     }
-    /// A controller's output `k` (0..1) as the block processed last left it, for the links that read it (Fruity Peak
-    /// Controller's three; spec: plugins/lemon-peak-controller.md "Links"). `None`: no such output.
-    fn control(&self, _k: usize) -> Option<f32> {
-        None
-    }
-    /// The song's position and tempo for the block that follows, and the song tick it is with the ticks per beat
-    /// (controllers that work on the song: Fruity Formula Controller; spec: plugins/lemon-formula-controller.md "Links").
-    fn transport(&mut self, _song: &crate::instrument::TransportInfo, _tick: (u64, u16)) {}
 }
 
 /// Creates a Lemon Studio effect for a slot plugin, if one exists for that plugin.
@@ -86,10 +70,7 @@ pub fn from_slot(name: &str, state: &[u8], sample_rate: u32) -> Option<Box<dyn E
         "Fruity Chorus" => chorus::Chorus::from_state(state, sample_rate).map(|e| Box::new(e) as Box<dyn Effect>),
         "Fruity Flanger" => flanger::Flanger::from_state(state, sample_rate).map(|e| Box::new(e) as Box<dyn Effect>),
         "Fruity Phaser" => phaser::Phaser::from_state(state, sample_rate).map(|e| Box::new(e) as Box<dyn Effect>),
-<<<<<<< HEAD
-=======
         "Vocodex" => vocoder::VocoderFx::from_state(state, sample_rate).map(|e| Box::new(e) as Box<dyn Effect>),
->>>>>>> main
         "Fruity Stereo Shaper" => stereo_shaper::StereoShaper::from_state(state, sample_rate).map(|e| Box::new(e) as Box<dyn Effect>),
         "Fruity Love Philter" => love_philter::LovePhilter::from_state(state, sample_rate).map(|e| Box::new(e) as Box<dyn Effect>),
         "Maximus" => maximus::Maximus::from_state(state, sample_rate).map(|e| Box::new(e) as Box<dyn Effect>),
@@ -97,14 +78,6 @@ pub fn from_slot(name: &str, state: &[u8], sample_rate: u32) -> Option<Box<dyn E
             transient_processor::TransientProcessor::from_state(state, sample_rate).map(|e| Box::new(e) as Box<dyn Effect>)
         }
         "Fruity Filter" => filter::Filter::from_state(state, sample_rate).map(|e| Box::new(e) as Box<dyn Effect>),
-<<<<<<< HEAD
-        "Fruity Peak Controller" => peak_ctrl::PeakController::from_state(state).map(|e| Box::new(e) as Box<dyn Effect>),
-        "Fruity Formula Controller" => {
-            formula_ctrl::FormulaController::from_state(state).map(|e| Box::new(e) as Box<dyn Effect>)
-        }
-        "Vocodex" => vocoder::VocoderFx::from_state(state, sample_rate).map(|e| Box::new(e) as Box<dyn Effect>),
-=======
->>>>>>> main
         _ => None,
     }
 }

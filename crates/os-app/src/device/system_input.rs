@@ -196,13 +196,6 @@ where
             move |data: &[T], _| {
                 let frames = data.len() / device_ch;
                 let at = |c: usize, f: usize| data[f * device_ch + c].to_sample::<f32>();
-<<<<<<< HEAD
-                match resample.as_mut() {
-                    None => input_ring().push(frames, at),
-                    Some(r) => {
-                        let out = r.run(frames, at);
-                        input_ring().push(out.len() / ch, |c, f| out[f * ch + c]);
-=======
                 // One-click audio recording takes the same block the mixer's tracks hear (`super::`'s ASIO callback
                 // does the same for a driver's inputs).
                 let cap = crate::capture::capture();
@@ -221,7 +214,6 @@ where
                         if record {
                             cap.push(n, |c, f| out[f * ch + c]);
                         }
->>>>>>> main
                     }
                 }
             },

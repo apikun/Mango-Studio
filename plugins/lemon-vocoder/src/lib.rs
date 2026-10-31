@@ -2,11 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
-<<<<<<< HEAD
-//! Lemon Vocoder: Lemon Studio's vocoder (a recreation of FL's Vocodex) as a VST3 / CLAP plugin. Stereo in and out,
-=======
 //! Mango Vocoder: Lemon Studio's vocoder (a recreation of FL's Vocodex) as a VST3 / CLAP plugin. Stereo in and out,
->>>>>>> main
 //! with a stereo sidechain input bus. The modulator and the carrier are picked from the main input (the track's own
 //! audio) and the sidechain by the two input settings, as the original picks them from its track and the tracks
 //! sidechained to it: by default the modulator is the main input and the carrier the sidechain.
@@ -197,11 +193,7 @@ mod tests {
         assert_eq!(p.settings(), Settings::default());
         let r = p.settings().routing();
         assert_eq!((r.modulator, r.carrier, r.lr), (0, 1, false));
-<<<<<<< HEAD
-        assert_eq!(<LemonVocoder as Plugin>::NAME, "Lemon Vocoder");
-=======
         assert_eq!(<LemonVocoder as Plugin>::NAME, "Mango Vocoder");
->>>>>>> main
         // An editor edit reaches what it plays: the band count at its lowest (5).
         let id = p.params.p[vc::BANDS].as_ptr();
         p.params.live.set(id, 0.0);

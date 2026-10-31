@@ -67,15 +67,9 @@ const CONTROLS: [Control; dsp::PARAMS] = [
 ];
 
 pub const SPEC: &Spec = &Spec {
-<<<<<<< HEAD
-    name: "Lemon Phaser",
-    word: "PHASER",
-    about: "Lemon Studio's phaser",
-=======
     name: "Mango Phaser",
     word: "PHASER",
     about: "Mango Studio's phaser",
->>>>>>> main
     settings: &SETTINGS,
     version: Some(dsp::VERSION),
     any_version: false,
@@ -94,10 +88,7 @@ pub const SPEC: &Spec = &Spec {
     labels: &[],
     text,
     parse,
-<<<<<<< HEAD
-=======
     shown: None,
->>>>>>> main
     sound,
     rings: true,
 };
@@ -203,11 +194,7 @@ pub struct PhaserKind;
 impl Kind for PhaserKind {
     const SPEC: &'static Spec = SPEC;
     const CLAP_ID: &'static str = "org.openstudio.lemon-phaser";
-<<<<<<< HEAD
-    const CLAP_DESCRIPTION: &'static str = "Lemon Studio's phaser";
-=======
     const CLAP_DESCRIPTION: &'static str = "Mango Studio's phaser";
->>>>>>> main
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Phaser, ClapFeature::Stereo];
     const VST3_CLASS_ID: [u8; 16] = *b"LemonStudioPhasr";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Fx, Vst3SubCategory::Modulation];

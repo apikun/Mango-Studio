@@ -123,11 +123,7 @@ impl Link {
 
 /// Whether `t` can be linked: the piano roll tool dialogs' knobs live only while their dialog is open.
 fn linkable(t: Target) -> bool {
-<<<<<<< HEAD
-    !matches!(t, Target::Knob(KnobId::Strum(_) | KnobId::Arp(_) | KnobId::PianoDlg(_) | KnobId::AutoLfo(..)) | Target::RackTrack(_) | Target::RackLed(_))
-=======
     !matches!(t, Target::Knob(KnobId::Strum(_) | KnobId::Arp(_) | KnobId::PianoDlg(_) | KnobId::AutoLfo(..)))
->>>>>>> main
 }
 
 /// A target as `settings.txt` keeps it (`none` for one that is not linkable, which reads back as nothing).
@@ -148,7 +144,6 @@ fn target_text(t: Target) -> String {
         },
         Target::Fader(m) => format!("fader:{m}"),
         Target::Param(key, i) => format!("param:{key}:{i}"),
-        Target::Latency(..) | Target::RackTrack(_) | Target::RackLed(_) => "none".into(),
     }
 }
 
@@ -236,10 +231,10 @@ pub fn menu_items(t: Option<Target>) -> Vec<PItem> {
     let mut v = vec![
         PItem::head("Remote control"),
         match t {
-            Some(t) => PItem::new("MIDI learn...", Cmd::Remote(RCmd::Link(t))),
-            None => PItem::not_yet("MIDI learn..."),
+            Some(t) => PItem::new("Link to controller...", Cmd::Remote(RCmd::Link(t))),
+            None => PItem::not_yet("Link to controller..."),
         },
-        PItem::new("Override global mapping...", Cmd::Nothing).off(),
+        PItem::new("Override global link...", Cmd::Nothing).off(),
     ];
     if let Some(t) = t.filter(|&t| link_of(t).is_some()) {
         v.push(PItem::new("Remove link", Cmd::Remote(RCmd::Unlink(t))));
@@ -550,14 +545,10 @@ impl App {
                     tr.volume = Some(f64::from(v));
                     self.state.piano.dirty = true;
                 }
-                self.record_control(&crate::app::Action::Fader(m));
             }
             Target::Param(key, index) => {
-                crate::params::set_param_value(&mut self.state, key, index, f64::from(v));
-                self.record_plugin_param(key, index, f64::from(v));
+                crate::params::set_param_value(&self.state, key, index, f64::from(v));
             }
-            // Never linked (no remote control).
-            Target::Latency(..) | Target::RackTrack(_) | Target::RackLed(_) => {}
         }
         self.invalidate();
     }
@@ -642,9 +633,9 @@ impl App {
         m.on = !m.on;
         m.queue.clear();
         self.state.message = Some(if m.on {
-            "Multi MIDI learn: change the knobs to link, then move a controller for each, in the same order".into()
+            "Multilink to controllers: change the knobs to link, then move a controller for each, in the same order".into()
         } else {
-            "Multi MIDI learn: off".into()
+            "Multilink to controllers: off".into()
         });
         self.invalidate();
     }
@@ -656,7 +647,7 @@ impl App {
             m.queue.push_back(t);
             let name = crate::typein::caption(&self.state, t);
             let n = self.state.multilink.queue.len();
-            self.state.message = Some(format!("MIDI learn {n}: {}", name.trim_start_matches("Value for ")));
+            self.state.message = Some(format!("Multilink {n}: {}", name.trim_start_matches("Value for ")));
         }
     }
 }

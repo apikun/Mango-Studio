@@ -1,20 +1,12 @@
 [package]
 name = "lemon-drum-sampler"
-<<<<<<< HEAD
-description = "Lemon Drum Sampler: Lemon Studio's pad drum sampler as a VST3 / CLAP plugin"
-=======
 description = "Mango Drum Sampler: Lemon Studio's pad drum sampler as a VST3 / CLAP plugin"
->>>>>>> main
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
 crate-type = ["cdylib", "lib"]
-<<<<<<< HEAD
-doctest = false
-=======
->>>>>>> main
 
 [features]
 # Compiled into Lemon Studio: no exported plugin entry points (they would clash with the other built-in plugins).

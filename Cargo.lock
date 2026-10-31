@@ -1967,11 +1967,7 @@ dependencies = [
 
 [[package]]
 name = "lemon-drum-sampler"
-<<<<<<< HEAD
-version = "0.0.1"
-=======
 version = "0.6.1"
->>>>>>> main
 dependencies = [
  "lemon-sampler",
  "nih_plug",
@@ -1988,8 +1984,6 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
-=======
 name = "lemon-drums"
 version = "0.6.1"
 dependencies = [
@@ -2008,7 +2002,6 @@ dependencies = [
 ]
 
 [[package]]
->>>>>>> main
 name = "lemon-fast-distortion"
 version = "0.6.1"
 dependencies = [
@@ -2019,11 +2012,7 @@ dependencies = [
 
 [[package]]
 name = "lemon-filter"
-<<<<<<< HEAD
-version = "0.0.1"
-=======
 version = "0.6.1"
->>>>>>> main
 dependencies = [
  "lemon-small-fx",
  "nih_plug",
@@ -2032,11 +2021,7 @@ dependencies = [
 
 [[package]]
 name = "lemon-flanger"
-<<<<<<< HEAD
-version = "0.0.1"
-=======
 version = "0.6.1"
->>>>>>> main
 dependencies = [
  "lemon-small-fx",
  "nih_plug",
@@ -2044,14 +2029,6 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
-name = "lemon-formula-controller"
-version = "0.0.1"
-dependencies = [
- "lemon-small-fx",
- "nih_plug",
- "os-engine",
-=======
 name = "lemon-keys"
 version = "0.6.1"
 dependencies = [
@@ -2066,7 +2043,6 @@ version = "0.6.1"
 dependencies = [
  "lemon-small-gen",
  "nih_plug",
->>>>>>> main
  "os-plugkit",
 ]
 
@@ -2110,23 +2086,8 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
-name = "lemon-peak-controller"
-version = "0.0.1"
-dependencies = [
- "lemon-small-fx",
- "nih_plug",
- "os-engine",
- "os-plugkit",
-]
-
-[[package]]
-name = "lemon-phaser"
-version = "0.0.1"
-=======
 name = "lemon-phaser"
 version = "0.6.1"
->>>>>>> main
 dependencies = [
  "lemon-small-fx",
  "nih_plug",
@@ -2134,8 +2095,6 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
-=======
 name = "lemon-pluck"
 version = "0.6.1"
 dependencies = [
@@ -2145,7 +2104,6 @@ dependencies = [
 ]
 
 [[package]]
->>>>>>> main
 name = "lemon-reverb"
 version = "0.6.1"
 dependencies = [
@@ -2180,30 +2138,9 @@ dependencies = [
 
 [[package]]
 name = "lemon-slicer"
-<<<<<<< HEAD
-version = "0.0.1"
-dependencies = [
- "nih_plug",
- "os-engine",
- "os-hostlink",
- "os-plugkit",
- "os-theme",
- "os-ui",
- "rfd",
- "serde_json",
- "tiny-skia",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "lemon-small-fx"
-version = "0.0.1"
-=======
 version = "0.6.1"
->>>>>>> main
 dependencies = [
  "nih_plug",
- "os-dsp",
  "os-engine",
  "os-hostlink",
  "os-plugkit",
@@ -2282,10 +2219,6 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
-name = "lemon-vocoder"
-version = "0.0.1"
-=======
 name = "lemon-twelve"
 version = "0.6.1"
 dependencies = [
@@ -2297,7 +2230,6 @@ dependencies = [
 [[package]]
 name = "lemon-vocoder"
 version = "0.6.1"
->>>>>>> main
 dependencies = [
  "lemon-small-fx",
  "nih_plug",
@@ -2306,8 +2238,6 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
-=======
 name = "lemon-wavetable"
 version = "0.6.1"
 dependencies = [
@@ -2319,7 +2249,6 @@ dependencies = [
 ]
 
 [[package]]
->>>>>>> main
 name = "libc"
 version = "0.2.190"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2452,6 +2381,25 @@ dependencies = [
  "lemon-small-gen",
  "nih_plug",
  "os-plugkit",
+]
+
+[[package]]
+name = "mango-directwave"
+version = "0.6.1"
+dependencies = [
+ "lemon-sampler",
+ "nih_plug",
+ "os-engine",
+ "os-hostlink",
+ "os-model",
+ "os-plugkit",
+ "os-theme",
+ "os-ui",
+ "rfd",
+ "serde",
+ "serde_json",
+ "tiny-skia",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3224,13 +3172,6 @@ dependencies = [
  "lemon-chorus",
  "lemon-crusher",
  "lemon-delay",
-<<<<<<< HEAD
- "lemon-drum-sampler",
- "lemon-fast-distortion",
- "lemon-filter",
- "lemon-flanger",
- "lemon-formula-controller",
-=======
  "lemon-drums",
  "lemon-dx",
  "lemon-fast-distortion",
@@ -3238,36 +3179,26 @@ dependencies = [
  "lemon-flanger",
  "lemon-keys",
  "lemon-kick",
->>>>>>> main
  "lemon-limiter",
  "lemon-mini",
  "lemon-parametric-eq-2",
-<<<<<<< HEAD
- "lemon-peak-controller",
- "lemon-phaser",
-=======
  "lemon-phaser",
  "lemon-pluck",
->>>>>>> main
  "lemon-reverb",
  "lemon-sampler",
- "lemon-slicer",
  "lemon-small-fx",
  "lemon-soft-clipper",
  "lemon-stereo-enhancer",
  "lemon-stereo-shaper",
  "lemon-transient-processor",
-<<<<<<< HEAD
- "lemon-vocoder",
-=======
  "lemon-twelve",
  "lemon-vocoder",
  "lemon-wavetable",
->>>>>>> main
  "libc",
  "mango-beat",
  "mango-beepmap",
  "mango-dashboard",
+ "mango-directwave",
  "mango-flex",
  "mango-monk",
  "mango-slayer",
@@ -3301,7 +3232,6 @@ dependencies = [
  "serde",
  "serde_json",
  "softbuffer",
- "soundfont-player",
  "tesla",
  "tiny-skia",
  "vorbis_rs",
@@ -3318,12 +3248,9 @@ name = "os-clap"
 version = "0.6.1"
 dependencies = [
  "clap-sys 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "lemon-formula-controller",
  "lemon-limiter",
  "lemon-parametric-eq-2",
- "lemon-peak-controller",
  "lemon-sampler",
- "lemon-small-fx",
  "libloading 0.8.9",
  "os-engine",
  "os-host",
@@ -4202,19 +4129,6 @@ dependencies = [
  "web-sys",
  "windows-sys 0.61.2",
  "x11rb",
-]
-
-[[package]]
-name = "soundfont-player"
-version = "0.0.1"
-dependencies = [
- "nih_plug",
- "os-hostlink",
- "os-plugkit",
- "os-theme",
- "os-ui",
- "rfd",
- "windows-sys 0.61.2",
 ]
 
 [[package]]

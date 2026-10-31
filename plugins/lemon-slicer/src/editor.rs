@@ -273,11 +273,7 @@ impl Logic {
                 let i = self.chosen(&st);
                 format!("Reverse slice\t{}", if st.slices.get(i).is_some_and(|s| s.reversed()) { "on" } else { "off" })
             }
-<<<<<<< HEAD
-            Some(Target::Logo) => "Lemon Slicer".into(),
-=======
             Some(Target::Logo) => "Mango Slicer".into(),
->>>>>>> main
             None => String::new(),
         }
     }
@@ -486,11 +482,7 @@ impl Logic {
                 }
             }
             MenuReq::About => {
-<<<<<<< HEAD
-                m.head("Lemon Slicer", Cmd::None);
-=======
                 m.head("Mango Slicer", Cmd::None);
->>>>>>> main
                 m.add(MenuItem::item(&format!("Version {}", env!("CARGO_PKG_VERSION"))).enabled(false), Cmd::None);
                 m.add(MenuItem::item("Lemon Studio's recreation of Fruity Slicer").enabled(false), Cmd::None);
             }
@@ -742,11 +734,7 @@ mod win32 {
                 last_sig: 0,
                 last_raw: u64::MAX,
             });
-<<<<<<< HEAD
-            let title = pw::wide("Lemon Slicer");
-=======
             let title = pw::wide("Mango Slicer");
->>>>>>> main
             let hwnd = CreateWindowExW(
                 0,
                 class.as_ptr(),
@@ -1239,14 +1227,8 @@ mod tests {
         (h.r.cx(), h.r.cy())
     }
 
-<<<<<<< HEAD
-    /// A loop loaded into the editor, from a file of its own (`name`), as the tests run side by side.
-    fn loaded(name: &str) -> (Logic, std::path::PathBuf) {
-        let p = loop_file(name, &[]);
-=======
     fn loaded() -> (Logic, std::path::PathBuf) {
         let p = loop_file("editor", &[]);
->>>>>>> main
         let mut l = logic();
         l.load(&p.to_string_lossy());
         paint(&mut l);
@@ -1291,11 +1273,7 @@ mod tests {
 
     #[test]
     fn slicing_choosing_and_the_slices_settings() {
-<<<<<<< HEAD
-        let (mut l, p) = loaded("slicing");
-=======
         let (mut l, p) = loaded();
->>>>>>> main
         assert_eq!(l.state().slices.len(), 4);
         l.pick(&MenuReq::Slicing, Cmd::Slice(Slicing::Beats(2)), 0.0, 0.0);
         let st = l.state();
@@ -1326,11 +1304,7 @@ mod tests {
 
     #[test]
     fn tempo_and_length_move_together() {
-<<<<<<< HEAD
-        let (mut l, p) = loaded("tempo");
-=======
         let (mut l, p) = loaded();
->>>>>>> main
         // 2 s at 4 beats, 120 BPM; 9 beats make 270 BPM; 60 BPM make 2 beats.
         l.typed(BEATS_ID, "9");
         assert_eq!((l.state().beats(), l.state().bpm()), (9.0, 270.0));
@@ -1342,11 +1316,7 @@ mod tests {
 
     #[test]
     fn the_dump_is_offered_when_hosted() {
-<<<<<<< HEAD
-        let (mut l, p) = loaded("dump");
-=======
         let (mut l, p) = loaded();
->>>>>>> main
         assert!(!l.menu(&MenuReq::Dump).items.iter().any(|i| matches!(i, MenuItem::Item { enabled: true, .. })));
         l.hosted = true;
         assert_eq!(l.menu(&MenuReq::Dump).find("Normal"), Some(Cmd::Dump(false)));

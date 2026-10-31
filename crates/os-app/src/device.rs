@@ -228,7 +228,6 @@ impl Mix {
             }
             i += 1;
         }
-        crate::audio_log::push(&self.sum, w);
         &self.sum
     }
 }
@@ -470,8 +469,6 @@ pub(crate) struct Open {
 /// A mixer track hears its input or is armed (`want_inputs`).
 static INPUT_WANTED: AtomicBool = AtomicBool::new(false);
 
-<<<<<<< HEAD
-=======
 /// The system input device's name while its stream is open (`sync_inputs` keeps it), for a take that records from it
 /// instead of opening the device again.
 static INPUT_OPEN: Mutex<Option<String>> = Mutex::new(None);
@@ -481,7 +478,6 @@ pub(crate) fn system_input_name() -> Option<String> {
     INPUT_OPEN.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
->>>>>>> main
 /// Whether a mixer track with an input chosen hears it or is armed: the system's input device is open with the output
 /// only then (`OutputDevice::sync_inputs`).
 pub fn want_inputs(on: bool) {
@@ -623,24 +619,17 @@ impl OutputDevice {
     /// none does (an ASIO driver's inputs open with it). What went wrong opening it, once.
     pub(crate) fn sync_inputs(&mut self) -> Option<String> {
         let want = INPUT_WANTED.load(Ordering::Relaxed);
-<<<<<<< HEAD
-        let o = self.open.as_mut().filter(|o| o.info.host != ASIO)?;
-=======
         let Some(o) = self.open.as_mut().filter(|o| o.info.host != ASIO) else {
             *INPUT_OPEN.lock().unwrap_or_else(|e| e.into_inner()) = None;
             return None;
         };
->>>>>>> main
         if o.input.as_ref().is_some_and(|i| i.failed()) {
             o.input = None;
             o.input_failed = true;
             return Some("The audio input stopped".into());
         }
-<<<<<<< HEAD
-=======
         // A take records from this stream while it serves the device it asks for (`system_input_name`).
         *INPUT_OPEN.lock().unwrap_or_else(|e| e.into_inner()) = o.input.as_ref().map(|i| i.name.clone());
->>>>>>> main
         if !want {
             (o.input, o.input_failed) = (None, false);
             return None;
@@ -837,13 +826,10 @@ fn open_system(cfg: &AudioCfg, xruns: &Arc<AtomicU64>) -> Result<Open, String> {
     }
     let stream = stream?;
     stream.play().map_err(|e| e.to_string())?;
-<<<<<<< HEAD
-=======
     crate::audiolog::log(&format!(
         "device open: host {host} rate {} channels {} format {format:?} fixed {fixed:?} buffers {buffers:?}",
         config.sample_rate, config.channels
     ));
->>>>>>> main
     let info = DeviceInfo { host, name: out.name, rate: config.sample_rate, fixed, buffers, channels: config.channels, inputs: 0, out_names: Vec::new(), in_names: Vec::new(), input_latency: None, rates: Vec::new(), sizes: Vec::new(), latency: None, instead: None };
     Ok(Open { _stream: Stream::Cpal(stream), inbox, outbox, info, note: None, failed: errors.failed, fault: errors.fault, input: None, input_failed: false })
 }

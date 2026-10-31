@@ -70,15 +70,9 @@ const CONTROLS: [Control; dsp::PARAMS] = [
 ];
 
 pub const SPEC: &Spec = &Spec {
-<<<<<<< HEAD
-    name: "Lemon Flanger",
-    word: "FLANGER",
-    about: "Lemon Studio's flanger",
-=======
     name: "Mango Flanger",
     word: "FLANGER",
     about: "Mango Studio's flanger",
->>>>>>> main
     settings: &SETTINGS,
     version: Some(dsp::VERSION),
     any_version: false,
@@ -97,10 +91,7 @@ pub const SPEC: &Spec = &Spec {
     labels: &[],
     text,
     parse,
-<<<<<<< HEAD
-=======
     shown: None,
->>>>>>> main
     sound,
     rings: true,
 };
@@ -197,11 +188,7 @@ pub struct FlangerKind;
 impl Kind for FlangerKind {
     const SPEC: &'static Spec = SPEC;
     const CLAP_ID: &'static str = "org.openstudio.lemon-flanger";
-<<<<<<< HEAD
-    const CLAP_DESCRIPTION: &'static str = "Lemon Studio's flanger";
-=======
     const CLAP_DESCRIPTION: &'static str = "Mango Studio's flanger";
->>>>>>> main
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Flanger, ClapFeature::Stereo];
     const VST3_CLASS_ID: [u8; 16] = *b"LemonStudioFlngr";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Fx, Vst3SubCategory::Modulation];
