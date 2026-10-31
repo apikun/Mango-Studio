@@ -289,6 +289,7 @@ pub fn builtin() -> Vec<Available> {
     static SLAYER: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static DASHBOARD: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static DIRECTWAVE: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static SFXR: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static WAVETABLE: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static SOUNDFONT: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     let mut v = linked(&LIB, &lemon_sampler::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, LEMON_SAMPLER);
@@ -310,6 +311,9 @@ pub fn builtin() -> Vec<Available> {
     v.extend(linked(&SLAYER, &mango_slayer::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Slayer"));
     // The hardware panel (a recreation of FL's Dashboard): knobs and faders a performance links to anything.
     v.extend(linked(&DASHBOARD, &mango_dashboard::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Dashboard"));
+    // The retro sound effect generator (a port of sfxr): seven generators roll the classic presets, a note
+    // plays a fresh take of the sliders.
+    v.extend(linked(&SFXR, &mango_sfxr::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Sfxr"));
     // Mango Wavetable, from battlemountain2's fork (spec: docs/lemon-wavetable.md).
     v.extend(linked(&WAVETABLE, &lemon_wavetable::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, MANGO_WAVETABLE));
     v.extend(linked(&SOUNDFONT, &mango_soundfont::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, MANGO_SOUNDFONT));

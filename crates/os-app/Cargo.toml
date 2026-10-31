@@ -49,6 +49,8 @@ mango-slayer = { path = "../../plugins/mango-slayer", features = ["linked"] }
 mango-dashboard = { path = "../../plugins/mango-dashboard", features = ["linked"] }
 # The sampler (a recreation of FL's DirectWave), compiled in like the drum sampler.
 mango-directwave = { path = "../../plugins/mango-directwave", features = ["linked"] }
+# The retro sound effect generator (a port of sfxr), compiled in like the other small generators.
+mango-sfxr = { path = "../../plugins/mango-sfxr", features = ["linked"] }
 lemon-boom = { path = "../../plugins/lemon-boom", features = ["linked"] }
 lemon-bass = { path = "../../plugins/lemon-bass", features = ["linked"] }
 lemon-acid = { path = "../../plugins/lemon-acid", features = ["linked"] }
