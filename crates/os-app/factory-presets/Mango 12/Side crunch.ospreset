@@ -1,0 +1,13 @@
+OSPRESET 1
+plugin=Mango 12	id=clap:org.openstudio.mango-12	format=clap	body=params
+# The converter hears the side only: the mono centre passes untouched while the width takes the 12 bits.
+Tune = 0
+Fine = 0
+Range = 0
+Gain In = 150
+Gain Out = 120
+Link = 0
+Filter = 90
+Route = 7
+Mix = 100
+Crush = 0

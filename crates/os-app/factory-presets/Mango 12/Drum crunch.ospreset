@@ -1,0 +1,14 @@
+OSPRESET 1
+plugin=Mango 12	id=clap:org.openstudio.mango-12	format=clap	body=params
+# Drums pushed into the converter: the input gain works the 12 bits, the filter keeps only the body.
+# A gain's value is a step count from the parameter's reported minimum (-12 dB): 120 = 0 dB, 180 = +6 dB.
+Tune = 0
+Fine = 0
+Range = 0
+Gain In = 180
+Gain Out = 120
+Link = 0
+Filter = 80
+Route = 0
+Mix = 100
+Crush = 0

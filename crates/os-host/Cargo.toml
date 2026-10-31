@@ -5,9 +5,6 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[lib]
-doctest = false
-
 [dependencies]
 os-engine.workspace = true
 libloading = "0.8"

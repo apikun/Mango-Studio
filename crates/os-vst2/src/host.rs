@@ -20,7 +20,7 @@ use crate::abi::{host_op, Effect, TimeInfo, HOST_SUPPORTS};
 /// What the host reports as its VST version.
 const HOST_VERSION: isize = 2400;
 /// The host's vendor and product name.
-const HOST_NAME: &str = "Lemon Studio";
+const HOST_NAME: &str = "Mango Studio";
 
 /// What a plugin told the host, and what it reads from it (shared with the instance).
 pub struct Shared {

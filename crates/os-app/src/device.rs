@@ -48,7 +48,7 @@ pub(crate) fn heal_sound_server() {
     #[cfg(target_os = "linux")]
     if !cfg!(test) || HEAL_IN_TESTS.load(Ordering::Relaxed) {
         for card in sound_server::heal() {
-            eprintln!("sound server: opened {card} again (it gave up while Lemon Studio had it through ALSA)");
+            eprintln!("sound server: opened {card} again (it gave up while Mango Studio had it through ALSA)");
         }
     }
 }
@@ -228,7 +228,6 @@ impl Mix {
             }
             i += 1;
         }
-        crate::audio_log::push(&self.sum, w);
         &self.sum
     }
 }
@@ -394,6 +393,14 @@ pub fn last() -> Option<DeviceInfo> {
     LAST.lock().ok()?.as_ref().map(|(_, i)| i.clone())
 }
 
+/// A test's device, as if it had opened (`last` says so).
+#[cfg(test)]
+pub(crate) fn set_test_device(info: DeviceInfo) {
+    if let Ok(mut l) = LAST.lock() {
+        *l = Some((AudioCfg::current(), info));
+    }
+}
+
 /// Counts the devices opened: a change means `last` is another (or the same opened again).
 pub fn opens() -> u64 {
     OPENS.load(Ordering::Acquire)
@@ -461,6 +468,15 @@ pub(crate) struct Open {
 
 /// A mixer track hears its input or is armed (`want_inputs`).
 static INPUT_WANTED: AtomicBool = AtomicBool::new(false);
+
+/// The system input device's name while its stream is open (`sync_inputs` keeps it), for a take that records from it
+/// instead of opening the device again.
+static INPUT_OPEN: Mutex<Option<String>> = Mutex::new(None);
+
+/// The system input device the mixer's inputs come from while it is open (`None`: none, or an ASIO driver's).
+pub(crate) fn system_input_name() -> Option<String> {
+    INPUT_OPEN.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
 
 /// Whether a mixer track with an input chosen hears it or is armed: the system's input device is open with the output
 /// only then (`OutputDevice::sync_inputs`).
@@ -603,12 +619,17 @@ impl OutputDevice {
     /// none does (an ASIO driver's inputs open with it). What went wrong opening it, once.
     pub(crate) fn sync_inputs(&mut self) -> Option<String> {
         let want = INPUT_WANTED.load(Ordering::Relaxed);
-        let o = self.open.as_mut().filter(|o| o.info.host != ASIO)?;
+        let Some(o) = self.open.as_mut().filter(|o| o.info.host != ASIO) else {
+            *INPUT_OPEN.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            return None;
+        };
         if o.input.as_ref().is_some_and(|i| i.failed()) {
             o.input = None;
             o.input_failed = true;
             return Some("The audio input stopped".into());
         }
+        // A take records from this stream while it serves the device it asks for (`system_input_name`).
+        *INPUT_OPEN.lock().unwrap_or_else(|e| e.into_inner()) = o.input.as_ref().map(|i| i.name.clone());
         if !want {
             (o.input, o.input_failed) = (None, false);
             return None;
@@ -795,12 +816,20 @@ fn open_system(cfg: &AudioCfg, xruns: &Arc<AtomicU64>) -> Result<Open, String> {
     let mut stream = build_any(&device, format, &config, mix(), &errors);
     if stream.is_err() && fixed.is_some() {
         // A buffer length the device refuses: its own.
+        crate::audiolog::log(&format!(
+            "open: {} refused the buffer {:?} ({:?}); its own",
+            out.host, config.buffer_size, stream.as_ref().err()
+        ));
         config.buffer_size = BufferSize::Default;
         fixed = None;
         stream = build_any(&device, format, &config, mix(), &errors);
     }
     let stream = stream?;
     stream.play().map_err(|e| e.to_string())?;
+    crate::audiolog::log(&format!(
+        "device open: host {host} rate {} channels {} format {format:?} fixed {fixed:?} buffers {buffers:?}",
+        config.sample_rate, config.channels
+    ));
     let info = DeviceInfo { host, name: out.name, rate: config.sample_rate, fixed, buffers, channels: config.channels, inputs: 0, out_names: Vec::new(), in_names: Vec::new(), input_latency: None, rates: Vec::new(), sizes: Vec::new(), latency: None, instead: None };
     Ok(Open { _stream: Stream::Cpal(stream), inbox, outbox, info, note: None, failed: errors.failed, fault: errors.fault, input: None, input_failed: false })
 }
@@ -816,6 +845,7 @@ struct Errors {
 impl Errors {
     fn report(&self, e: cpal::Error) {
         use cpal::ErrorKind::*;
+        crate::audiolog::log(&format!("stream error: {e} (kind {:?})", e.kind()));
         match e.kind() {
             Xrun => self.xrun(),
             // The stream plays on (moved to the new default device, or at a normal priority).
@@ -861,10 +891,36 @@ where
     T: SizedSample + FromSample<f32>,
 {
     let channels = usize::from(config.channels);
+    // Linux: the callback's thread at real-time priority (`crate::rt`). It cannot wait for rtkit itself: it hands its
+    // id over on its first block, and a helper asks for it.
+    #[cfg(target_os = "linux")]
+    let callback_tid = {
+        let tid = std::sync::Arc::new(std::sync::atomic::AtomicI32::new(0));
+        let seen = tid.clone();
+        std::thread::spawn(move || {
+            let t0 = std::time::Instant::now();
+            while t0.elapsed() < std::time::Duration::from_secs(5) {
+                match seen.load(std::sync::atomic::Ordering::Acquire) {
+                    0 => std::thread::sleep(std::time::Duration::from_millis(5)),
+                    t => {
+                        if let Err(e) = crate::rt::promote(t) {
+                            eprintln!("Audio: the device callback runs at normal priority ({e})");
+                        }
+                        return;
+                    }
+                }
+            }
+        });
+        tid
+    };
     device
         .build_output_stream::<T, _, _>(
             config.clone(),
             move |out: &mut [T], _| {
+                #[cfg(target_os = "linux")]
+                if callback_tid.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+                    callback_tid.store(crate::rt::tid(), std::sync::atomic::Ordering::Release);
+                }
                 let stereo = mix.block(out.len() / channels);
                 // Left and right on the first two channels (a mono device gets the left), silence on the others.
                 for (frame, s) in out.chunks_mut(channels).zip(stereo.chunks_exact(2)) {

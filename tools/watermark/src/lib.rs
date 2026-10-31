@@ -50,9 +50,11 @@ mod tests {
     const SHARED_NOTE: &str = "It also holds others' work, which keeps its authors' copyright and licence, named below.";
 
     /// The folders of third-party sources kept unchanged (paths from the repository root), which keep their own headers.
-    const VENDORED: [&str; 1] = [
+    const VENDORED: [&str; 2] = [
         // The ASIO SDK's host files (GPL-3.0 option), built by asio-sys.
         "crates/os-app/asiosdk/",
+        // cpal (Apache-2.0), the audio IO, with the port's AAudio additions (THIRD-PARTY-NOTICES.txt).
+        "vendor/cpal/",
     ];
 
     /// The files that hold others' work (paths from the repository root) and their licence expression.

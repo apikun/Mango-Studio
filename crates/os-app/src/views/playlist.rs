@@ -1,15 +1,18 @@
 // Copyright (C) 2026 ItsAlphaNeon
+// Copyright (C) 2026 Artig3nce
+// Copyright (C) 2026 battlemountain2
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
 //! Playlist window: tools, picker, track headers, ruler, markers, clips, overlays and popup menus.
 // spec: ui/main-window.md §5–6; ui/playlist.md
 
-use os_model::{AutoMode, Clip, ClipSource, TimeMarker};
+use os_model::{AutoMode, ChannelKind, Clip, ClipSource, TimeMarker};
 use os_ui::kit::lemon as lk;
 use os_theme::waves::Waves;
 use os_ui::{Color, Font, Rect};
 
+use super::browser::Item;
 use super::{resize_zones, rgb, window_body, FrameInfo};
 use crate::app::{Action, Seg, State, Ui, Win};
 use crate::icons::{self, Icon};
@@ -58,7 +61,7 @@ fn cc(t: &os_theme::Palette, v: u32) -> Color {
 }
 /// Tool button centres in the title bar, relative to the window's left edge (§1: 275..442 at x 209).
 const TOOL_X: [f32; 9] = [66.0, 86.0, 108.0, 129.0, 150.0, 171.0, 192.0, 213.0, 233.0];
-const TOOL_ICONS: [Icon; 9] =
+pub(crate) const TOOL_ICONS: [Icon; 9] =
     [Icon::Pencil, Icon::Brush, Icon::Delete, Icon::Mute, Icon::Slip, Icon::Slice, Icon::Select, Icon::Zoom, Icon::Speaker];
 /// Picker item pitch (§1): the measured 30 px rows; taller items show a title strip of this height over their
 /// preview.
@@ -70,23 +73,22 @@ pub fn paint(ui: &mut Ui, s: &State, r: Rect, f: &FrameInfo) {
     window_body(ui, r);
     let outer = r;
     let arr = pl::arrangement_name(s);
-    let title = format!("Arranger - {arr}  \u{203a}  {}  \u{203a}", pl::source_name(s, pl::source(s)));
+    let title = format!("Playlist - {arr}  \u{203a}  {}  \u{203a}", pl::source_name(s, pl::source(s)));
     // The grid covers most of the window and is painted all over (rows and gaps): the frame skips it.
     let (fr, fc) = super::frame_rects(s, Win::Playlist, r);
     let cover = grid_rect(s, fr, fc);
     ui.c.set_cover((fr.h >= 2.0 * crate::app::TITLE_H).then_some(cover));
     let (r, client) = super::framed(ui, s, Win::Playlist, r, &title, 281.0, true);
     ui.c.set_cover(None);
+    // The window's own rim, like the toolbar readouts (theme token `display_edge`).
+    super::display_edge(ui.c, t, outer, if super::lemon(ui) { os_ui::kit::lemon::r_panel(t) } else { 0.0 });
     // The arrangement name opens the arrangement menu; hovered it turns orange with a down arrow (§12, as FL).
     {
         let f = Font::new(17);
-        let x0 = r.x + 281.0 + ui.c.text_width(f, "Arranger - ");
+        let x0 = r.x + 281.0 + ui.c.text_width(f, "Playlist - ");
         let w = ui.c.text_width(f, &arr);
         let arrow_w = ui.c.text_width(f, "  \u{203a}  ");
-        // Short of the window buttons, as the title (a narrow window cuts it).
-        let room = Rect::new(r.x, r.y, super::title_room(r, true).max(0.0), 23.0);
-        let hit = Rect::new(x0 - 2.0, r.y, w + arrow_w * 0.7, 22.0).intersect(&room);
-        ui.c.push_clip(room);
+        let hit = Rect::new(x0 - 2.0, r.y, w + arrow_w * 0.7, 22.0);
         if ui.hit(hit, Action::PlArrangement, "Arrangements (switch, add, clone, rename, delete)") {
             let bg = ui.t.window_title;
             ui.c.fill_rect(Rect::new(x0 - 1.0, r.y + 1.0, w + arrow_w * 0.7, 20.0), bg);
@@ -95,13 +97,12 @@ pub fn paint(ui: &mut Ui, s: &State, r: Rect, f: &FrameInfo) {
             let ax = x0 + w + arrow_w * 0.35;
             ui.c.fill_polygon(&[(ax - 4.0, r.y + 9.0), (ax + 4.0, r.y + 9.0), (ax, r.y + 14.0)], hot);
         }
-        ui.c.pop_clip();
     }
 
     // Title-bar tools: ▸ options, snap magnet, then the nine tools (§1, §3).
     let ty = r.y + 2.0;
     let b = Rect::new(r.x + 13.0 - 9.0, ty, 18.0, 18.0);
-    let hov = ui.hit(b, Action::PlOptions, "Arranger options");
+    let hov = ui.hit(b, Action::PlOptions, "Playlist options");
     icons::draw(ui.c, Icon::ArrowRight, b, if hov { t.glyph } else { t.text });
     let b = Rect::new(r.x + 33.0 - 9.0, ty, 18.0, 18.0);
     let hov = ui.hit(b, Action::PlSnap, format!("Snap: {}", s.playlist.snap.label()));
@@ -153,7 +154,7 @@ pub fn paint(ui: &mut Ui, s: &State, r: Rect, f: &FrameInfo) {
     let head_w = 98.0;
     let grid = grid_rect(s, r, client);
     debug_assert_eq!(grid, cover);
-    let (grid_x, grid_y, grid_w) = (grid.x, grid.y, grid.w);
+    let (grid_x, grid_w) = (grid.x, grid.w);
     let has_markers = !pl::markers(s).is_empty();
     let lane_y = client.y + 42.0;
     let g = PGeom::new(s, grid);
@@ -166,7 +167,10 @@ pub fn paint(ui: &mut Ui, s: &State, r: Rect, f: &FrameInfo) {
     let last = pl::clips(s).iter().map(|c| c.end() as f32 / bar_t).fold(0.0, f32::max);
     let bars = (last.ceil() + 16.0).max(100.0);
     let (hbar, vbar) = bar_sizes();
-    let over = Rect::new(grid_x, client.y + 1.0, grid_w, hbar);
+    // The same arithmetic `overview_rect` does (`grid.y` is `grid_rect`'s), so the two agree to the bit at the
+    // fractional band scales (`views::toolbar_scale_fit`).
+    let grid_y = client.y + 42.0 + if has_markers { MARKER_H } else { 0.0 };
+    let over = Rect::new(grid_x, grid_y - if has_markers { MARKER_H } else { 0.0 } - 41.0, grid_w, hbar);
     debug_assert_eq!(over, overview_rect(s, grid));
     super::scrollbar(ui, over, false, sx, grid_w, bars * bar_w, crate::app::Scroll::PlaylistX);
     // High visibility: two lighter edges at the top and bottom of the track, around the thumb (spec:
@@ -189,7 +193,7 @@ pub fn paint(ui: &mut Ui, s: &State, r: Rect, f: &FrameInfo) {
     }
 
     // Grid background and lines; rows follow the track layout (collapsed groups' members are strips, §6a).
-    ui.hit(grid, Action::PlaylistArea, "Arranger");
+    ui.hit(grid, Action::PlaylistArea, "Playlist");
     let mut visible = Vec::new();
     let mut row = g.track_at(grid.y);
     while row < TRACKS && g.y_of(row) < grid.bottom() {
@@ -254,11 +258,23 @@ pub fn paint(ui: &mut Ui, s: &State, r: Rect, f: &FrameInfo) {
         }
         None => {}
     }
-    // Playhead.
-    if f.playing && f.song {
-        let x = g.x_of(f.tick as f32);
-        ui.c.fill_rect(Rect::new(x, grid.y, 1.5, grid.h), t.playhead);
+    // The drop zone of a browser drag (issue #4): a translucent clip where the drop would land, at the snapped
+    // start, named like the clip will be. Under the playhead, after FL's.
+    if let Some(d) = &s.browser_drag {
+        if let Some(dg) = drop_ghost(s, grid, d.x, d.y) {
+            let rad = lk::r_btn(t).min(dg.rect.w / 2.0).min(dg.rect.h / 2.0);
+            ui.c.fill_rrect(dg.rect, rad, t.tx(0xffffff).with_alpha(26));
+            ui.c.stroke_rrect(dg.rect, rad, 1.0, t.tx(0xd0d8dc).with_alpha(130));
+            if dg.rect.w > 24.0 && dg.rect.h > TITLE_H {
+                ui.c.fill_rect(Rect::new(dg.rect.x + 1.0, dg.rect.y + TITLE_H, dg.rect.w - 2.0, 1.0), t.tx(0xd0d8dc).with_alpha(70));
+                ui.c.text_clip(Font::new(12), dg.rect.x + 5.0, dg.rect.y, dg.rect.w - 10.0, t.tx(0xd6dfe4).with_alpha(210), &dg.label);
+            }
+        }
     }
+    // Playhead: on the song position while playing the song, else on the start position (under the ruler's flag).
+    let x = g.x_of(if f.playing && f.song { f.tick as f32 } else { s.playlist.pos as f32 });
+    // A thin light line through the tracks, after FL's; the flag on the ruler keeps the playhead colour.
+    ui.c.fill_rect(Rect::new(x, grid.y, 1.0, grid.h), t.tx(0xd8e0e4).with_alpha(150));
     ui.c.pop_clip();
 
     // Track headers (§6, §6a).
@@ -298,6 +314,60 @@ fn bar_sizes() -> (f32, f32) {
 pub fn grid_of(s: &State) -> Option<Rect> {
     let (fr, fc) = super::frame_rects(s, Win::Playlist, s.win_rect(Win::Playlist));
     (fr.h >= 2.0 * crate::app::TITLE_H).then(|| grid_rect(s, fr, fc))
+}
+
+/// The drop zone a browser drag shows on the playlist (issue #4): the ghost's rect (the clip the drop makes) and its
+/// name.
+pub struct DropGhost {
+    pub rect: Rect,
+    pub label: String,
+}
+
+/// What a browser drag at (x, y) over `grid` would place, for the drop zone's ghost (issue #4): the clip the drop
+/// makes at the snapped start (`alt`: no snap, as a drop makes), or None off `grid`, with no drag in flight, or for
+/// an item that places no clip (an effect, a preset, a parameter, a file). A sample's length is the whole sample at
+/// the tempo, 0 until its waveform is loaded; a pattern's and an audio or automation channel's their own
+/// (`pl::source_len`).
+pub fn drop_ghost(s: &State, grid: Rect, x: f32, y: f32) -> Option<DropGhost> {
+    let d = s.browser_drag.as_ref()?;
+    let item = &d.item;
+    let alt = d.alt;
+    if !grid.contains(x, y) {
+        return None;
+    }
+    let g = PGeom::new(s, grid);
+    let (track, tick) = (g.track_at(y), pl::snap_place(s, &g, g.tick_at(x), alt));
+    let (length, label) = match item {
+        Item::Sample(path) => {
+            let label = std::path::Path::new(path).file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            // An unreadable sample places nothing (the drop reports "Could not read"): no ghost either.
+            let len = pl::sample_len(s, path);
+            if len == 0 {
+                return None;
+            }
+            (len, label)
+        }
+        Item::Pattern(n) => {
+            let src = ClipSource::Pattern(*n);
+            (pl::source_len(s, src), pl::source_name(s, src))
+        }
+        Item::Channel(c) => {
+            // What a drop places (browser_drop): audio clips and automation only; the message a generator channel's
+            // drop gives is its own.
+            let ch = s.project.channels.get(*c)?;
+            if !matches!(ch.kind, ChannelKind::AudioClip | ChannelKind::Automation) {
+                return None;
+            }
+            let src = ClipSource::Channel(ch.index);
+            (pl::source_len(s, src), pl::source_name(s, src))
+        }
+        // A generator lands on the tracks through the plugin menu's own path (issue #2, its own change); an effect,
+        // a preset, a parameter and a file place nothing.
+        _ => return None,
+    };
+    // The rect of the clip the drop makes (`clip_rect` reads a clip's position, length and track only).
+    let c = Clip { position: tick, length, track, source: ClipSource::Pattern(0), muted: false, window: None, raw: Clip::TEMPLATE };
+    Some(DropGhost { rect: g.clip_rect(&c), label })
 }
 
 /// The parts of a playlist painted with its grid at `grid` that follow the view (`App::playlist_scrolled`): the
@@ -541,12 +611,12 @@ fn preview(ui: &mut Ui, s: &State, src: ClipSource, r: Rect, tall: bool, face: C
             let per = w.peaks.len() as f32 / n as f32;
             let (mut top, mut bottom) = (Vec::with_capacity(n), Vec::with_capacity(n));
             for i in 0..n {
-                let a = (i as f32 * per) as usize;
+                let a = ((i as f32 * per) as usize).min(w.peaks.len() - 1);
                 let b = (((i + 1) as f32 * per) as usize).clamp(a + 1, w.peaks.len());
-                let (lo, hi) = w.peaks[a.min(w.peaks.len() - 1)..b].iter().fold((f32::MAX, f32::MIN), |(lo, hi), &(x, y)| (lo.min(x), hi.max(y)));
+                let Some((lo, hi)) = w.peak_range(a, b) else { continue };
                 let x = r.x + i as f32 + 0.5;
-                top.push((x, mid - hi.clamp(-1.0, 1.0) * amp - 0.35));
-                bottom.push((x, mid - lo.clamp(-1.0, 1.0) * amp + 0.35));
+                top.push((x, mid - (hi * 1.5).clamp(-1.0, 1.0) * amp - 0.6));
+                bottom.push((x, mid - (lo * 1.5).clamp(-1.0, 1.0) * amp + 0.6));
             }
             top.extend(bottom.into_iter().rev());
             ui.c.fill_polygon(&top, wave);
@@ -904,7 +974,18 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
         }
     }
     if r.w > 16.0 {
-        ui.c.text_clip(Font::new(12), inner.x + 14.0, inner.y - 1.0, inner.w - 16.0, ic, &pl::source_name(s, c.source));
+        let mut name = pl::source_name(s, c.source);
+        if let ClipSource::Channel(ch) = c.source {
+            if s.project.channel(ch).is_some_and(|chan| chan.sound.fx.flags & os_model::SampleFx::REVERSE != 0) {
+                name.push_str(" [REV]");
+            }
+            let g_val = c.gain();
+            if (g_val - 1.0).abs() > 0.005 {
+                let db = 20.0 * g_val.log10();
+                name.push_str(&format!(" ({:+.1} dB)", db));
+            }
+        }
+        ui.c.text_clip(Font::new(12), inner.x + 14.0, inner.y - 1.0, inner.w - 16.0, ic, &name);
     }
     // Content.
     let content = if c.muted { dim(text).with_alpha(90) } else { dim(cc(t, NOTE)) };
@@ -949,10 +1030,13 @@ fn pattern_notes(ui: &mut Ui, s: &State, g: &PGeom, c: &Clip, n: u16, body: Body
     }
     let br = body.r;
     let (w0, wl) = pl::window(s, c);
-    let (lo, hi) = p.notes.iter().fold((u16::MAX, 0u16), |(lo, hi), n| (lo.min(n.key), hi.max(n.key)));
-    let span = f32::from(hi - lo + 1);
-    let h = ((br.h - 4.0) / span).clamp(1.0, 3.0);
-    let usable = br.h - 4.0 - h;
+    let mut pitches: Vec<u16> = p.notes.iter().map(|note| note.key).collect();
+    pitches.sort_unstable();
+    pitches.dedup();
+    let pitch_count = pitches.len() as f32;
+    let h = (((br.h - 4.0).max(1.0) / pitch_count * 0.45).clamp(1.5, 2.5)).min(br.h.max(1.0));
+    let usable = (br.h - 4.0 - h).max(0.0);
+    let pad = (br.h - h - usable) / 2.0;
     let step = (g.ppq / 4).max(1);
     // Only the notes reaching the painted part of the body.
     let Some(area) = ui.c.paint_bounds() else { return };
@@ -971,10 +1055,14 @@ fn pattern_notes(ui: &mut Ui, s: &State, g: &PGeom, c: &Clip, n: u16, body: Body
         if x1 < x_min || x0 > x_max {
             continue;
         }
-        let k = if span <= 1.0 { 0.5 } else { f32::from(note.key - lo) / (span - 1.0) };
-        let y = pl::snap(f64::from(br.y) + 2.0 + f64::from(usable * (1.0 - k)));
+        let k = if pitch_count <= 1.0 {
+            0.5
+        } else {
+            pitches.binary_search(&note.key).expect("note pitch is in the preview") as f32 / (pitch_count - 1.0)
+        };
+        let y = pl::snap(f64::from(br.y + pad + usable * (1.0 - k)));
         let y1 = pl::snap(f64::from(y) + f64::from(h));
-        ui.c.fill_rect(Rect::new(x0, y, (x1 - x0 - 1.0).max(1.0), y1 - y), col);
+        ui.c.fill_rect(Rect::new(x0, y, (x1 - x0).max(2.0), y1 - y), col);
     }
 }
 
@@ -1022,19 +1110,32 @@ fn waveform(ui: &mut Ui, s: &State, g: &PGeom, c: &Clip, ch: u16, body: Body, co
         }
         k
     };
+    let reversed = s.project.channel(ch).is_some_and(|chan| chan.sound.fx.flags & os_model::SampleFx::REVERSE != 0);
+    let total_peaks = w.peaks.len();
     // Peaks from `da` to `db` px into the body.
     let range = |da: f64, db: f64| -> Option<(f32, f32)> {
         let ms_a = w0 + da / ppt * ms_per_tick;
         let ms_b = w0 + db / ppt * ms_per_tick;
         let fa = (ms_a * frames_per_ms).max(0.0) as usize / w.per;
         let fb = ((ms_b * frames_per_ms).max(0.0) as usize / w.per).max(fa + 1);
-        if fa >= w.peaks.len() {
-            return None;
+        if reversed {
+            if fa >= total_peaks {
+                return None;
+            }
+            let fb = fb.min(total_peaks);
+            let r_start = total_peaks.saturating_sub(fb);
+            let r_end = total_peaks.saturating_sub(fa);
+            if r_start >= total_peaks || r_start >= r_end {
+                return None;
+            }
+            w.peak_range(r_start, r_end)
+        } else {
+            if fa >= total_peaks {
+                return None;
+            }
+            let fb = fb.min(total_peaks);
+            w.peak_range(fa, fb)
         }
-        let fb = fb.min(w.peaks.len());
-        // Cap the work per column when zoomed far out.
-        let stride = ((fb - fa) / 32).max(1);
-        Some(w.peaks[fa..fb].iter().step_by(stride).fold((f32::MAX, f32::MIN), |(lo, hi), &(a, b)| (lo.min(a), hi.max(b))))
     };
     let n = ((x1 - body.x) / px - j0).ceil().max(0.0) as usize;
     let mut top: Vec<(f32, f32)> = Vec::with_capacity(n + 2);
@@ -1045,11 +1146,11 @@ fn waveform(ui: &mut Ui, s: &State, g: &PGeom, c: &Clip, ch: u16, body: Body, co
         let d = j * px;
         let Some((lo, hi)) = range(d, d + px) else { break };
         let k = shape(d + px * 0.5) * amp;
-        let (mut yt, mut yb) = (mid - f64::from(hi.clamp(-1.0, 1.0)) * k, mid - f64::from(lo.clamp(-1.0, 1.0)) * k);
-        // Keep a hairline where the column is flat (a DC sample, silence).
-        if yb - yt < 0.7 {
+        let (mut yt, mut yb) = (mid - f64::from((hi * 1.7).clamp(-1.0, 1.0)) * k, mid - f64::from((lo * 1.7).clamp(-1.0, 1.0)) * k);
+        // Keep a visible hairline where the column is flat (a DC sample, silence).
+        if yb - yt < 1.4 {
             let m = (yt + yb) / 2.0;
-            (yt, yb) = (m - 0.35, m + 0.35);
+            (yt, yb) = (m - 0.7, m + 0.7);
         }
         let (yt, yb) = (pl::snap(yt), pl::snap(yb));
         let xm = pl::snap((x + px * 0.5).min(x1));
@@ -1073,10 +1174,19 @@ fn waveform(ui: &mut Ui, s: &State, g: &PGeom, c: &Clip, ch: u16, body: Body, co
     let tones = colours.filter(|(w, _)| w.on()).and_then(|_| s.playlist.tones(&path));
     match (colours, tones) {
         (Some((waves, dim)), Some(tones)) => {
-            let frames = |d: f64| (w0 + d / ppt * ms_per_tick) * frames_per_ms;
+            let total_f = w.frames as f64;
+            let frames = |d: f64| {
+                let f = (w0 + d / ppt * ms_per_tick) * frames_per_ms;
+                if reversed { (total_f - f).max(0.0) } else { f }
+            };
             ui.c.fill_polygon_columns(&outline, &mut |x| {
                 let d = ((f64::from(x) - body.x) / px).floor() * px;
-                let t = tones.span(frames(d), frames(d + px));
+                let (fa, fb) = if reversed {
+                    (frames(d + px), frames(d))
+                } else {
+                    (frames(d), frames(d + px))
+                };
+                let t = tones.span(fa, fb);
                 waves.colour(t.centroid(), t.band_powers()).map_or(col, dim)
             });
         }
@@ -1129,6 +1239,12 @@ fn fades(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip, edges: Body, wav
         curve(ui, edges.x, f64::from(xf.x1), xf.t_in, false);
         curve(ui, edges.x, f64::from(xf.x1), xf.t_out, true);
     }
+    // Subtle gain line when clip gain was adjusted, even when not hovered.
+    let g_val = c.gain();
+    let has_gain = (g_val - 1.0).abs() > 0.005;
+    if has_gain && !hovered {
+        ui.c.line(body.x + 2.0, body.bottom() - 1.5, body.right() - 2.0, body.bottom() - 1.5, 1.0, white.with_alpha(70));
+    }
     // Handles only while the mouse is over the clip (as FL): white, brighter on the one under the mouse.
     if !hovered {
         return;
@@ -1138,14 +1254,37 @@ fn fades(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip, edges: Body, wav
     let k = 6.0;
     ui.c.fill_polygon(&[(fx_in, body.y), (fx_in + k, body.y), (fx_in, body.y + k)], col(pl::Handle::FadeIn));
     ui.c.fill_polygon(&[(fx_out, body.y), (fx_out - k, body.y), (fx_out, body.y + k)], col(pl::Handle::FadeOut));
+
+    // Horizontal gain line across the clip bottom
+    let gain_line_alpha = if lit(pl::Handle::Gain) { 220 } else { 120 };
+    ui.c.line(body.x + 2.0, body.bottom() - 1.5, body.right() - 2.0, body.bottom() - 1.5, 1.2, white.with_alpha(gain_line_alpha));
+
     // The gain handle: a half disc on the body's bottom edge (a shape, not a clipped circle: clips are costly).
     let (gx, gy) = (body.cx(), body.bottom());
-    let r = if lit(pl::Handle::Gain) { 5.0 } else { 4.0 };
+    let r = if lit(pl::Handle::Gain) { 5.5 } else { 4.0 };
     let half: Vec<(f32, f32)> = (0..=8).map(|k| {
         let a = std::f32::consts::PI * k as f32 / 8.0;
         (gx - r * a.cos(), gy - r * a.sin())
     }).collect();
     ui.c.fill_polygon(&half, col(pl::Handle::Gain));
+
+    // Floating badge for lit gain handle:
+    if lit(pl::Handle::Gain) {
+        let db = 20.0 * g_val.log10();
+        let text = format!("{:+.1} dB", db);
+        let font = Font::new(10);
+        let tw = ui.c.text_width(font, &text);
+        let bw = tw + 8.0;
+        // Kept inside the body, left and top first: a clip narrower or lower than the badge (a short sample, a small
+        // track) has no room for both edges.
+        let bx = (gx - bw / 2.0).min(body.right() - bw - 2.0).max(body.x + 2.0);
+        let by = (gy - 20.0).min(body.bottom() - 16.0).max(body.y + 2.0);
+        let br = Rect::new(bx, by, bw, 14.0);
+        ui.c.fill_rrect(br, 3.0, ui.t.s(0x181e22).with_alpha(230));
+        ui.c.stroke_rrect(br, 3.0, 1.0, white.with_alpha(160));
+        ui.c.text(font, bx + 4.0, by + 1.0, white, &text);
+    }
+
     if hovered {
         // The crossfade's handle: a big filled circle at the later clip's gain in the middle, a small ring at the
         // earlier clip's (§9a); where they meet the ring shows inside the circle.
@@ -1210,7 +1349,7 @@ fn curve(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip, ch: u16, edges: 
     area.push((x1, body.bottom()));
     area.push((x0, body.bottom()));
     ui.c.fill_polygon(&area, bg.shade(0.07));
-    ui.c.polyline(&pts, 1.5, col);
+    ui.c.polyline(&pts, 2.25, col);
     // Points and tension handles while the mouse is over the clip (§8).
     if s.playlist.hover_clip == Some(i) {
         for (k, p) in a.points.iter().enumerate() {
@@ -1274,13 +1413,13 @@ fn header(ui: &mut Ui, s: &State, g: &PGeom, row: u16, x: f32, w: f32) {
         let left = if lead { hr.x + k } else { hr.x };
         ui.c.fill_rect(Rect::new(left, hr.bottom() - k, hr.right() - left, k), bottom);
     }
-    ui.hit(hr, Action::PlHeader(row), "Track (double-click: rename, right-click: menu, Shift+wheel: move)");
+    ui.hit(hr, Action::PlHeader(row), "Track (drop an instrument on it: it lands here, double-click: rename, right-click: menu, Shift+wheel: move)");
     if strip {
         return;
     }
     // The LED and "…" keep their distance from the row's bottom when the track height changes (Alt+wheel); short
     // rows drop the "…" and keep the name clear of the LED.
-    let short = g.rows.row_h < pl::ROW_H - 8.0;
+    let short = h < pl::ROW_H - 8.0;
     let led = Rect::new(hr.right() - 19.0, (h - gap - 15.0).max(1.0) + hr.y, 14.0, 14.0);
     ui.hit(led, Action::PlLed(row), "Mute track (right-click / Ctrl+click: solo)");
     let text = if colored.is_some() { ui.t.tx(0xdce8f0) } else { t.text_faint };
@@ -1290,8 +1429,13 @@ fn header(ui: &mut Ui, s: &State, g: &PGeom, row: u16, x: f32, w: f32) {
         let name_w = if short { hr.w - 26.0 } else { hr.w - 4.0 };
         ui.c.text_clip(Font::new(16), hr.x + 2.0, hr.y + 1.0, name_w, text, &pl::track_name(s, row));
     }
+    // The "..." handle (FL's): drag to size this track, click to shrink it or bring it back. A short track keeps it
+    // as its bottom edge.
+    let grip = if short { Rect::new(hr.x, hr.bottom() - 5.0, (hr.w - 24.0).max(8.0), 5.0) } else { Rect::new(hr.x, led.y - 2.0, 26.0, 16.0) };
+    let hov = ui.hit(grip, Action::PlTrackSize(row), "Track height: drag to size this track, click to shrink it or bring it back");
     if !short {
-        ui.c.text(Font::new(14), hr.x + 14.0, led.y - 6.0, text.shade(-0.2), "...");
+        // Under the start of the name.
+        ui.c.text(Font::new(14), hr.x + 2.0, led.y - 6.0, if hov { text } else { text.shade(-0.2) }, "...");
     }
     let info = pl::track_info(s, row);
     if lead {
@@ -1317,7 +1461,7 @@ fn header(ui: &mut Ui, s: &State, g: &PGeom, row: u16, x: f32, w: f32) {
             green,
         );
     } else {
-        super::led(ui, led.cx(), led.cy(), on);
+        super::led_small(ui, led.cx(), led.cy(), on);
     }
 }
 
@@ -1344,10 +1488,17 @@ pub fn paint_overlays(ui: &mut Ui, s: &State) {
         // At the Pop-ups scaling (spec: ui/ui-scaling.md §1).
         ui.scaled(super::popup_scale(ui.c.scale), |ui, k| {
             let (w, h) = ui.c.size();
-            let (_, rows) = popup_list(ui, &p.items, p.x / k, p.y / k, (w, h), p.sub, false, p.scroll[0]);
+            let (_, rows) = popup_list(ui, &p.items, p.x / k, p.y / k, (w, h), p.sub, 0, p.scroll[0]);
             if let Some(i) = p.sub {
                 if let (Some(item), Some(rr)) = (p.items.get(i), rows.get(i)) {
-                    popup_list(ui, &item.children, rr.right(), rr.y - 2.0, (w, h), None, true, p.scroll[1]);
+                    let open = s.playlist.popup_sub2.filter(|&(a, _)| a == i).map(|(_, b)| b);
+                    let (_, rows2) = popup_list(ui, &item.children, rr.right(), rr.y - 2.0, (w, h), open, 1, p.scroll[1]);
+                    // A submenu of the submenu, to the right of its row.
+                    if let Some(j) = open {
+                        if let (Some(inner), Some(r2)) = (item.children.get(j), rows2.get(j)) {
+                            popup_list(ui, &inner.children, r2.right(), r2.y - 2.0, (w, h), None, 2, 0);
+                        }
+                    }
                 }
             }
         });
@@ -1359,14 +1510,15 @@ pub fn paint_overlays(ui: &mut Ui, s: &State) {
     } else if let Some(e) = &s.playlist.edit {
         let t = ui.t;
         let r = Rect::new(e.at.0, e.at.1, 150.0, 20.0);
-        let hint = if let pl::EditTarget::MixerInsert(_) = e.target { "How many mixer tracks to insert: type a number, Enter inserts, Esc cancels" } else { "Type, Enter accepts, Esc cancels" };
-        ui.hit(r, Action::Swallow, hint);
+        ui.hit(r, Action::Swallow, "Type, Enter accepts, Esc cancels");
         ui.c.fill_rect(r, ui.t.s(0x0e1214));
         ui.c.stroke_rrect(r, 0.0, 1.0, t.glyph);
         ui.c.text_clip(Font::new(14), r.x + 4.0, r.y + 2.0, r.w - 8.0, t.text, &e.text);
         let cw = ui.c.text_width(Font::new(14), &e.text).min(r.w - 10.0);
         ui.c.fill_rect(Rect::new(r.x + 5.0 + cw, r.y + 3.0, 1.0, 14.0), t.text);
     }
+    // The plugin picker, above everything else.
+    super::plugin_picker::paint(ui, s);
 }
 
 // Row heights follow the display scale like FL's popup menus (spec: ui/ui-scaling.md §2).
@@ -1401,7 +1553,7 @@ fn any_enabled(items: &[pl::PItem]) -> bool {
 /// screen: the ones that fit from column `scroll` on, and a scroll bar under them (spec: ui/menus.md "Menus wider than
 /// the window").
 #[allow(clippy::too_many_arguments)]
-fn popup_list(ui: &mut Ui, items: &[pl::PItem], x: f32, y: f32, screen: (f32, f32), open: Option<usize>, sub: bool, scroll: usize) -> (Rect, Vec<Rect>) {
+fn popup_list(ui: &mut Ui, items: &[pl::PItem], x: f32, y: f32, screen: (f32, f32), open: Option<usize>, depth: u8, scroll: usize) -> (Rect, Vec<Rect>) {
     let t = ui.t;
     let font = Font::new(14);
     let mut lw: f32 = 80.0;
@@ -1430,6 +1582,7 @@ fn popup_list(ui: &mut Ui, items: &[pl::PItem], x: f32, y: f32, screen: (f32, f3
     let x = x.min(screen.0 - w - 2.0).max(0.0);
     let y = y.min(screen.1 - h - 2.0).max(0.0);
     let r = Rect::new(x, y, w, h);
+    let sub = depth > 0;
     let menu = if sub { crate::app::MENU_SUB } else { crate::app::MENU_POPUP };
     let mut rows = Vec::with_capacity(items.len());
     let lemon = super::lemon(ui);
@@ -1446,7 +1599,11 @@ fn popup_list(ui: &mut Ui, items: &[pl::PItem], x: f32, y: f32, screen: (f32, f3
         let at = |col: usize| r.x + m.border + (col as f32 - first as f32) * cw;
         let rr = Rect::new(at(col), r.y + m.border + off, cw - 2.0 * m.border, item_h(&m, it));
         rows.push(rr);
-        let action = if sub { Action::PlPopupSub(i) } else { Action::PlPopup(i) };
+        let action = match depth {
+            0 => Action::PlPopup(i),
+            1 => Action::PlPopupSub(i),
+            _ => Action::PlPopupSub2(i),
+        };
         if col < first || col >= first + shown {
             // The wheel still steps to its rows: where the scroll that shows the column puts them.
             if it.enabled && !it.head && !it.sep && !it.col {
@@ -1516,9 +1673,11 @@ fn popup_list(ui: &mut Ui, items: &[pl::PItem], x: f32, y: f32, screen: (f32, f3
             ui.c.text_right(font.italic(), right, rr.y + 3.0 + dy, sc, it.key);
         }
         if !it.children.is_empty() {
+            // As bright as the label, so it shows on the dark menus; dim when the entry is.
             let ax = rr.right() - 11.0;
-            ui.c.line(ax, my - 3.5, ax + 3.5, my, 1.2, t.menu_pop_dim);
-            ui.c.line(ax + 3.5, my, ax, my + 3.5, 1.2, t.menu_pop_dim);
+            let ink = if live { t.menu_pop_text } else { t.menu_pop_dim };
+            ui.c.line(ax, my - 3.5, ax + 3.5, my, 1.5, ink);
+            ui.c.line(ax + 3.5, my, ax, my + 3.5, 1.5, ink);
         }
     }
     if bar_h > 0.0 {

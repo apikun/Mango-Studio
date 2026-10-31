@@ -223,7 +223,7 @@ fn fader(ui: &mut Ui, id: &str, cx: f32, caption: &str) {
     ui.hit(hr, target);
 }
 
-/// The wordmark in the decay card's third row (where the original has its logo): the lemon and "LEMON" over a large
+/// The wordmark in the decay card's third row (where the original has its logo): the lemon and "MANGO" over a large
 /// "REVERB", centred between the second row's captions and the card's foot.
 fn logo(ui: &mut Ui) {
     let (big, small) = (Font::condensed(20, 0).bold(), Font::condensed(10, 0).bold());
@@ -264,6 +264,6 @@ pub fn hint(t: &Target, m: &dyn Model, names: &dyn Fn(&str) -> String) -> String
             format!("{}\t{on}", names(id))
         }
         Target::Room => "Room".into(),
-        Target::Logo => "Lemon Reverb".into(),
+        Target::Logo => "Mango Reverb".into(),
     }
 }

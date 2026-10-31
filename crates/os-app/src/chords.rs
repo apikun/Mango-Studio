@@ -115,12 +115,71 @@ pub const ENTRIES: [Entry; 88] = [
 /// The first scale; the entries before it are chords.
 pub const FIRST_SCALE: usize = 67;
 
+/// Scales FL's piano roll lists beyond the chords file's 22 (the Scale highlighting menu), numbered 89 and on.
+pub const EXTRA_SCALES: [Entry; 9] = [
+    e("Major Hexatonic", "", &[2, 2, 1, 2, 2]),
+    e("Major Persian", "", &[1, 3, 1, 1, 2, 3]),
+    e("Minor Romanian", "", &[2, 1, 3, 1, 2, 1]),
+    e("Egyptian", "", &[2, 3, 2, 3]),
+    e("Hirajoshi", "", &[2, 1, 4, 1]),
+    e("Iwato", "", &[1, 4, 1, 4]),
+    e("Locrian Super", "", &[1, 2, 1, 2, 2, 2]),
+    e("Phrygian Dominant", "", &[1, 3, 1, 2, 1, 2]),
+    e("Prometheus", "", &[2, 2, 2, 3, 1]),
+];
+
+/// The scales as FL's Scale highlighting menu lists them: FL's name for each, and the name of its entry. Scales FL has
+/// that this build lacks (Major Bulgarian, Major / Minor Polymode, Other Blues Nonatonic, Eastern, Piongio) are left
+/// out.
+const MENU_SCALES: [(&str, &str); 31] = [
+    ("Major (Ionian)", "Major"),
+    ("Major Bebop", "Major bebop"),
+    ("Major Hexatonic", "Major Hexatonic"),
+    ("Major Pentatonic", "Major pentatonic"),
+    ("Major Persian", "Major Persian"),
+    ("Minor Harmonic", "Minor Harmonic"),
+    ("Minor Hungarian", "Minor Hungarian"),
+    ("Minor Melodic", "Minor Melodic"),
+    ("Minor Natural (Aeolian)", "Minor Natural (Aeolian)"),
+    ("Minor Neapolitan", "Minor Neapolitan"),
+    ("Minor Pentatonic", "Minor pentatonic"),
+    ("Minor Romanian", "Minor Romanian"),
+    ("Other Arabic", "Arabic"),
+    ("Other Bebop Dominant", "Dominant bebop"),
+    ("Other Blues", "Blues"),
+    ("Other Diminished", "Diminished"),
+    ("Other Dorian", "Dorian"),
+    ("Other Egyptian", "Egyptian"),
+    ("Other Enigmatic", "Enigmatic"),
+    ("Other Hirajoshi", "Hirajoshi"),
+    ("Other Iwato", "Iwato"),
+    ("Other Japanese Insen", "Jap in sen"),
+    ("Other Locrian", "Locrian"),
+    ("Other Locrian Super", "Locrian Super"),
+    ("Other Lydian", "Lydian"),
+    ("Other Mixolydian", "Mixolydian"),
+    ("Other Neapolitan", "Neapolitan"),
+    ("Other Phrygian", "Phrygian"),
+    ("Other Phrygian Dominant", "Phrygian Dominant"),
+    ("Other Prometheus", "Prometheus"),
+    ("Other Whole Tone", "Whole tone"),
+];
+
+/// `MENU_SCALES` with each scale's entry number.
+pub fn menu_scales() -> Vec<(&'static str, usize)> {
+    MENU_SCALES
+        .iter()
+        .filter_map(|&(shown, name)| (FIRST_SCALE..=ENTRIES.len() + EXTRA_SCALES.len()).find(|&k| entry(k).is_some_and(|e| e.name == name)).map(|k| (shown, k)))
+        .collect()
+}
+
 /// Entries the file's separators come before (the headings "Chords" before 1 and "Scales" before 67 aside).
 pub const SEPARATED: [usize; 5] = [10, 15, 40, 55, 60];
 
-/// Entry `k` (1..=88).
+/// Entry `k` (1..=88, then `EXTRA_SCALES`).
 pub fn entry(k: usize) -> Option<&'static Entry> {
-    k.checked_sub(1).and_then(|i| ENTRIES.get(i))
+    let i = k.checked_sub(1)?;
+    ENTRIES.get(i).or_else(|| EXTRA_SCALES.get(i - ENTRIES.len()))
 }
 
 /// The name a menu shows for entry `k`: a chord's short name, a scale's name.
@@ -140,6 +199,13 @@ pub fn classes(k: usize, root: u8) -> [bool; 12] {
     on
 }
 
+/// Whether MIDI `key` belongs to the scale or chord `k` (1..=88) with root note `root` (0 = C).
+pub fn in_scale(root: u8, k: usize, key: i32) -> bool {
+    let pc = key.rem_euclid(12) as usize;
+    classes(k, root)[pc]
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,7 +215,7 @@ mod tests {
     fn entries_and_classes() {
         assert_eq!([entry(1), entry(7), entry(10), entry(72)].map(|e| e.unwrap().intervals), [&[4, 3][..], &[4, 4], &[4, 3, 2], &[3, 2, 2, 3]]);
         assert_eq!((label(1), label(FIRST_SCALE), label(88), label(50)), ("Major", "Major", "Locrian", "Maj9#11"));
-        assert!(entry(0).is_none() && entry(89).is_none());
+        assert!(entry(0).is_none() && entry(98).is_none() && entry(89).is_some_and(|e| e.name == "Major Hexatonic"));
         let major = classes(FIRST_SCALE, 0);
         assert_eq!((0..12).filter(|&i| major[i]).collect::<Vec<_>>(), [0, 2, 4, 5, 7, 9, 11]);
         let d = classes(FIRST_SCALE, 2);
@@ -157,5 +223,13 @@ mod tests {
         // 7add13 (4 3 3 11): C E G Bb and A.
         let c = classes(25, 0);
         assert_eq!((0..12).filter(|&i| c[i]).collect::<Vec<_>>(), [0, 4, 7, 9, 10]);
+
+        // in_scale checks
+        assert!(in_scale(0, FIRST_SCALE, 60)); // C5 in C Major
+        assert!(in_scale(0, FIRST_SCALE, 64)); // E5 in C Major
+        assert!(!in_scale(0, FIRST_SCALE, 61)); // C#5 not in C Major
+        assert!(in_scale(9, 73, 69)); // A4 in A Natural Minor (entry 73 is Minor Natural)
+        // Every scale the menu lists is found.
+        assert_eq!(menu_scales().len(), MENU_SCALES.len());
     }
 }

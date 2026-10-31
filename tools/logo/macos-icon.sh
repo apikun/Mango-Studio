@@ -26,14 +26,14 @@ trap 'rm -rf "$work"' EXIT
 
 # The asset catalog. The icon's name in it is its document's: compiled as lemonstudio.icon, it is `lemonstudio`
 # (`CFBundleIconName` in the bundle's Info.plist).
-cp -R "$src" "$work/lemonstudio.icon"
+cp -R "$src" "$work/mangostudio.icon"
 mkdir "$work/car"
-xcrun actool "$work/lemonstudio.icon" --compile "$work/car" --platform macosx --minimum-deployment-target 11.0 \
-    --app-icon lemonstudio --output-partial-info-plist "$work/car/partial.plist" --errors --warnings > /dev/null
-cp "$work/car/Assets.car" "$assets/lemonstudio.car"
+xcrun actool "$work/mangostudio.icon" --compile "$work/car" --platform macosx --minimum-deployment-target 11.0 \
+    --app-icon mangostudio --output-partial-info-plist "$work/car/partial.plist" --errors --warnings > /dev/null
+cp "$work/car/Assets.car" "$assets/mangostudio.car"
 
 # The .icns: icon_<points>x<points>[@2x].png, the image at that size and scale.
-set_dir="$work/lemonstudio.iconset"
+set_dir="$work/mangostudio.iconset"
 mkdir "$set_dir"
 for pt in 16 32 128 256 512; do
     for scale in 1 2; do
@@ -60,6 +60,6 @@ for path in CommandLine.arguments.dropFirst() {
 }
 SWIFT
 xcrun swift "$work/to8.swift" "$set_dir"/*.png
-iconutil -c icns -o "$assets/lemonstudio.icns" "$set_dir"
-echo "$assets/lemonstudio.car"
-echo "$assets/lemonstudio.icns"
+iconutil -c icns -o "$assets/mangostudio.icns" "$set_dir"
+echo "$assets/mangostudio.car"
+echo "$assets/mangostudio.icns"

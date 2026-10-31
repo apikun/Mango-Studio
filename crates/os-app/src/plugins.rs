@@ -33,9 +33,6 @@ pub struct Available {
 
 pub struct Hosted {
     pub plugin: SharedPlugin,
-    /// The channel or slot plugin it plays (`os_model::Id`): the control plane keeps it with them when rows or slots
-    /// move under it (`App::follow_ids`). `Id::NONE` until the next tick takes the id of what is under its key.
-    pub owner: os_model::Id,
     /// Processing time and voices, read without locking the instance (spec: ui/plugin-performance.md §3,
     /// audio/voices.md §5).
     pub meter: Option<Arc<os_host::Meter>>,
@@ -60,7 +57,7 @@ pub struct Hosted {
     pub attention: Option<Arc<os_host::Attention>>,
     /// The count and time `idle` last looked at it (`Hosted::due`).
     seen: Look,
-    /// Its window opens detached: set when the user adds it while "Open new plugin windows floating" is on (`Plugins::added`),
+    /// Its window opens detached: set when the user adds it while "Detach all new plugins" is on (`Plugins::added`),
     /// or chosen for it (window menu > Detached, Switch all plugin editors to ▸), then the mode its window had when it
     /// last closed (spec: ui/settings-choices.md "Miscellaneous: naming, detached plugins and startup").
     #[cfg_attr(not(plugin_windows), allow(dead_code))]
@@ -68,16 +65,27 @@ pub struct Hosted {
     /// Where its detached window was when it last closed (screen px): reopened, it goes back there (spec: as above).
     #[cfg(plugin_windows)]
     pub placed: Option<(i32, i32)>,
+    /// A Windows plugin's editor joining its window on a thread of its own (`Plugins::open_window`).
+    #[cfg(plugin_windows)]
+    opening: Option<Opening>,
     /// When its open window opened (`Plugins::opens`): the limit on open editors closes the earliest first.
     #[cfg(plugin_windows)]
     opened: u64,
-    /// Its spare state (window or slot menu ▸ Copy to B; `presets::PCmd::StoreSpare`): a second copy of its
-    /// state that Swap A / B swaps with the one in use. Lemon Studio's choice: kept in memory with the
-    /// instance only, not in the project (spec: ui/plugin-window.md "Spare state").
-    pub spare: Option<Vec<u8>>,
-    /// "Display preset name in preset selector" unticked: its window's Presets box shows no preset name.
-    pub hide_preset: bool,
 }
+
+/// A Windows plugin's editor joining its window on a thread of its own (`os_host::Plugin::begin_editor`): its Wine side
+/// can stop answering there, which then holds up only that thread, not the app. The result comes through `done`.
+#[cfg(plugin_windows)]
+struct Opening {
+    done: std::sync::mpsc::Receiver<(Box<dyn os_host::PendingEditor>, Result<(), String>)>,
+    since: Instant,
+    /// The app was told it does not answer.
+    told: bool,
+}
+
+/// How long a Windows plugin's editor may take to join its window before the app says it is not responding.
+#[cfg(plugin_windows)]
+const HUNG_AFTER: Duration = Duration::from_secs(if cfg!(test) { 1 } else { 8 });
 
 /// When the UI last locked an instance for one of its per-tick jobs: the attention count it acted on, and when.
 #[derive(Debug, Clone, Copy)]
@@ -102,7 +110,6 @@ impl Hosted {
         let (meter, attention, name) = plugin.lock().map(|p| (p.meter(), p.attention(), p.desc().name.clone())).unwrap_or_default();
         Hosted {
             plugin,
-            owner: os_model::Id::NONE,
             meter,
             name,
             #[cfg(plugin_windows)]
@@ -118,9 +125,9 @@ impl Hosted {
             #[cfg(plugin_windows)]
             placed: None,
             #[cfg(plugin_windows)]
+            opening: None,
+            #[cfg(plugin_windows)]
             opened: 0,
-            spare: None,
-            hide_preset: false,
         }
     }
 
@@ -173,12 +180,11 @@ pub enum Request {
     /// playlist.
     #[cfg_attr(not(plugin_windows), allow(dead_code))]
     Audio(String, bool),
-    /// Notes a Lemon plugin sent for its channel's current pattern (host link `Notes`, Lemon Slicer's dump): row,
-    /// notes.
-    #[cfg_attr(not(plugin_windows), allow(dead_code))]
-    Notes(usize, Vec<os_hostlink::NoteOut>),
     /// The window was clicked (or docked / detached): it goes to the front of the app's window stack.
     Raise(usize),
+    /// An undo key was pressed in the plugin's own window (`FrameEvent::Undo`).
+    #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+    Undo { alt: bool, shift: bool },
     /// The menu arrow was clicked: open the window menu at this screen point.
     Menu(usize, i32, i32),
     /// The title-bar Presets box was clicked: open the preset list at this screen point (spec: plugins/presets.md).
@@ -196,6 +202,9 @@ pub enum Request {
     KnobMenu(usize, crate::knobs::Control, i32, i32),
     /// A greyed-out control of the window was clicked: the app says it is not available yet.
     NotAvailable(&'static str),
+    /// A message for the hint bar (a plugin's window that does not answer, or could not open).
+    #[cfg_attr(not(plugin_windows), allow(dead_code))]
+    Say(String),
     /// The plugin asked for a menu over its editor (VST 3 context menu): shown at this screen point (spec:
     /// plugins/vst3-hosting.md §9).
     PluginMenu(usize, os_host::Menu, (i32, i32)),
@@ -254,32 +263,66 @@ pub struct Plugins {
     /// Verdicts of the one-time child-process check a native plugin passes before its first load here (spec:
     /// plugins/fruity-abi.md "Crash containment"). `None`: no check (tests, where this program is the test harness).
     native_checks: Option<os_native::check::Checks>,
-    /// Instances that went with their channel or slot, by its id: (an effect, the plugin's uid, its saved state).
-    /// Only those whose channel or slot went (`keep`); an undo that brings it back hosts it again from here
-    /// (`App::follow_ids`); the oldest go past `STASH_MAX`.
-    pub stash: Vec<(os_model::Id, bool, String, Vec<u8>)>,
 }
 
-/// How many gone instances `Plugins::stash` keeps.
-const STASH_MAX: usize = 64;
-
 /// Lemon Sampler compiled into Lemon Studio and hosted through its own CLAP entry, so sampler channels never depend on
-/// finding a `.clap` file (spec: plugins/lemon-sampler.md §7); Lemon Trio, Citrus, Lemon Slicer and Lemon Drum
-/// Sampler likewise (spec: plugins/lemon-3x-osc.md §6, plugins/citrus.md, plugins/lemon-slicer.md §6,
-/// plugins/lemon-drum-sampler.md §4).
+/// finding a `.clap` file (spec: plugins/lemon-sampler.md §7); Lemon Trio and Citrus likewise (spec:
+/// plugins/lemon-3x-osc.md §6, plugins/citrus.md).
 pub fn builtin() -> Vec<Available> {
     static LIB: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static OSC3: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static CITRUS: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
-    static SLICER: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static KICK: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static BOOM: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static BASS: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static ACID: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static PLUCK: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static MINI: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static DX: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static AUTOGUN: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static DRUMS: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static KEYS: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static MONK: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static SURFACE: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static BEEPMAP: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static FLEX: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static SLAYER: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static DASHBOARD: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static DIRECTWAVE: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static WAVETABLE: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static SOUNDFONT: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     let mut v = linked(&LIB, &lemon_sampler::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, LEMON_SAMPLER);
     v.extend(linked(&OSC3, &lemon_3x_osc::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, crate::osc3::LEMON_TRIO));
     v.extend(linked(&CITRUS, &citrus::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, crate::citrus::CITRUS));
-    v.extend(linked(&SLICER, &lemon_slicer::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, crate::slicer::LEMON_SLICER));
-    v.extend(linked(&DRUMS, &lemon_drum_sampler::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, crate::drums::LEMON_DRUMS));
-    v.extend(linked(&SOUNDFONT, &soundfont_player::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, SOUNDFONT_PLAYER));
+    // The small generators (spec: plugins/lemon-small-generators.md): Lemon Kick, Lemon Boom, Lemon Bass and Lemon Acid.
+    v.extend(linked(&KICK, &lemon_kick::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Kick"));
+    v.extend(linked(&BOOM, &lemon_boom::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Boom"));
+    v.extend(linked(&BASS, &lemon_bass::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Bass"));
+    v.extend(linked(&ACID, &lemon_acid::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Acid"));
+    // The rest of the small generators (spec: plugins/lemon-small-generators.md).
+    v.extend(linked(&PLUCK, &lemon_pluck::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Pluck"));
+    v.extend(linked(&MINI, &lemon_mini::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Mini"));
+    v.extend(linked(&DX, &lemon_dx::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango DX"));
+    v.extend(linked(&AUTOGUN, &lemon_autogun::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Autogun"));
+    v.extend(linked(&DRUMS, &lemon_drums::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Drums"));
+    v.extend(linked(&KEYS, &lemon_keys::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Keys"));
+    // The electric guitar (a recreation of FL's Slayer): strings a pickup reads, an amp behind them.
+    v.extend(linked(&SLAYER, &mango_slayer::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Slayer"));
+    // The hardware panel (a recreation of FL's Dashboard): knobs and faders a performance links to anything.
+    v.extend(linked(&DASHBOARD, &mango_dashboard::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Dashboard"));
+    // Mango Wavetable, from battlemountain2's fork (spec: docs/lemon-wavetable.md).
+    v.extend(linked(&WAVETABLE, &lemon_wavetable::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, MANGO_WAVETABLE));
+    v.extend(linked(&SOUNDFONT, &mango_soundfont::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, MANGO_SOUNDFONT));
+    // The chanting monk (a port of MonkSynth, MIT; the third-party notices carry its notice).
+    v.extend(linked(&MONK, &mango_monk::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, MANGO_MONK));
+    // The control surface (a recreation of FL's Control Surface): eight faders a performance links to anything.
+    v.extend(linked(&SURFACE, &mango_surface::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, MANGO_SURFACE));
+    // The image synthesizer (a recreation of FL's BeepMap): a picture sings, its columns the time, its rows the pitch.
+    v.extend(linked(&BEEPMAP, &mango_beepmap::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, MANGO_BEEPMAP));
+    // The preset synthesizer (a recreation of FL's FLEX): named presets and the macros over them.
+    v.extend(linked(&FLEX, &mango_flex::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, MANGO_FLEX));
+    // The sampler (a recreation of FL's DirectWave): a program of zones, each one sample and where it plays.
+    v.extend(linked(&DIRECTWAVE, &mango_directwave::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango DirectWave"));
     v
 }
 
@@ -306,11 +349,12 @@ pub fn builtin_effects() -> Vec<Available> {
         &lemon_stereo_shaper::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
         &lemon_filter::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
         &tesla::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
+        &mango_beat::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
         &lemon_flanger::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
         &lemon_phaser::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
-        &lemon_peak_controller::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
-        &lemon_formula_controller::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
+        &lemon_crusher::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
         &lemon_vocoder::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
+        &lemon_twelve::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
     ];
     let names = FILE_MAPPED.into_iter().chain(LINKED_EFFECTS);
     LIBS.iter().zip(entries).zip(names).flat_map(|((lib, entry), name)| linked(lib, entry, name)).collect()
@@ -487,22 +531,14 @@ impl Plugins {
     pub fn create_with(&mut self, row: usize, index: usize, state: Option<&[u8]>) -> Result<String, String> {
         let a = self.available.get(index).ok_or("no such plugin")?.clone();
         self.native_check(&a.desc)?;
-        let plugin = a.lib.clone().create(&a.desc.id)?;
-        let mut p = plugin.lock().map_err(|_| "plugin busy")?;
-        if let Some(st) = state {
-            if !p.load_state(st) {
-                eprintln!("[plugins] {} did not take its starting state", a.desc.name);
-            }
-        }
         if self.rate == 0 {
             self.rate = crate::transport::Transport::device_rate().unwrap_or(48000);
         }
         if std::env::var_os("OS_DEBUG").is_some() {
             eprintln!("[plugins] {} activated at {} Hz", a.desc.name, self.rate);
         }
-        if !p.activate(self.rate) {
-            return Err(format!("{} could not start", a.desc.name));
-        }
+        let plugin = start_plugin(a.lib.clone(), &a.desc, state, self.rate, crate::yabridge::is_bridged(&a.desc.path))?;
+        let mut p = plugin.lock().map_err(|_| "plugin busy")?;
         // Trimmed audio clips start their note further into the sample (spec: plugins/lemon-sampler.md §7).
         p.use_start_param(SAMPLE_START);
         // A note's own pan and mod X / Y reach the built-in Lemon instruments only (spec: audio/voice-levels.md); audio
@@ -533,24 +569,16 @@ impl Plugins {
         let key = fx_key(track, slot);
         self.drop_key(key);
         self.native_check(&a.desc)?;
-        let plugin = a.lib.clone().create(&a.desc.id)?;
-        let mut p = plugin.lock().map_err(|_| "plugin busy")?;
-        if let Some(st) = state {
-            p.load_state(st);
-        }
         if self.rate == 0 {
             self.rate = crate::transport::Transport::device_rate().unwrap_or(48000);
         }
-        if !p.activate(self.rate) {
-            return Err(format!("{} could not start", a.desc.name));
-        }
-        drop(p);
+        let plugin = start_plugin(a.lib.clone(), &a.desc, state, self.rate, crate::yabridge::is_bridged(&a.desc.path))?;
         self.hosted.insert(key, Hosted::new(plugin));
         Ok(a.desc.name)
     }
 
     /// The user just added the instance under `key` (a new channel's plugin, a new effect in a slot): its window opens
-    /// detached while "Open new plugin windows floating" is on. Instances a project brings open docked, as before (spec:
+    /// detached while "Detach all new plugins" is on. Instances a project brings open docked, as before (spec:
     /// ui/settings-choices.md "Miscellaneous: naming, detached plugins and startup").
     pub fn added(&mut self, key: usize) {
         let on = crate::prefs::check(&crate::prefs::DETACH_NEW);
@@ -567,28 +595,6 @@ impl Plugins {
         self.presets.remove(&key);
     }
 
-    /// Keeps the state of the instance under `key`, about to go with its channel or slot, in `stash` by its owner's id.
-    pub fn keep(&mut self, key: usize) {
-        if let Some(h) = self.hosted.remove(&key) {
-            self.keep_hosted(&h, key >= FX_KEY);
-            self.hosted.insert(key, h);
-        }
-    }
-
-    /// `keep` for an instance already taken out of `hosted`.
-    fn keep_hosted(&mut self, h: &Hosted, fx: bool) {
-        if h.owner.is_none() || h.stopped() {
-            return;
-        }
-        let Some((uid, state)) = h.plugin.lock().ok().and_then(|p| Some((p.desc().uid(), p.save_state()?))) else { return };
-        let owner = h.owner;
-        self.stash.retain(|e| e.0 .0 != owner.0);
-        self.stash.push((owner, fx, uid, state));
-        if self.stash.len() > STASH_MAX {
-            self.stash.remove(0);
-        }
-    }
-
     /// Remembers the preset the instance under `key` holds and shows its name in the window's Presets box.
     pub fn set_preset(&mut self, key: usize, path: Option<PathBuf>) {
         match path {
@@ -597,30 +603,13 @@ impl Plugins {
         };
         #[cfg(plugin_windows)]
         if let Some(w) = self.hosted.get(&key).and_then(|h| h.window.as_ref()) {
-            w.set_preset(self.shown_preset(key));
+            w.set_preset(self.preset_name(key));
         }
     }
 
     /// The name of the preset the instance under `key` holds.
     pub fn preset_name(&self, key: usize) -> Option<String> {
         self.presets.get(&key).map(|p| crate::presets::shown_name(p))
-    }
-
-    /// What the window's Presets box of the instance under `key` shows: its preset's name, none while "Display preset
-    /// name in preset selector" is unticked.
-    pub fn shown_preset(&self, key: usize) -> Option<String> {
-        self.preset_name(key).filter(|_| !self.hosted.get(&key).is_some_and(|h| h.hide_preset))
-    }
-
-    /// Window or slot menu ▸ Display preset name in preset selector: ticks (`show`) or unticks it for the instance under
-    /// `key`; the open window's Presets box follows.
-    pub fn show_preset_name(&mut self, key: usize, show: bool) {
-        let Some(h) = self.hosted.get_mut(&key) else { return };
-        h.hide_preset = !show;
-        #[cfg(plugin_windows)]
-        if let Some(w) = self.hosted.get(&key).and_then(|h| h.window.as_ref()) {
-            w.set_preset(self.shown_preset(key));
-        }
     }
 
     /// Moves mixer slot instances: `m(track, slot)` gives the new place, `None` drops the instance.
@@ -637,16 +626,11 @@ impl Plugins {
                     }
                     moved.push((fx_key(nt, ns), self.hosted.remove(&k).unwrap()))
                 }
-                None => {
-                    self.keep(k);
-                    self.drop_key(k);
-                }
+                None => self.drop_key(k),
             }
         }
         for (k, h) in moved {
-            if let Some(old) = self.hosted.insert(k, h) {
-                self.keep_hosted(&old, true);
-            }
+            self.hosted.insert(k, h);
         }
     }
 
@@ -661,13 +645,16 @@ impl Plugins {
             .collect()
     }
 
-    /// Index of the available plugin called `name` (the built-in plugins come first).
+    /// Index of the available plugin called `name`, or a built-in one by an earlier name (`current_name`; the built-in
+    /// plugins come first).
     pub fn index_of(&self, name: &str) -> Option<usize> {
+        let name = current_name(name);
         self.available.iter().position(|a| a.desc.name == name)
     }
 
-    /// Index of the effect plugin called `name`.
+    /// Index of the effect plugin called `name`, or a built-in one by an earlier name (`current_name`).
     pub fn effect_index(&self, name: &str) -> Option<usize> {
+        let name = current_name(name);
         self.effects.iter().position(|a| a.desc.name == name)
     }
 
@@ -722,12 +709,14 @@ impl Plugins {
     }
 
     /// The parameters of the instance under `key`, in the plugin's order.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn param_infos(&self, key: usize) -> Vec<os_host::ParamInfo> {
         let Some(p) = self.hosted.get(&key).and_then(|h| h.plugin.lock().ok()) else { return Vec::new() };
         (0..p.param_count()).filter_map(|i| p.param_info(i)).collect()
     }
 
     /// The normalized value of parameter `id` of the instance under `key`.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn param_value(&self, key: usize, id: u32) -> Option<f64> {
         self.hosted.get(&key)?.plugin.lock().ok()?.param_value(id)
     }
@@ -815,6 +804,12 @@ impl Plugins {
         self.set_sampler(row, None, &stretch_params(sound))
     }
 
+    /// Row `row`'s Lemon Sampler takes the fx/reverse settings `sound` holds (`clip`: the row is an audio clip's).
+    pub fn set_sampler_fx(&mut self, row: usize, sound: &os_model::ChannelSound, clip: bool) -> bool {
+        let params = sample_params(sound, clip);
+        self.set_sampler(row, None, &params)
+    }
+
     /// Loads sample `path` into row `row`'s Lemon Sampler: its current state with a new `sample-path`, so every other
     /// setting stays. False when the row hosts nothing or the plugin refused the state.
     pub fn load_sample(&mut self, row: usize, path: &str) -> bool {
@@ -888,7 +883,6 @@ impl Plugins {
         }
         self.hosted.clear();
         self.presets.clear();
-        self.stash.clear();
         self.preset_waits.clear();
     }
 
@@ -910,19 +904,23 @@ impl Plugins {
         }
     }
 
-    /// Moves every hosted instance to sample rate `rate` (the audio settings changed); new ones start at it.
-    pub fn set_rate(&mut self, rate: u32) {
+    /// Moves every hosted instance to sample rate `rate` (the audio settings changed); new ones start at it. The
+    /// count of instances that refused to restart (`None`: none — or they were already there), for the status line.
+    pub fn set_rate(&mut self, rate: u32) -> Option<usize> {
         if rate == self.rate {
-            return;
+            return None;
         }
         self.rate = rate;
+        let mut refused = 0;
         for h in self.hosted.values() {
             if let Ok(mut p) = h.plugin.lock() {
                 if !p.activate(rate) {
-                    eprintln!("[plugins] an instance did not restart at {rate} Hz");
+                    refused += 1;
+                    eprintln!("[plugins] {} did not restart at {rate} Hz", p.desc().name);
                 }
             }
         }
+        (refused > 0).then_some(refused)
     }
 
     /// The voices of every hosted instrument, as their last processed blocks left them (spec: audio/voices.md §5).
@@ -981,8 +979,37 @@ impl Plugins {
         if row >= FX_KEY {
             w.set_strip(false);
         }
-        // The editor takes the frame's scale (on Linux the X server's, not the main window's).
+        // The editor takes the frame's scale.
         let k = w.scale();
+        // A Windows plugin (yabridge): its editor joins the window on a thread of its own, without the instance's lock, so
+        // a Wine side that stops answering holds up that thread only; the window shows meanwhile, and `idle` takes the
+        // editor when it is in (or says it does not answer).
+        if crate::yabridge::is_bridged(&h.plugin.lock().map_err(|_| "plugin busy")?.desc().path) {
+            let begun = h.plugin.lock().map_err(|_| "plugin busy")?.begin_editor(w.area(), k);
+            if let Some(begun) = begun {
+                let mut pending = begun?;
+                let (tx, done) = std::sync::mpsc::channel();
+                std::thread::Builder::new()
+                    .name("editor-attach".into())
+                    .spawn(move || {
+                        let r = pending.attach();
+                        // A window closed meanwhile no longer listens: the editor is let go here (`PendingEditor`).
+                        let _ = tx.send((pending, r));
+                        os_host::wake();
+                    })
+                    .map_err(|e| e.to_string())?;
+                h.opening = Some(Opening { done, since: Instant::now(), told: false });
+                w.raise();
+                h.window = Some(w);
+                self.opens += 1;
+                h.opened = self.opens;
+                let name = self.preset_name(row);
+                if let Some(w) = self.hosted.get(&row).and_then(|h| h.window.as_ref()) {
+                    w.set_preset(name);
+                }
+                return Ok(());
+            }
+        }
         // The instance is locked only while its editor opens: the audio thread skips an instance it cannot lock, so
         // everything done under the lock is silence for that channel. Held through the frame's creation, layout,
         // painting and raise as well, opening a plugin window made a playing song drop out on that channel.
@@ -991,27 +1018,30 @@ impl Plugins {
             p.open_editor(w.area(), k)?
         };
         h.link = fit_editor(&w, size, k);
+        // A plugin that lets the host resize its editor (CLAP, VST 3): the frame's edges and maximize button resize it.
+        if h.link.is_none() {
+            fit_resizable(&w, &h.plugin, size, k);
+        }
         // On top: the app stacks it above its other windows (`State::raise`), and a new child window starts below
         // the open ones.
         w.raise();
         h.window = Some(w);
         self.opens += 1;
         h.opened = self.opens;
-        let name = self.shown_preset(row);
+        let name = self.preset_name(row);
         if let Some(w) = self.hosted.get(&row).and_then(|h| h.window.as_ref()) {
             w.set_preset(name);
         }
         Ok(())
     }
 
-    /// The main window's DPI scale changed: docked windows follow it (detached ones follow their own monitor,
-    /// `FrameEvent::Dpi`). Spec: ui/ui-scaling.md §3.
+    /// The main window's DPI scale changed: docked windows follow it. Spec: ui/ui-scaling.md §3.
     pub fn set_scale(&mut self, scale: f32) {
-        if scale <= 0.0 || scale == self.scale {
+        if !scale.is_finite() || scale <= 0.0 || scale == self.scale {
             return;
         }
         self.scale = scale;
-        #[cfg(any(windows, target_os = "macos"))]
+        #[cfg(plugin_windows)]
         for row in self.docked() {
             self.rescale_window(row, scale);
         }
@@ -1019,7 +1049,7 @@ impl Plugins {
 
     /// Redraws row `row`'s window at `scale`: the frame resizes and the editor is reopened, since plugins take their
     /// scale when the editor opens (on macOS its sizes are measured at it). The plugin's page is kept.
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(plugin_windows)]
     fn rescale_window(&mut self, row: usize, scale: f32) {
         let Some(Hosted { plugin, window: Some(w), link, .. }) = self.hosted.get_mut(&row) else { return };
         if w.scale() == scale {
@@ -1032,7 +1062,7 @@ impl Plugins {
         *link = match p.open_editor(w.area(), scale) {
             Ok(size) => fit_editor(w, size, scale),
             Err(e) => {
-                eprintln!("lemonstudio: plugin editor at the new scale: {e}");
+                eprintln!("mangostudio: plugin editor at the new scale: {e}");
                 None
             }
         };
@@ -1053,6 +1083,11 @@ impl Plugins {
                 if h.detached {
                     h.placed = w.position().or(h.placed);
                 }
+            }
+            // An editor still joining its window is let go by its thread (`Opening`); the instance's own is closed.
+            #[cfg(plugin_windows)]
+            {
+                h.opening = None;
             }
             if let Ok(mut p) = h.plugin.lock() {
                 p.close_editor();
@@ -1077,6 +1112,11 @@ impl Plugins {
             if let Some(w) = &h.window {
                 w.set_detached(owner, on);
             }
+        }
+        // Docked again on Linux, the frame takes the main window's scale (it may have changed while detached).
+        #[cfg(target_os = "linux")]
+        if !on && self.owner != 0 {
+            self.rescale_window(row, self.scale);
         }
     }
 
@@ -1113,14 +1153,6 @@ impl Plugins {
         }
     }
 
-    /// Moves row `row`'s docked window to `(x, y)` (main-window client px; VIEW > Align all channel editors).
-    #[cfg(all(plugin_windows, windows))]
-    pub fn move_docked(&self, row: usize, x: i32, y: i32) {
-        if let Some(w) = self.hosted.get(&row).and_then(|h| h.window.as_ref()) {
-            w.move_to(x, y);
-        }
-    }
-
     /// Clips row `row`'s docked window to `work` minus `covers` (main-window client px).
     #[cfg(plugin_windows)]
     pub fn clip(&self, row: usize, work: [i32; 4], covers: &[[i32; 4]]) {
@@ -1129,22 +1161,13 @@ impl Plugins {
         }
     }
 
-    /// Rack rows were renumbered (`m(old) = new`; `None` drops the instance and its window). The presets the instances
-    /// hold go with them.
+    /// Rack rows were renumbered (`m(old) = new`; `None` drops the instance and its window).
     pub fn remap(&mut self, m: &dyn Fn(usize) -> Option<usize>) {
-        let rows: Vec<usize> = self.presets.range(..FX_KEY).map(|(&r, _)| r).collect();
-        let presets: Vec<(usize, PathBuf)> = rows.into_iter().filter_map(|r| Some((r, self.presets.remove(&r)?))).filter_map(|(r, p)| Some((m(r)?, p))).collect();
-        self.presets.extend(presets);
         for (row, h) in std::mem::take(&mut self.hosted) {
             if row >= FX_KEY {
                 self.hosted.insert(row, h);
             } else if let Some(n) = m(row) {
-                // Two instances mapped onto one row: the one there goes, kept.
-                if let Some(old) = self.hosted.insert(n, h) {
-                    self.keep_hosted(&old, false);
-                }
-            } else {
-                self.keep_hosted(&h, false);
+                self.hosted.insert(n, h);
             }
         }
     }
@@ -1169,6 +1192,7 @@ impl Plugins {
         #[cfg(target_os = "linux")]
         {
             crate::plugin_window::pump();
+            os_host::runloop::mark_ui_thread();
             os_host::runloop::dispatch();
         }
         let mut out = Vec::new();
@@ -1183,12 +1207,14 @@ impl Plugins {
                 (Some(row), crate::plugin_window::LinkMsg::Note(k, v, on)) => out.push(Request::Note(row, k, v, on)),
                 (Some(row), crate::plugin_window::LinkMsg::Automate(i)) => out.push(Request::Automate(row, i)),
                 (_, crate::plugin_window::LinkMsg::Audio(_)) => out.extend(os_hostlink::take_audio().into_iter().map(|(p, ch)| Request::Audio(p, ch))),
-                (Some(row), crate::plugin_window::LinkMsg::Notes(token)) => out.push(Request::Notes(row, os_hostlink::take_notes(token))),
-                (None, crate::plugin_window::LinkMsg::Notes(token)) => drop(os_hostlink::take_notes(token)),
                 _ => {}
             }
         }
         for (&row, h) in &mut self.hosted {
+            #[cfg(plugin_windows)]
+            if let Some(say) = editor_joined(row, h, &mut close) {
+                out.push(Request::Say(say));
+            }
             let look = h.due(h.seen);
             let mut menu: Option<(os_host::Menu, (i32, i32))> = None;
             if let Some(mut p) = look.and_then(|_| h.plugin.try_lock().ok()) {
@@ -1245,6 +1271,16 @@ impl Plugins {
                             l.set_size(*ew, *eh);
                             continue;
                         }
+                        // The same for a plugin without the host link: its editor is asked for the size, and the frame
+                        // follows the size it takes (the editor's size is polled below).
+                        (FrameEvent::Resize(ew, eh), None) => {
+                            let k = w.scale();
+                            let px = |v: u32| (v as f32 * k).round().max(1.0) as u32;
+                            if let Ok(mut p) = h.plugin.lock() {
+                                p.resize_editor(px(*ew), px(*eh));
+                            }
+                            continue;
+                        }
                         _ => {}
                     }
                     out.push(match e {
@@ -1261,6 +1297,7 @@ impl Plugins {
                         FrameEvent::Track(t) => Request::Track(row, t),
                         FrameEvent::ShowTrack => Request::ShowTrack(row),
                         FrameEvent::Raise => Request::Raise(row),
+                        FrameEvent::Undo { alt, shift } => Request::Undo { alt, shift },
                         FrameEvent::Menu(x, y) => Request::Menu(row, x, y),
                         FrameEvent::Presets(x, y) => Request::Presets(row, x, y),
                         FrameEvent::PresetStep(d) => Request::PresetStep(row, d),
@@ -1314,7 +1351,133 @@ impl Plugins {
 /// What the user is told when instance `name` stopped after exception `code`.
 fn stopped_message(name: &str, code: u32, effect: bool) -> String {
     let now = if effect { "its slot passes the sound through" } else { "its channel is silent" };
-    format!("{}: {now}. Save your project and restart Lemon Studio to use it again", os_host::guard::stopped_text(name, code))
+    format!("{}: {now}. Save your project and restart Mango Studio to use it again", os_host::guard::stopped_text(name, code))
+}
+
+/// How long a Windows plugin may take to start (create, take its state, activate) before the app gives up on it.
+const START_WITHIN: Duration = Duration::from_secs(if cfg!(test) { 1 } else { 12 });
+
+/// Creates plugin `desc` of `lib`, gives it `state` and activates it at `rate`: the instance, ready to host. A Windows
+/// plugin through yabridge (`bridged`) does this on a thread of its own, since its Wine side can stop answering while it
+/// starts (Ozone 12 under some Wine versions does), which then holds up that thread only: the UI waits `START_WITHIN`
+/// for it and gives up with a message. The thread goes on; an instance that arrives after that is leaked on purpose,
+/// never dropped off the UI thread (its Wine side is the one that stopped). Other plugins start here, as before.
+fn start_plugin(lib: Arc<dyn os_host::Library>, desc: &os_host::Descriptor, state: Option<&[u8]>, rate: u32, bridged: bool) -> Result<SharedPlugin, String> {
+    let name = desc.name.clone();
+    let start = {
+        let (id, state, name) = (desc.id.clone(), state.map(<[u8]>::to_vec), name.clone());
+        move || -> Result<SharedPlugin, String> {
+            let plugin = lib.create(&id)?;
+            {
+                let mut p = plugin.lock().map_err(|_| "plugin busy")?;
+                if let Some(st) = &state {
+                    if !p.load_state(st) {
+                        eprintln!("[plugins] {name} did not take its starting state");
+                    }
+                }
+                if !p.activate(rate) {
+                    return Err(format!("{name} could not start"));
+                }
+            }
+            Ok(plugin)
+        }
+    };
+    if !bridged {
+        return start();
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name(format!("start {name}"))
+        .spawn(move || {
+            let made = start();
+            if let Err(std::sync::mpsc::SendError(Ok(late))) = tx.send(made) {
+                std::mem::forget(late);
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    match rx.recv_timeout(START_WITHIN) {
+        Ok(made) => made,
+        Err(_) => Err(format!(
+            "{name} did not start within {} s: its Windows side stopped answering. The plugin was not added; the rest of Mango Studio keeps working",
+            START_WITHIN.as_secs()
+        )),
+    }
+}
+
+/// Lets the user resize window `w` when its freshly opened editor (`size` in device px at `scale`) can be resized by the
+/// host (CLAP `gui.can_resize`, VST 3 `IPlugView::canResize`), and on Linux shrinks an editor whose window would not fit
+/// the monitor's work area to fit it. An editor that cannot be resized is left as it is.
+#[cfg(plugin_windows)]
+fn fit_resizable(w: &FrameWindow, plugin: &std::sync::Mutex<dyn os_host::Plugin>, size: (u32, u32), scale: f32) {
+    let Ok(can) = plugin.lock().map(|p| p.can_resize_editor()) else { return };
+    if !can {
+        return;
+    }
+    w.set_resizable(Some(crate::plugin_window::MIN_EDITOR));
+    #[cfg(target_os = "linux")]
+    {
+        let editor = (size.0 as f32 / scale, size.1 as f32 / scale);
+        let Some((ew, eh)) = w.work_size().and_then(|room| crate::plugin_window::fit_in(editor, w.chrome(), room)) else { return };
+        let px = |v: f32| (v * scale).round().max(1.0) as u32;
+        if let Ok(mut p) = plugin.lock() {
+            p.resize_editor(px(ew), px(eh));
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (size, scale);
+}
+
+/// A Windows plugin's editor joining its window (`Opening`): taken in once it is in, the window closed (and said why) when
+/// it refused, and said once when it does not answer for `HUNG_AFTER`. What to tell the user, if anything.
+#[cfg(plugin_windows)]
+fn editor_joined(row: usize, h: &mut Hosted, close: &mut Vec<usize>) -> Option<String> {
+    use std::sync::mpsc::TryRecvError;
+    let o = h.opening.as_mut()?;
+    let got = match o.done.try_recv() {
+        Ok(got) => got,
+        Err(TryRecvError::Empty) => {
+            if o.told || o.since.elapsed() < HUNG_AFTER {
+                return None;
+            }
+            o.told = true;
+            return Some(format!(
+                "{}'s window is not responding: its Windows side stopped answering. Close the window; the rest of Mango Studio keeps working",
+                h.name
+            ));
+        }
+        Err(TryRecvError::Disconnected) => (Box::new(Gone) as Box<dyn os_host::PendingEditor>, Err("its window could not open".into())),
+    };
+    h.opening = None;
+    let (pending, joined) = got;
+    let opened = joined.and_then(|()| h.plugin.lock().map_err(|_| "plugin busy".to_string())?.finish_editor(pending));
+    match (opened, h.window.as_ref()) {
+        (Ok(size), Some(w)) => {
+            let k = w.scale();
+            h.link = fit_editor(w, size, k);
+            if h.link.is_none() {
+                fit_resizable(w, &h.plugin, size, k);
+            }
+            None
+        }
+        (Ok(_), None) => None,
+        (Err(e), _) => {
+            close.push(row);
+            Some(format!("{}: {e}", h.name))
+        }
+    }
+}
+
+/// A stand-in for an editor whose thread ended without a word (it panicked): nothing to attach or let go.
+#[cfg(plugin_windows)]
+struct Gone;
+#[cfg(plugin_windows)]
+impl os_host::PendingEditor for Gone {
+    fn attach(&mut self) -> Result<(), String> {
+        Err("its window could not open".into())
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any + Send> {
+        self
+    }
 }
 
 /// Sizes window `w` to its freshly opened editor (`size` in device px at `scale`). A Lemon plugin answers the host
@@ -1378,47 +1541,54 @@ pub fn retired_count() -> usize {
 }
 
 /// Name of Lemon Studio's sampler plugin: it plays and edits every sampler channel (spec: plugins/lemon-sampler.md §7).
-pub const LEMON_SAMPLER: &str = "Lemon Sampler";
-/// Name of the Soundfont Player compiled in: it plays SoundFont 2 files as an instrument (spec: plugins/soundfont-player.md).
-pub const SOUNDFONT_PLAYER: &str = "Soundfont Player";
+pub const LEMON_SAMPLER: &str = "Mango Sampler";
+/// Name of Mango Studio's wavetable synth, from battlemountain2's fork.
+pub const MANGO_WAVETABLE: &str = "Mango Wavetable";
+pub const MANGO_SOUNDFONT: &str = "Mango Font";
+/// Name of Mango Vocoder, a band vocoder (a recreation of FL's Vocodex; spec: plugins/lemon-vocoder.md).
+pub const MANGO_VOCODER: &str = "Mango Vocoder";
+/// The plugin name a project file stores for Vocodex (file-format identifier, kept for interop): slots with it are
+/// played and edited by Mango Vocoder (spec: plugins/lemon-vocoder.md §6).
+pub const VOCODEX_FILE_NAME: &str = "Vocodex";
+/// Name of the chanting monk (a port of MonkSynth), which a MIDI file imported with the monk as its channel type plays.
+pub const MANGO_MONK: &str = "Mango Monk";
+/// Name of the control surface (a recreation of FL's Control Surface): eight faders that sound nothing, linked to
+/// anything (spec: plugins/lemon-small-generators.md).
+pub const MANGO_SURFACE: &str = "Mango Surface";
+/// Name of the image synthesizer (a recreation of FL's BeepMap): a loaded picture sings (spec:
+/// plugins/lemon-beepmap.md).
+pub const MANGO_BEEPMAP: &str = "Mango BeepMap";
+/// Name of the preset synthesizer (a recreation of FL's FLEX): named presets, four macros over each (spec:
+/// plugins/lemon-small-generators.md).
+pub const MANGO_FLEX: &str = "Mango Flex";
 /// Name of Lemon Studio's parametric EQ plugin.
-pub const LEMON_EQ: &str = "Lemon Parametric EQ";
+pub const LEMON_EQ: &str = "Mango Parametric EQ";
 /// Lemon Studio's effects compiled in besides the EQ (`builtin_effects`, in this order). They have no file plugin of
 /// their own to be stored as, so a project stores them wrapped, as it stored their plugin files
 /// (`project_plugins::is_wrapped`).
-pub const LINKED_EFFECTS: [&str; 17] = [
-    "Lemon Limiter",
-    "Lemon Reverb",
-    "Lemon Delay",
-    "Lemon Soft Clipper",
-    "Lemon Fast Distortion",
-    "Lemon Balance",
-    "Lemon Stereo Enhancer",
-    "Lemon Transient Processor",
-    "Lemon Chorus",
-    "Lemon Stereo Shaper",
-    "Lemon Filter",
+pub const LINKED_EFFECTS: [&str; 18] = [
+    "Mango Limiter",
+    "Mango Reverb",
+    "Mango Delay",
+    "Mango Soft Clipper",
+    "Mango Fast Distortion",
+    "Mango Balance",
+    "Mango Stereo Enhancer",
+    "Mango Transient Processor",
+    "Mango Chorus",
+    "Mango Stereo Shaper",
+    "Mango Filter",
     TESLA,
-    "Lemon Flanger",
-    "Lemon Phaser",
-    LEMON_PEAK_CONTROLLER,
-    LEMON_FORMULA_CONTROLLER,
-    LEMON_VOCODER,
+    "Mango Beat",
+    "Mango Flanger",
+    "Mango Phaser",
+    "Mango Crusher",
+    MANGO_VOCODER,
+    "Mango 12",
 ];
 /// Lemon Studio's effects compiled in that a project stores under the FL plugin they recreate, with that plugin's
 /// state (`new_slot`, `store_builtin_states`), so they are never saved wrapped.
 pub const FILE_MAPPED: [&str; 3] = [LEMON_EQ, PULP_FILTER, PRESS];
-/// Name of Lemon Peak Controller, Lemon Studio's peak follower and LFO controller: its outputs drive the project's links
-/// (spec: plugins/lemon-peak-controller.md).
-pub const LEMON_PEAK_CONTROLLER: &str = "Lemon Peak Controller";
-/// Name of Lemon Formula Controller, Lemon Studio's formula controller: its output drives the project's links (spec:
-/// plugins/lemon-formula-controller.md).
-pub const LEMON_FORMULA_CONTROLLER: &str = "Lemon Formula Controller";
-/// Name of Lemon Vocoder, Lemon Studio's vocoder (spec: plugins/lemon-vocoder.md).
-pub const LEMON_VOCODER: &str = "Lemon Vocoder";
-/// The plugin name a project file stores for Vocodex (file-format identifier, kept for interop): slots with it are
-/// played and edited by Lemon Vocoder (spec: plugins/lemon-vocoder.md §6).
-pub const VOCODEX_FILE_NAME: &str = "Vocodex";
 /// Name of Tesla, Lemon Studio's audio editor and recorder (spec: plugins/tesla/README.md).
 pub const TESLA: &str = "Tesla";
 /// Name of Pulp Filter, Lemon Studio's pattern-controlled multi-filter (spec: plugins/lemon-pulp-filter.md).
@@ -1437,10 +1607,28 @@ pub const EDISON_FILE_NAME: &str = "Edison";
 /// The plugin name a project file stores for the parametric EQ (file-format identifier, kept for interop): slots
 /// with it are played by Lemon Parametric EQ (spec: plugins/lemon-parametric-eq-2.md §8).
 pub const EQ_FILE_NAME: &str = "Fruity Parametric EQ 2";
-/// The built-in plugins' earlier names, newest first, with their names now: "Lemon Parametric EQ 2" and "Lemon 3x Osc"
+/// The built-in plugins' earlier names, newest first, with their names now: the "Lemon" names before the fork was renamed
+/// Mango Studio (2026-10-28), "Lemon Parametric EQ 2" and "Lemon 3x Osc"
 /// (2026-10-13 to 2026-10-14), and the "Open" names before the line was renamed "Lemon". Plugin files and preset
 /// folders made earlier still carry them (spec: plugins/plugin-formats.md, identity).
-pub const OLD_NAMES: [(&str, &str); 5] = [
+pub const OLD_NAMES: [(&str, &str); 22] = [
+    ("Lemon Sampler", "Mango Sampler"),
+    ("Lemon Parametric EQ", "Mango Parametric EQ"),
+    ("Lemon Trio", "Mango Trio"),
+    ("Lemon Limiter", "Mango Limiter"),
+    ("Lemon Reverb", "Mango Reverb"),
+    ("Lemon Delay", "Mango Delay"),
+    ("Lemon Soft Clipper", "Mango Soft Clipper"),
+    ("Lemon Fast Distortion", "Mango Fast Distortion"),
+    ("Lemon Balance", "Mango Balance"),
+    ("Lemon Stereo Enhancer", "Mango Stereo Enhancer"),
+    ("Lemon Transient Processor", "Mango Transient Processor"),
+    ("Lemon Chorus", "Mango Chorus"),
+    ("Lemon Stereo Shaper", "Mango Stereo Shaper"),
+    ("Lemon Kick", "Mango Kick"),
+    ("Lemon Boom", "Mango Boom"),
+    ("Lemon Bass", "Mango Bass"),
+    ("Lemon Acid", "Mango Acid"),
     ("Lemon Parametric EQ 2", LEMON_EQ),
     ("Lemon 3x Osc", crate::osc3::LEMON_TRIO),
     ("Open Sampler", LEMON_SAMPLER),
@@ -1448,28 +1636,32 @@ pub const OLD_NAMES: [(&str, &str); 5] = [
     ("Open 3x Osc", crate::osc3::LEMON_TRIO),
 ];
 
+/// A built-in plugin's name now for `name` when it is an earlier name of one (`OLD_NAMES`), else `name`: projects and
+/// presets saved before a rename find the plugin.
+pub fn current_name(name: &str) -> &str {
+    OLD_NAMES.iter().find(|(old, _)| *old == name).map_or(name, |&(_, now)| now)
+}
+
 /// The Lemon effects compiled in (`LINKED_EFFECTS`) that recreate an FL mixer effect, by the plugin name a project file
 /// stores for it (file-format identifiers, kept for interop): an opened project's slot holding one is played and edited
 /// by the Lemon effect, started from the slot's saved state, and saved back as the FL effect with that effect's state
 /// (`App::sync_effects`, `App::store_builtin_states`; spec: plugins/lemon-small-effects.md "Opened projects' slots").
 /// Not Lemon Stereo Shaper: the difference output is the mixer slot's alone (spec: plugins/lemon-stereo-shaper.md §5),
 /// so the engine's own Stereo Shaper keeps playing those slots.
-pub const FL_RECREATIONS: [(&str, &str); 15] = [
-    ("Fruity Limiter", "Lemon Limiter"),
-    ("Fruity Reeverb 2", "Lemon Reverb"),
-    ("Fruity Delay 3", "Lemon Delay"),
-    ("Fruity Soft Clipper", "Lemon Soft Clipper"),
-    ("Fruity Fast Dist", "Lemon Fast Distortion"),
-    ("Fruity Balance", "Lemon Balance"),
-    ("Fruity Stereo Enhancer", "Lemon Stereo Enhancer"),
-    ("Transient Processor", "Lemon Transient Processor"),
-    ("Fruity Chorus", "Lemon Chorus"),
-    ("Fruity Filter", "Lemon Filter"),
-    ("Fruity Flanger", "Lemon Flanger"),
-    ("Fruity Phaser", "Lemon Phaser"),
-    ("Fruity Peak Controller", LEMON_PEAK_CONTROLLER),
-    ("Fruity Formula Controller", LEMON_FORMULA_CONTROLLER),
-    (VOCODEX_FILE_NAME, LEMON_VOCODER),
+pub const FL_RECREATIONS: [(&str, &str); 13] = [
+    ("Fruity Limiter", "Mango Limiter"),
+    ("Fruity Reeverb 2", "Mango Reverb"),
+    ("Fruity Delay 3", "Mango Delay"),
+    ("Fruity Soft Clipper", "Mango Soft Clipper"),
+    ("Fruity Fast Dist", "Mango Fast Distortion"),
+    ("Fruity Balance", "Mango Balance"),
+    ("Fruity Stereo Enhancer", "Mango Stereo Enhancer"),
+    ("Transient Processor", "Mango Transient Processor"),
+    ("Fruity Chorus", "Mango Chorus"),
+    ("Fruity Filter", "Mango Filter"),
+    ("Fruity Flanger", "Mango Flanger"),
+    ("Fruity Phaser", "Mango Phaser"),
+    (VOCODEX_FILE_NAME, MANGO_VOCODER),
 ];
 
 /// The Lemon effect of `FL_RECREATIONS` that plays slots stored as `file` (any case: files may spell the id
@@ -1482,21 +1674,19 @@ pub fn recreation_of(file: &str) -> Option<&'static str> {
 pub fn recreation_state_from_fl(lemon: &str, fl: &[u8]) -> Option<Vec<u8>> {
     use lemon_small_fx::params::plugin_state_from_fl as small;
     Some(match lemon {
-        "Lemon Limiter" => lemon_limiter::params::plugin_state_from_fl(fl),
-        "Lemon Reverb" => lemon_reverb::params::plugin_state_from_fl(fl),
-        "Lemon Delay" => lemon_delay::params::plugin_state_from_fl(fl),
-        "Lemon Soft Clipper" => small(lemon_small_fx::soft_clipper::SPEC, fl),
-        "Lemon Fast Distortion" => small(lemon_small_fx::fast_distortion::SPEC, fl),
-        "Lemon Balance" => small(lemon_small_fx::balance::SPEC, fl),
-        "Lemon Stereo Enhancer" => small(lemon_small_fx::stereo_enhancer::SPEC, fl),
-        "Lemon Transient Processor" => small(lemon_small_fx::transient_processor::SPEC, fl),
-        "Lemon Chorus" => small(lemon_small_fx::chorus::SPEC, fl),
-        "Lemon Filter" => small(lemon_small_fx::filter::SPEC, fl),
-        "Lemon Flanger" => small(lemon_small_fx::flanger::SPEC, fl),
-        "Lemon Phaser" => small(lemon_small_fx::phaser::SPEC, fl),
-        LEMON_PEAK_CONTROLLER => small(lemon_small_fx::peak_controller::SPEC, fl),
-        LEMON_FORMULA_CONTROLLER => small(lemon_small_fx::formula_controller::SPEC, fl),
-        LEMON_VOCODER => small(lemon_small_fx::vocoder::SPEC, fl),
+        "Mango Limiter" => lemon_limiter::params::plugin_state_from_fl(fl),
+        "Mango Reverb" => lemon_reverb::params::plugin_state_from_fl(fl),
+        "Mango Delay" => lemon_delay::params::plugin_state_from_fl(fl),
+        "Mango Soft Clipper" => small(lemon_small_fx::soft_clipper::SPEC, fl),
+        "Mango Fast Distortion" => small(lemon_small_fx::fast_distortion::SPEC, fl),
+        "Mango Balance" => small(lemon_small_fx::balance::SPEC, fl),
+        "Mango Stereo Enhancer" => small(lemon_small_fx::stereo_enhancer::SPEC, fl),
+        "Mango Transient Processor" => small(lemon_small_fx::transient_processor::SPEC, fl),
+        "Mango Chorus" => small(lemon_small_fx::chorus::SPEC, fl),
+        "Mango Filter" => small(lemon_small_fx::filter::SPEC, fl),
+        "Mango Flanger" => small(lemon_small_fx::flanger::SPEC, fl),
+        "Mango Phaser" => small(lemon_small_fx::phaser::SPEC, fl),
+        MANGO_VOCODER => small(lemon_small_fx::vocoder::SPEC, fl),
         _ => return None,
     })
 }
@@ -1506,21 +1696,19 @@ pub fn recreation_state_from_fl(lemon: &str, fl: &[u8]) -> Option<Vec<u8>> {
 pub fn fl_from_recreation_state(lemon: &str, blob: &[u8]) -> Option<Vec<u8>> {
     use lemon_small_fx::params::fl_from_plugin_state as small;
     match lemon {
-        "Lemon Limiter" => lemon_limiter::params::fl_from_plugin_state(blob),
-        "Lemon Reverb" => lemon_reverb::params::fl_from_plugin_state(blob),
-        "Lemon Delay" => lemon_delay::params::fl_from_plugin_state(blob),
-        "Lemon Soft Clipper" => small(lemon_small_fx::soft_clipper::SPEC, blob),
-        "Lemon Fast Distortion" => small(lemon_small_fx::fast_distortion::SPEC, blob),
-        "Lemon Balance" => small(lemon_small_fx::balance::SPEC, blob),
-        "Lemon Stereo Enhancer" => small(lemon_small_fx::stereo_enhancer::SPEC, blob),
-        "Lemon Transient Processor" => small(lemon_small_fx::transient_processor::SPEC, blob),
-        "Lemon Chorus" => small(lemon_small_fx::chorus::SPEC, blob),
-        "Lemon Filter" => small(lemon_small_fx::filter::SPEC, blob),
-        "Lemon Flanger" => small(lemon_small_fx::flanger::SPEC, blob),
-        "Lemon Phaser" => small(lemon_small_fx::phaser::SPEC, blob),
-        LEMON_PEAK_CONTROLLER => small(lemon_small_fx::peak_controller::SPEC, blob),
-        LEMON_FORMULA_CONTROLLER => small(lemon_small_fx::formula_controller::SPEC, blob),
-        LEMON_VOCODER => small(lemon_small_fx::vocoder::SPEC, blob),
+        "Mango Limiter" => lemon_limiter::params::fl_from_plugin_state(blob),
+        "Mango Reverb" => lemon_reverb::params::fl_from_plugin_state(blob),
+        "Mango Delay" => lemon_delay::params::fl_from_plugin_state(blob),
+        "Mango Soft Clipper" => small(lemon_small_fx::soft_clipper::SPEC, blob),
+        "Mango Fast Distortion" => small(lemon_small_fx::fast_distortion::SPEC, blob),
+        "Mango Balance" => small(lemon_small_fx::balance::SPEC, blob),
+        "Mango Stereo Enhancer" => small(lemon_small_fx::stereo_enhancer::SPEC, blob),
+        "Mango Transient Processor" => small(lemon_small_fx::transient_processor::SPEC, blob),
+        "Mango Chorus" => small(lemon_small_fx::chorus::SPEC, blob),
+        "Mango Filter" => small(lemon_small_fx::filter::SPEC, blob),
+        "Mango Flanger" => small(lemon_small_fx::flanger::SPEC, blob),
+        "Mango Phaser" => small(lemon_small_fx::phaser::SPEC, blob),
+        MANGO_VOCODER => small(lemon_small_fx::vocoder::SPEC, blob),
         _ => None,
     }
 }
@@ -1532,6 +1720,7 @@ pub fn slot_label(name: &str) -> &str {
         EDISON_FILE_NAME => TESLA,
         LOVE_PHILTER_FILE_NAME => PULP_FILTER,
         MAXIMUS_FILE_NAME => PRESS,
+        VOCODEX_FILE_NAME => MANGO_VOCODER,
         _ => recreation_of(name).unwrap_or(name),
     }
 }
@@ -1541,13 +1730,13 @@ pub fn slot_label(name: &str) -> &str {
 /// opens elsewhere; other effects by name).
 pub fn new_slot(name: &str) -> os_model::SlotPlugin {
     if name == LEMON_EQ {
-        os_model::SlotPlugin { id: os_model::Id::NONE, name: EQ_FILE_NAME.into(), state: lemon_parametric_eq_2::params::default_state() }
+        os_model::SlotPlugin { name: EQ_FILE_NAME.into(), state: lemon_parametric_eq_2::params::default_state() }
     } else if name == PULP_FILTER {
-        os_model::SlotPlugin { id: os_model::Id::NONE, name: LOVE_PHILTER_FILE_NAME.into(), state: os_engine::effects::love_philter::state::State::new_default().to_bytes() }
+        os_model::SlotPlugin { name: LOVE_PHILTER_FILE_NAME.into(), state: os_engine::effects::love_philter::state::State::new_default().to_bytes() }
     } else if name == PRESS {
-        os_model::SlotPlugin { id: os_model::Id::NONE, name: MAXIMUS_FILE_NAME.into(), state: os_engine::effects::maximus::state::State::new_default().to_bytes() }
+        os_model::SlotPlugin { name: MAXIMUS_FILE_NAME.into(), state: os_engine::effects::maximus::state::State::new_default().to_bytes() }
     } else {
-        os_model::SlotPlugin { id: os_model::Id::NONE, name: name.into(), state: Vec::new() }
+        os_model::SlotPlugin { name: name.into(), state: Vec::new() }
     }
 }
 /// File (in the user folder) remembering which native plugins passed the child-process check.
@@ -2074,6 +2263,235 @@ pub type ChannelInfoT = ();
 
 /// Opens the bundled Lemon Sampler in a real plugin window, clicks through the strip and captures the window
 /// (`OS_SHOT_DIR=<dir> OS_CLAP=<Lemon Sampler.clap> cargo test -p os-app plugin_window_shots -- --ignored`).
+#[cfg(all(test, target_os = "linux"))]
+mod linux_tests {
+    use super::*;
+    use std::ffi::c_void;
+    use std::sync::Mutex;
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{ConnectionExt as _, CreateWindowAux, WindowClass};
+
+    #[test]
+    fn invalid_host_scales_are_ignored() {
+        let mut plugins = Plugins { scale: 1.25, ..Plugins::default() };
+        for scale in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            plugins.set_scale(scale);
+            assert_eq!(plugins.scale, 1.25);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires an X11 display; also runs on Hyprland's XWayland"]
+    fn docked_editor_follows_xwayland_parent_scale() {
+        let (connection, screen) = x11rb::connect(None).expect("X11 test display");
+        let parent = connection.generate_id().unwrap();
+        connection.create_window(
+            x11rb::COPY_DEPTH_FROM_PARENT, parent, connection.setup().roots[screen].root, 0, 0, 1920, 1080, 0,
+            WindowClass::INPUT_OUTPUT, x11rb::COPY_FROM_PARENT, &CreateWindowAux::new(),
+        ).unwrap().check().unwrap();
+        let mut plugins = Plugins { available: builtin(), owner: parent as isize, scale: 1.5, rate: 48000, ..Plugins::default() };
+        let index = plugins.index_of(LEMON_SAMPLER).expect("built-in Lemon Sampler");
+        plugins.create_with(0, index, None).unwrap();
+        let info = ChannelInfo { name: LEMON_SAMPLER.into(), target: "Insert 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+        plugins.open_window(0, info).unwrap();
+        let pump = |plugins: &mut Plugins| {
+            let until = std::time::Instant::now() + std::time::Duration::from_millis(100);
+            while std::time::Instant::now() < until {
+                plugins.idle(|_| None);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        };
+        pump(&mut plugins);
+        assert_eq!(plugins.hosted[&0].window.as_ref().unwrap().scale(), 1.5);
+        plugins.hosted.get_mut(&0).unwrap().link.as_mut().expect("sampler host link").set_page(1);
+        for scale in [1.5, 1.0, 1.25, 2.0] {
+            plugins.set_scale(scale);
+            pump(&mut plugins);
+            let frame = plugins.hosted[&0].window.as_ref().unwrap();
+            assert_eq!(frame.scale(), scale);
+            assert!(!frame.detached());
+            assert_eq!(connection.query_tree(frame.hwnd() as u32).unwrap().reply().unwrap().parent, parent);
+            let area = frame.area() as usize as u32;
+            let children = connection.query_tree(area).unwrap().reply().unwrap().children;
+            assert_eq!(children.len(), 1);
+            let area_size = connection.get_geometry(area).unwrap().reply().unwrap();
+            let editor_size = connection.get_geometry(children[0]).unwrap().reply().unwrap();
+            let expected = ((560.0 * scale).round() as u16, (390.0 * scale).round() as u16);
+            assert_eq!((area_size.width, area_size.height), expected, "editor area at {scale}");
+            assert_eq!((editor_size.width, editor_size.height), expected, "editor at {scale}");
+            assert_eq!(plugins.hosted[&0].link.as_ref().unwrap().page_now(), 1);
+        }
+        plugins.rescale_window(0, 1.0);
+        assert_eq!(plugins.scale, 2.0);
+        plugins.set_detached(0, false);
+        pump(&mut plugins);
+        assert_eq!(plugins.hosted[&0].window.as_ref().unwrap().scale(), 2.0, "docking reconciles a stale editor scale");
+        let area = plugins.hosted[&0].window.as_ref().unwrap().area() as usize as u32;
+        let area_size = connection.get_geometry(area).unwrap().reply().unwrap();
+        assert_eq!((area_size.width, area_size.height), (1120, 780));
+        assert_eq!(plugins.hosted[&0].link.as_ref().unwrap().page_now(), 1);
+        plugins.clear();
+        sweep_retired();
+        connection.destroy_window(parent).unwrap().check().unwrap();
+    }
+
+    /// An editor that joins its window when `go` lets it: until then its thread waits, as a Wine side that stopped
+    /// answering does. `joins`: it then takes the window or refuses it.
+    struct SlowView {
+        go: std::sync::mpsc::Receiver<()>,
+        joins: bool,
+    }
+    impl os_host::PendingEditor for SlowView {
+        fn attach(&mut self) -> Result<(), String> {
+            let _ = self.go.recv();
+            if self.joins { Ok(()) } else { Err("the plug-in refused the editor window".into()) }
+        }
+        fn into_any(self: Box<Self>) -> Box<dyn std::any::Any + Send> {
+            self
+        }
+    }
+
+    /// A plugin whose editor opens in two halves and counts the editors it took in.
+    struct TwoHalves(os_host::Descriptor, Arc<std::sync::atomic::AtomicUsize>);
+    impl os_engine::Instrument for TwoHalves {
+        fn note_on(&mut self, _: u32, _: u8, _: f32) {}
+        fn note_off(&mut self, _: u32, _: u8) {}
+        fn process(&mut self, _: u32, _: &mut [f32], _: &mut [f32]) {}
+    }
+    impl os_engine::HostedEffect for TwoHalves {
+        fn process_fx(&mut self, _: u32, _: &mut [f32], _: &mut [f32]) {}
+    }
+    impl os_host::Plugin for TwoHalves {
+        fn desc(&self) -> &os_host::Descriptor {
+            &self.0
+        }
+        fn activate(&mut self, _: u32) -> bool {
+            true
+        }
+        fn idle(&mut self) {}
+        fn has_editor(&self) -> bool {
+            true
+        }
+        fn editor_open(&self) -> bool {
+            false
+        }
+        fn open_editor(&mut self, _: *mut c_void, _: f32) -> Result<(u32, u32), String> {
+            Err(String::new())
+        }
+        fn editor_size(&self) -> Option<(u32, u32)> {
+            None
+        }
+        fn close_editor(&mut self) {}
+        fn finish_editor(&mut self, pending: Box<dyn os_host::PendingEditor>) -> Result<(u32, u32), String> {
+            pending.into_any().downcast::<SlowView>().map_err(|_| "not mine".to_string())?;
+            self.1.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok((400, 300))
+        }
+        fn save_state(&self) -> Option<Vec<u8>> {
+            None
+        }
+        fn load_state(&mut self, _: &[u8]) -> bool {
+            false
+        }
+    }
+
+    /// A plugin library whose `create` answers at once, or never (`stuck`), as a yabridge host whose Wine side stopped
+    /// answering while the plugin starts.
+    struct Slow {
+        desc: os_host::Descriptor,
+        stuck: bool,
+    }
+    impl os_host::Library for Slow {
+        fn path(&self) -> &std::path::Path {
+            &self.desc.path
+        }
+        fn plugins(&self) -> &[os_host::Descriptor] {
+            std::slice::from_ref(&self.desc)
+        }
+        fn create(self: Arc<Self>, _: &str) -> Result<SharedPlugin, String> {
+            if self.stuck {
+                let (_keep, never) = std::sync::mpsc::channel::<()>();
+                let _ = never.recv();
+            }
+            Ok(Arc::new(Mutex::new(TwoHalves(self.desc.clone(), Default::default()))))
+        }
+    }
+
+    /// A Windows plugin that never finishes starting holds up its own thread only: the UI waits `START_WITHIN`, gives up
+    /// with a message, and goes on. One that starts is hosted as before, and a plugin that is not bridged starts on the
+    /// UI thread as always.
+    #[test]
+    fn a_windows_plugin_that_hangs_while_starting_is_given_up_on() {
+        let desc = builtin()[0].desc.clone();
+        let stuck: Arc<dyn os_host::Library> = Arc::new(Slow { desc: desc.clone(), stuck: true });
+        let t0 = Instant::now();
+        let r = start_plugin(stuck, &desc, None, 48000, true);
+        let took = t0.elapsed();
+        let e = r.err().expect("given up on");
+        assert!(e.contains("did not start within") && e.contains("keeps working"), "{e}");
+        assert!(took >= START_WITHIN && took < START_WITHIN + Duration::from_secs(2), "waited {took:?}");
+        let quick: Arc<dyn os_host::Library> = Arc::new(Slow { desc: desc.clone(), stuck: false });
+        assert!(start_plugin(quick.clone(), &desc, Some(&[1, 2]), 48000, true).is_ok(), "a plugin that starts is hosted");
+        assert!(start_plugin(quick, &desc, None, 48000, false).is_ok(), "not bridged: started as before");
+    }
+
+    /// A Windows plugin's editor joining its window on its own thread: while it does not answer the app goes on (the
+    /// instance is not locked, so the UI and the audio thread still get it) and says so once after `HUNG_AFTER`; once it
+    /// joins, its editor is taken in; one that refuses has its window closed, and says why.
+    #[test]
+    fn a_hung_editor_holds_up_its_own_thread_only() {
+        let taken = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let desc = builtin()[0].desc.clone();
+        let plugin: SharedPlugin = Arc::new(Mutex::new(TwoHalves(desc, taken.clone())));
+        let mut h = Hosted::new(plugin.clone());
+        let start = |h: &mut Hosted, joins: bool| {
+            let (go_tx, go) = std::sync::mpsc::channel();
+            let (tx, done) = std::sync::mpsc::channel();
+            let mut pending: Box<dyn os_host::PendingEditor> = Box::new(SlowView { go, joins });
+            std::thread::spawn(move || {
+                let r = pending.attach();
+                let _ = tx.send((pending, r));
+            });
+            h.opening = Some(Opening { done, since: Instant::now(), told: false });
+            go_tx
+        };
+        let mut close = Vec::new();
+
+        // Stuck: nothing to say yet, and the instance is free for everyone else.
+        let go = start(&mut h, true);
+        assert_eq!(editor_joined(3, &mut h, &mut close), None);
+        assert!(plugin.try_lock().is_ok(), "the instance is not locked while its editor joins");
+        std::thread::sleep(HUNG_AFTER + Duration::from_millis(50));
+        let said = editor_joined(3, &mut h, &mut close).expect("it says the window does not answer");
+        assert!(said.contains("not responding"), "{said}");
+        assert_eq!(editor_joined(3, &mut h, &mut close), None, "said once");
+        // It answers after all: its editor is taken in.
+        go.send(()).unwrap();
+        let t0 = Instant::now();
+        while h.opening.is_some() {
+            assert!(t0.elapsed() < Duration::from_secs(5));
+            let _ = editor_joined(3, &mut h, &mut close);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(taken.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert!(close.is_empty());
+
+        // One that refuses: its window closes, and it says why.
+        let go = start(&mut h, false);
+        go.send(()).unwrap();
+        let t0 = Instant::now();
+        let mut said = None;
+        while said.is_none() {
+            assert!(t0.elapsed() < Duration::from_secs(5));
+            said = editor_joined(3, &mut h, &mut close);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(said.unwrap().contains("refused"));
+        assert_eq!(close, [3]);
+        assert_eq!(taken.load(std::sync::atomic::Ordering::Relaxed), 1, "a refused editor is not taken in");
+    }
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
@@ -2151,9 +2569,9 @@ mod tests {
             (r.right - r.left, r.bottom - r.top)
         };
         let mut pl = Plugins { available: builtin(), scale: 1.5, rate: 48000, ..Plugins::default() };
-        let index = pl.index_of(LEMON_SAMPLER).expect("built-in Lemon Sampler");
+        let index = pl.index_of(LEMON_SAMPLER).expect("built-in Mango Sampler");
         pl.create_with(0, index, None).unwrap();
-        let info = ChannelInfo { name: LEMON_SAMPLER.into(), target: "Bus 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+        let info = ChannelInfo { name: LEMON_SAMPLER.into(), target: "Insert 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
         pl.open_window(0, info).unwrap();
         pump(&mut pl, 200);
         let w = pl.hosted[&0].window.as_ref().unwrap();
@@ -2185,11 +2603,11 @@ mod tests {
         let desc = lib.plugins[0].clone();
         let mut pl = Plugins { available: vec![Available { lib, desc }], scale: 1.0, ..Plugins::default() };
         pl.create(0, 0).unwrap();
-        let info = ChannelInfo { name: "Lemon Sampler".into(), target: "Bus 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+        let info = ChannelInfo { name: "Mango Sampler".into(), target: "Insert 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
         pl.open_window(0, info).unwrap();
         pump(&mut pl, 400);
         let hwnd = pl.hosted[&0].window.as_ref().unwrap().hwnd();
-        assert!(pl.hosted[&0].link.is_some(), "Lemon Sampler should join the strip");
+        assert!(pl.hosted[&0].link.is_some(), "Mango Sampler should join the strip");
         capture(hwnd, &dir.join("win_sample.bmp"));
         click(hwnd, 68, 47); // second page tab
         pump(&mut pl, 300);
@@ -2214,7 +2632,7 @@ mod tests {
         let index = pl.effect_index(LEMON_EQ).expect("built-in EQ");
         pl.create_effect(1, 0, index, None).unwrap();
         let key = fx_key(1, 0);
-        let info = ChannelInfo { name: LEMON_EQ.into(), target: "Bus 1".into(), enabled: true, volume: 0.8, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+        let info = ChannelInfo { name: LEMON_EQ.into(), target: "Insert 1".into(), enabled: true, volume: 0.8, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
         pl.open_window(key, info).unwrap();
         pump(&mut pl, 400);
         let frame = pl.hosted[&key].window.as_ref().unwrap().hwnd();
@@ -2238,9 +2656,9 @@ mod tests {
         let Some(dir) = std::env::var_os("OS_SHOT_DIR") else { return };
         let dir = std::path::PathBuf::from(dir);
         let mut pl = Plugins { available: builtin(), scale: 1.0, rate: 48000, ..Plugins::default() };
-        let index = pl.index_of(crate::osc3::LEMON_TRIO).expect("built-in Lemon Trio");
+        let index = pl.index_of(crate::osc3::LEMON_TRIO).expect("built-in Mango Trio");
         pl.create_with(0, index, None).unwrap();
-        let info = ChannelInfo { name: crate::osc3::LEMON_TRIO.into(), target: "Bus 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+        let info = ChannelInfo { name: crate::osc3::LEMON_TRIO.into(), target: "Insert 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
         pl.open_window(0, info).unwrap();
         pump(&mut pl, 400);
         let frame = pl.hosted[&0].window.as_ref().unwrap().hwnd();
@@ -2292,7 +2710,7 @@ mod tests {
         let mut pl = Plugins { available: builtin(), scale: 1.0, rate: 48000, ..Plugins::default() };
         let index = pl.index_of(crate::citrus::CITRUS).expect("built-in Citrus");
         pl.create_with(0, index, None).unwrap();
-        let info = ChannelInfo { name: crate::citrus::CITRUS.into(), target: "Bus 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+        let info = ChannelInfo { name: crate::citrus::CITRUS.into(), target: "Insert 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
         pl.open_window(0, info).unwrap();
         pump(&mut pl, 400);
         let frame = pl.hosted[&0].window.as_ref().unwrap().hwnd();
@@ -2333,7 +2751,7 @@ mod tests {
         let desc = lib.plugins[0].clone();
         let mut pl = Plugins { available: vec![Available { lib, desc }], scale: 1.0, ..Plugins::default() };
         pl.create(0, 0).unwrap();
-        let info = ChannelInfo { name: "Lemon Sampler".into(), target: "Bus 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+        let info = ChannelInfo { name: "Mango Sampler".into(), target: "Insert 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
         pl.open_window(0, info).unwrap();
         pump(&mut pl, 300);
         let frame = pl.hosted[&0].window.as_ref().unwrap().hwnd();
@@ -2424,7 +2842,7 @@ mod tests {
         let desc = lib.plugins[0].clone();
         let mut pl = Plugins { available: vec![Available { lib, desc }], scale: 1.0, ..Plugins::default() };
         pl.create(0, 0).unwrap();
-        let info = ChannelInfo { name: "Lemon Sampler".into(), target: "Bus 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+        let info = ChannelInfo { name: "Mango Sampler".into(), target: "Insert 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
         pl.open_window(0, info).unwrap();
         pump(&mut pl, 300);
         let frame = pl.hosted[&0].window.as_ref().unwrap().hwnd();
@@ -2498,7 +2916,7 @@ mod tests {
         let desc = lib.plugins[0].clone();
         let mut pl = Plugins { available: vec![Available { lib, desc }], scale: 1.0, ..Plugins::default() };
         pl.create(0, 0).unwrap();
-        let info = ChannelInfo { name: "Lemon Sampler".into(), target: "Bus 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+        let info = ChannelInfo { name: "Mango Sampler".into(), target: "Insert 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
         pl.open_window(0, info).unwrap();
         pump(&mut pl, 300);
         // A bright 2 s saw so a low-pass is audible.
@@ -2581,7 +2999,7 @@ mod tests {
         let desc = lib.plugins[0].clone();
         let mut pl = Plugins { available: vec![Available { lib, desc }], scale: 1.0, ..Plugins::default() };
         pl.create(0, 0).unwrap();
-        let info = ChannelInfo { name: "Lemon Sampler".into(), target: "Bus 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+        let info = ChannelInfo { name: "Mango Sampler".into(), target: "Insert 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
         pl.open_window(0, info).unwrap();
         pump(&mut pl, 300);
         // A bright 2 s saw so a low-pass is audible.
@@ -2597,7 +3015,7 @@ mod tests {
         pump(&mut pl, 300);
         let mut project = crate::app::test_project();
         project.channels.clear();
-        let row = crate::app::add_plugin_channel(&mut project, "Lemon Sampler");
+        let row = crate::app::add_plugin_channel(&mut project, "Mango Sampler");
         assert_eq!(row, 0);
         let transport = crate::transport::Transport::new(None);
         transport.update(&project);
@@ -2667,7 +3085,7 @@ mod tests {
         let name = desc.name.clone();
         let mut pl = Plugins { available: vec![Available { lib, desc }], scale: 1.0, ..Plugins::default() };
         pl.create(0, 0).unwrap();
-        let info = ChannelInfo { name, target: "Bus 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+        let info = ChannelInfo { name, target: "Insert 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
         pl.open_window(0, info).unwrap();
         pump(&mut pl, 300);
         let frame = pl.hosted[&0].window.as_ref().unwrap().hwnd();
@@ -2723,7 +3141,7 @@ mod tests {
         let name = desc.name.clone();
         let mut pl = Plugins { available: vec![Available { lib, desc }], scale: monitor, rate: 48000, ..Plugins::default() };
         pl.create(0, 0).unwrap();
-        let info = ChannelInfo { name: name.clone(), target: "Bus 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+        let info = ChannelInfo { name: name.clone(), target: "Insert 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
         pl.open_window(0, info).unwrap();
         pump(&mut pl, 500);
         let size = |h: HWND| unsafe {
@@ -2848,7 +3266,7 @@ mod tests {
     #[test]
     fn builtin_lemon_sampler_takes_a_sample() {
         let mut pl = Plugins { available: builtin(), scale: 1.0, rate: 48000, ..Plugins::default() };
-        let index = pl.index_of(LEMON_SAMPLER).expect("built-in Lemon Sampler");
+        let index = pl.index_of(LEMON_SAMPLER).expect("built-in Mango Sampler");
         let mut ch = crate::app::test_project().channels.remove(0);
         ch.envelopes[1].enabled = true;
         ch.envelopes[1].attack = 65536 / 2;
@@ -3006,7 +3424,7 @@ mod tests {
     #[test]
     fn builtin_lemon_sampler_takes_the_stretch_settings() {
         let mut pl = Plugins { available: builtin(), scale: 1.0, rate: 48000, ..Plugins::default() };
-        let index = pl.index_of(LEMON_SAMPLER).expect("built-in Lemon Sampler");
+        let index = pl.index_of(LEMON_SAMPLER).expect("built-in Mango Sampler");
         let wav = std::env::temp_dir().join(format!("os-app-sampler-stretch-{}.wav", std::process::id()));
         let tone: Vec<f32> = (0..48000)
             .flat_map(|i| {
@@ -3065,7 +3483,7 @@ mod tests {
         use lemon_sampler::params::fx_from_text;
         use os_model::SampleFx;
         let mut pl = Plugins { available: builtin(), scale: 1.0, rate: 48000, ..Plugins::default() };
-        let index = pl.index_of(LEMON_SAMPLER).expect("built-in Lemon Sampler");
+        let index = pl.index_of(LEMON_SAMPLER).expect("built-in Mango Sampler");
         let saved = |pl: &Plugins, row| {
             let st = pl.hosted[&row].plugin.lock().unwrap().save_state().unwrap();
             serde_json::from_slice::<serde_json::Value>(&st[8..]).unwrap()
@@ -3143,7 +3561,7 @@ mod tests {
     #[test]
     fn lemon_sampler_state_without_a_sample_plays_nothing() {
         let mut pl = Plugins { available: builtin(), scale: 1.0, rate: 48000, ..Plugins::default() };
-        let index = pl.index_of(LEMON_SAMPLER).expect("built-in Lemon Sampler");
+        let index = pl.index_of(LEMON_SAMPLER).expect("built-in Mango Sampler");
         let wav = std::env::temp_dir().join(format!("os-app-sampler-cleared-{}.wav", std::process::id()));
         let tone: Vec<f32> = (0..9600).flat_map(|i| [((i as f32) * 0.0576).sin() * 0.5; 2]).collect();
         os_engine::wav::write_f32_stereo(&mut std::fs::File::create(&wav).unwrap(), 48000, &tone).unwrap();
@@ -3174,7 +3592,7 @@ mod tests {
     #[test]
     fn lemon_sampler_stretch_parameters_give_the_channel_settings() {
         let mut pl = Plugins { available: builtin(), scale: 1.0, rate: 48000, ..Plugins::default() };
-        let index = pl.index_of(LEMON_SAMPLER).expect("built-in Lemon Sampler");
+        let index = pl.index_of(LEMON_SAMPLER).expect("built-in Mango Sampler");
         let mut ch = crate::app::test_project().channels.remove(0);
         let read = |pl: &Plugins| {
             let p = pl.hosted[&0].plugin.lock().unwrap();
@@ -3278,7 +3696,7 @@ mod tests {
         use windows_sys::Win32::Foundation::RECT;
         let mut pl = Plugins { available: builtin(), scale: 1.0, rate: 48000, ..Plugins::default() };
         pl.create(0, pl.index_of(LEMON_SAMPLER).unwrap()).unwrap();
-        let info = ChannelInfo { name: "Lemon Sampler".into(), target: "Bus 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+        let info = ChannelInfo { name: "Mango Sampler".into(), target: "Insert 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
         pl.open_window(0, info).unwrap();
         pump(&mut pl, 300);
         let frame = pl.hosted[&0].window.as_ref().unwrap().hwnd();
@@ -3313,7 +3731,7 @@ mod tests {
     /// the same plugin in both formats gets format labels in the picker and each label finds its own entry.
     #[test]
     fn vst3_plugins_host_like_clap_ones() {
-        let (Some(clap), Some(vst3)) = (bundled("Lemon Sampler.clap"), bundled("Lemon Sampler.vst3")) else { return };
+        let (Some(clap), Some(vst3)) = (bundled("Mango Sampler.clap"), bundled("Mango Sampler.vst3")) else { return };
         let available = |p: &std::path::Path, load: fn(&std::path::Path) -> Result<Arc<dyn Library>, String>| {
             let lib = load(p).unwrap();
             Available { desc: lib.plugins()[0].clone(), lib }
@@ -3327,7 +3745,7 @@ mod tests {
             rate: 48000,
             ..Plugins::default()
         };
-        assert_eq!(pl.index_of("Lemon Sampler"), Some(0), "a name finds the first");
+        assert_eq!(pl.index_of("Mango Sampler"), Some(0), "a name finds the first");
         pl.create(0, 1).unwrap();
         let d = pl.descriptor(0).unwrap();
         assert_eq!(d.format, os_host::Format::Vst3);
@@ -3353,7 +3771,7 @@ mod tests {
     /// flp/events/plugins.md §4).
     #[test]
     fn vst3_plugins_save_and_reopen() {
-        let (Some(smp), Some(eq)) = (bundled("Lemon Sampler.vst3"), bundled("Lemon Parametric EQ.vst3")) else { return };
+        let (Some(smp), Some(eq)) = (bundled("Mango Sampler.vst3"), bundled("Mango Parametric EQ.vst3")) else { return };
         let load = |p: &std::path::Path| {
             let lib = os_vst3::Module::load(p).map(|l| l as Arc<dyn Library>).unwrap();
             Available { desc: lib.plugins()[0].clone(), lib }
@@ -3367,12 +3785,12 @@ mod tests {
         a.state.path = None;
         a.plugins.available = vec![load(&smp)];
         a.plugins.effects = vec![load(&eq)];
-        let row = crate::app::add_plugin_channel(&mut a.state.project, "Lemon Sampler");
+        let row = crate::app::add_plugin_channel(&mut a.state.project, "Mango Sampler");
         a.plugins.create(row, 0).unwrap();
         a.state.hosted_rows.push(row);
         let json = format!("{{\"version\":\"0.0.1\",\"params\":{{}},\"fields\":{{\"sample-path\":{}}}}}", json_string(&json_string(&wav.to_string_lossy())));
         assert!(a.plugins.set_state(row, json.as_bytes()));
-        a.state.project.mixer[3].slots[2] = Some(os_model::SlotPlugin { id: os_model::Id::NONE, name: "Lemon Parametric EQ".into(), state: Vec::new() });
+        a.state.project.mixer[3].slots[2] = Some(os_model::SlotPlugin { name: "Mango Parametric EQ".into(), state: Vec::new() });
         a.plugins.create_effect(3, 2, 0, None).unwrap();
         // An edit of the effect, through the hosting layer, flushed into its processor.
         {
@@ -3393,7 +3811,7 @@ mod tests {
         // The file names each class by its id.
         let saved = os_flp::project::load(&os_flp::FlpFile::parse(&std::fs::read(&path).unwrap()).unwrap()).unwrap();
         let r = crate::project_plugins::wrapped_channel(&saved.channels[row]).unwrap();
-        assert_eq!((r.format.as_str(), r.id.as_str(), r.name.as_str()), ("vst3", a.plugins.available[0].desc.id.as_str(), "Lemon Sampler"));
+        assert_eq!((r.format.as_str(), r.id.as_str(), r.name.as_str()), ("vst3", a.plugins.available[0].desc.id.as_str(), "Mango Sampler"));
         assert_eq!(r.state, ch_state);
         let s = crate::project_plugins::wrapped_slot(saved.mixer[3].slots[2].as_ref().unwrap()).unwrap();
         assert_eq!((s.format.as_str(), s.id.as_str()), ("vst3", a.plugins.effects[0].desc.id.as_str()));
@@ -3413,7 +3831,7 @@ mod tests {
         assert_eq!(b.plugins.descriptor(row).unwrap().format, os_host::Format::Vst3);
         assert_eq!(b.plugins.state(row).as_deref(), Some(&ch_state[..]));
         assert_eq!(b.plugins.state(fx_key(3, 2)).as_deref(), Some(&fx_state[..]));
-        assert_eq!(crate::mixer::slot_name(&b.state, 3, 2).as_deref(), Some("Lemon Parametric EQ"));
+        assert_eq!(crate::mixer::slot_name(&b.state, 3, 2).as_deref(), Some("Mango Parametric EQ"));
     }
 
     /// VST3 editors inside Lemon Studio's plugin frame, moved off every screen and captured with PrintWindow:
@@ -3423,7 +3841,7 @@ mod tests {
     fn vst3_window_shots() {
         let Some(dir) = std::env::var_os("OS_SHOT_DIR") else { return };
         let dir = std::path::PathBuf::from(dir);
-        for (file, effect) in [("Lemon Sampler.vst3", false), ("Lemon Parametric EQ.vst3", true)] {
+        for (file, effect) in [("Mango Sampler.vst3", false), ("Mango Parametric EQ.vst3", true)] {
             let Some(path) = bundled(file) else { continue };
             let lib = os_vst3::Module::load(&path).unwrap();
             let a = Available { desc: lib.plugins()[0].clone(), lib };
@@ -3438,7 +3856,7 @@ mod tests {
                 pl.create(0, 0).unwrap();
                 0
             };
-            let info = ChannelInfo { name: name.clone(), target: "Bus 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+            let info = ChannelInfo { name: name.clone(), target: "Insert 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
             pl.open_window(key, info).unwrap();
             let frame = pl.hosted[&key].window.as_ref().unwrap().hwnd();
             unsafe { SetWindowPos(frame as HWND, std::ptr::null_mut(), -20000, -20000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE) };
@@ -3469,7 +3887,7 @@ mod tests {
             let mut pl = Plugins { scale: 1.0, rate: 48000, effects: vec![a], ..Plugins::default() };
             pl.create_effect(1, 0, 0, None).unwrap();
             let key = fx_key(1, 0);
-            let info = ChannelInfo { name: name.into(), target: "Bus 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+            let info = ChannelInfo { name: name.into(), target: "Insert 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
             for round in 0..2 {
                 pl.open_window(key, info.clone()).unwrap();
                 let frame = pl.hosted[&key].window.as_ref().unwrap().hwnd();
@@ -3535,7 +3953,7 @@ mod tests {
             })
         };
         eprintln!("STEP window");
-        let info = ChannelInfo { name: name.clone(), target: "Bus 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+        let info = ChannelInfo { name: name.clone(), target: "Insert 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
         match pl.open_window(key, info) {
             Ok(()) => {
                 let frame = pl.hosted[&key].window.as_ref().unwrap().hwnd();
@@ -3632,9 +4050,8 @@ mod tests {
         a.state.plugdb.rebuild(&a.plugins);
         use crate::plugin_menu::PlugCmd;
         let fx = a.plugins.effects.iter().position(|e| e.desc.format == os_host::Format::Native).expect("a native effect");
-        let fx_menu = crate::mixer::effect_menu(&a.state, 0, 0.0, 0.0);
         let fx_cmd = crate::playlist::Cmd::Plugin(PlugCmd::Effect { index: fx, slot: Some(0) });
-        assert!(fx_menu.items.iter().any(|it| it.cmd == fx_cmd), "slot menu lists it");
+        assert!(crate::plugin_picker::cmds(&a.state, crate::plugin_menu::Target::Fx(Some(0))).contains(&fx_cmd), "the slot's picker lists it");
         let pick = a.plugins.available.iter().position(|x| x.desc.name == name).expect("the plugin is found");
         let add = crate::rack::add_one_items(&a.state).into_iter().find(|it| it.label == name).expect("Add one lists it");
         assert!(add.cmd == crate::playlist::Cmd::Plugin(PlugCmd::Generator { index: pick, after: None }));
@@ -3729,7 +4146,7 @@ mod tests {
             (held, tail, finite)
         });
         eprintln!("STEP window");
-        let info = ChannelInfo { name: name.clone(), target: "Bus 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+        let info = ChannelInfo { name: name.clone(), target: "Insert 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
         match pl.open_window(0, info) {
             Ok(()) => {
                 let frame = pl.hosted[&0].window.as_ref().unwrap().hwnd();
@@ -3930,7 +4347,7 @@ mod tests {
         let engine = fx.clone();
         std::thread::spawn(move || engine.lock().unwrap().process_fx(48000, &mut [0.5; 8], &mut [0.5; 8])).join().unwrap();
         let told: Vec<String> = pl.idle(|_| None).into_iter().filter_map(|r| if let Request::Stopped(k, t) = r { Some(format!("{k}: {t}")) } else { None }).collect();
-        assert_eq!(told, [format!("{key}: Faulty stopped after a memory error: its slot passes the sound through. Save your project and restart Lemon Studio to use it again")]);
+        assert_eq!(told, [format!("{key}: Faulty stopped after a memory error: its slot passes the sound through. Save your project and restart Mango Studio to use it again")]);
         assert!(!pl.idle(|_| None).iter().any(|r| matches!(r, Request::Stopped(..))), "told once");
         let (mut l, mut r) = ([0.5f32; 8], [0.5f32; 8]);
         fx.lock().unwrap().process_fx(48000, &mut l, &mut r);
@@ -3963,7 +4380,7 @@ mod tests {
             for i in 0..pl.effects.len() {
                 pl.create_effect(1, i as u8, i, None).unwrap();
                 let name = pl.effects[i].desc.name.clone();
-                let info = ChannelInfo { name, target: "Bus 1".into(), enabled: true, volume: 0.8, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+                let info = ChannelInfo { name, target: "Insert 1".into(), enabled: true, volume: 0.8, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
                 pl.open_window(fx_key(1, i as u8), info).unwrap();
                 transport.set_effects(pl.effects());
                 pump(&mut pl, 400);
@@ -3980,7 +4397,7 @@ mod tests {
         transport.stop();
     }
 
-    /// The four plugin window checks as found in FL; "Open new plugin windows floating": an instance the user adds takes the
+    /// The four plugin window checks as found in FL; "Detach all new plugins": an instance the user adds takes the
     /// check's state as its window mode, one that exists keeps its own (spec: ui/settings-choices.md "Miscellaneous:
     /// naming, detached plugins and startup").
     #[test]
@@ -4021,7 +4438,7 @@ mod tests {
     fn editor_limit_and_reopen_place() {
         let mut pl = Plugins { effects: builtin_effects(), scale: 1.0, rate: 48000, ..Plugins::default() };
         let index = pl.effect_index(LEMON_EQ).expect("built-in EQ");
-        let info = |t: u16| ChannelInfo { name: LEMON_EQ.into(), target: format!("Bus {t}"), enabled: true, volume: 0.8, pan: 0.0, pitch_cents: 0, range: 2, track: t, max_track: 125, misc: None };
+        let info = |t: u16| ChannelInfo { name: LEMON_EQ.into(), target: format!("Insert {t}"), enabled: true, volume: 0.8, pan: 0.0, pitch_cents: 0, range: 2, track: t, max_track: 125, misc: None };
         let keys: Vec<usize> = (0..26u16).map(|i| fx_key(1 + i / 8, (i % 8) as u8)).collect();
         for &k in &keys {
             let (t, s) = fx_of(k).unwrap();

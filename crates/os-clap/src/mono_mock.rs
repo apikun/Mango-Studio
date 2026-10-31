@@ -35,7 +35,7 @@ static DESC: Shared<clap_plugin_descriptor> = Shared(clap_plugin_descriptor {
     clap_version: CLAP_VERSION,
     id: ID.as_ptr(),
     name: c"Mono Test".as_ptr(),
-    vendor: c"Lemon Studio".as_ptr(),
+    vendor: c"Mango Studio".as_ptr(),
     url: c"".as_ptr(),
     manual_url: c"".as_ptr(),
     support_url: c"".as_ptr(),

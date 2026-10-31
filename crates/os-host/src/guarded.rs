@@ -183,9 +183,6 @@ impl<P: Plugin> HostedEffect for Guarded<P> {
     fn reported_delay_fx(&self) -> u32 {
         self.look(0, |p| p.latency())
     }
-    fn control_fx(&self, k: usize) -> Option<f32> {
-        self.look(None, |p| p.control_fx(k))
-    }
 }
 
 impl<P: Plugin> Plugin for Guarded<P> {
@@ -217,6 +214,18 @@ impl<P: Plugin> Plugin for Guarded<P> {
     }
     fn close_editor(&mut self) {
         self.run((), |p| p.close_editor())
+    }
+    fn can_resize_editor(&self) -> bool {
+        self.look(false, |p| p.can_resize_editor())
+    }
+    fn begin_editor(&mut self, parent: *mut std::ffi::c_void, scale: f32) -> Option<Result<Box<dyn crate::PendingEditor>, String>> {
+        self.run(None, |p| p.begin_editor(parent, scale))
+    }
+    fn finish_editor(&mut self, pending: Box<dyn crate::PendingEditor>) -> Result<(u32, u32), String> {
+        self.run(Err("the plugin stopped".into()), move |p| p.finish_editor(pending))
+    }
+    fn resize_editor(&mut self, w: u32, h: u32) -> Option<(u32, u32)> {
+        self.run(None, |p| p.resize_editor(w, h))
     }
     fn save_state(&self) -> Option<Vec<u8>> {
         let saved = self.look(None, |p| p.save_state());
@@ -355,6 +364,12 @@ mod tests {
             None
         }
         fn close_editor(&mut self) {}
+        fn can_resize_editor(&self) -> bool {
+            true
+        }
+        fn resize_editor(&mut self, w: u32, h: u32) -> Option<(u32, u32)> {
+            Some((w / 10 * 10, h / 10 * 10))
+        }
         fn save_state(&self) -> Option<Vec<u8>> {
             self.maybe_crash();
             Some(vec![1, 2, 3])
@@ -393,6 +408,15 @@ mod tests {
         assert_eq!(p.lock().unwrap().stopped(), None);
         drop(p);
         assert!(dropped.load(Ordering::Relaxed));
+    }
+
+    /// Whether the editor lets the host resize it, and the size it takes for a request, go through the guard; a plugin that
+    /// says nothing is not resizable.
+    #[test]
+    fn editor_resizes_go_through_the_guard() {
+        let (p, _, _) = crashy();
+        assert!(p.lock().unwrap().can_resize_editor());
+        assert_eq!(p.lock().unwrap().resize_editor(805, 633), Some((800, 630)), "the size the editor took");
     }
 
     /// A crash stops the instance: effects pass the sound through, instruments are silent, the last saved state is kept,

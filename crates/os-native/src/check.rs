@@ -305,7 +305,7 @@ mod win {
     pub fn run_hidden(program: &Path, args: &[&OsStr], timeout: Duration) -> Option<Option<u32>> {
         static N: AtomicU32 = AtomicU32::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
-        let name = wide(format!("LemonStudioCheck{}-{n}", std::process::id()).as_ref());
+        let name = wide(format!("MangoStudioCheck{}-{n}", std::process::id()).as_ref());
         // Paths cannot hold quotes, so quoting every part is enough.
         let mut line = OsStr::new("\"").to_os_string();
         line.push(program);

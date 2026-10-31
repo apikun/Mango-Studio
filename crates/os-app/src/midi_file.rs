@@ -59,16 +59,29 @@ pub enum Instrument {
     Trio,
     Citrus,
     Sampler,
+    /// Every part chants: the channels are Mango Monk, the chanting monk.
+    Monk,
+    /// The Trio with every oscillator a square: the channels take the patch as their saved state.
+    EightBit,
 }
 
 impl Instrument {
-    pub const ALL: [Instrument; 3] = [Instrument::Trio, Instrument::Citrus, Instrument::Sampler];
+    pub const ALL: [Instrument; 5] = [Instrument::Trio, Instrument::Citrus, Instrument::Sampler, Instrument::Monk, Instrument::EightBit];
 
     pub fn label(self) -> &'static str {
         match self {
-            Instrument::Trio => crate::osc3::LEMON_TRIO,
+            Instrument::Trio | Instrument::EightBit => crate::osc3::LEMON_TRIO,
             Instrument::Citrus => crate::citrus::CITRUS,
             Instrument::Sampler => crate::plugins::LEMON_SAMPLER,
+            Instrument::Monk => crate::plugins::MANGO_MONK,
+        }
+    }
+
+    /// The type combo's entry: where the instrument stands in for a patch, the patch is named for itself.
+    pub fn list_label(self) -> &'static str {
+        match self {
+            Instrument::EightBit => "8-bit (squares)",
+            k => k.label(),
         }
     }
 }
@@ -192,7 +205,7 @@ impl MidiForm {
             (self.track_items(), self.o.track.map_or(0, |t| t + 1))
         } else {
             let now = Instrument::ALL.iter().position(|&i| i == self.o.instrument).unwrap_or(0);
-            (Instrument::ALL.iter().map(|i| i.label().to_string()).collect(), now)
+            (Instrument::ALL.iter().map(|i| i.list_label().to_string()).collect(), now)
         }
     }
 
@@ -457,23 +470,6 @@ pub fn pattern_file(p: &Project, n: u16, ch: u16, tempo: f64) -> Smf {
     Smf { format: 1, ppq: p.ppq, tracks: vec![Track { events: conductor }, Track { events }] }
 }
 
-/// The user folder's "Clipboard files" (tests: a temporary folder).
-fn clipboard_dir() -> Option<PathBuf> {
-    if cfg!(test) {
-        return Some(std::env::temp_dir().join(format!("lemon-clipboard-{}", std::process::id())));
-    }
-    os_paths::user_dir().map(|d| d.join("Clipboard files"))
-}
-
-/// TOOLS ▸ Save MIDI clipboard to browser: the piano roll's copied notes as a type 1 file, the tempo then one track,
-/// the first note at the start.
-pub fn clipboard_file(notes: &[Note], ppq: u16, tempo: f64) -> Smf {
-    let first = notes.iter().map(|n| n.position).min().unwrap_or(0);
-    let conductor = vec![Event { tick: 0, kind: Ev::Tempo(os_smf::tempo_of_bpm(tempo)) }];
-    let events = note_events(notes.iter().map(|n| (n.position - first, end_of(n, ppq) - first, n)));
-    Smf { format: 1, ppq, tracks: vec![Track { events: conductor }, Track { events }] }
-}
-
 /// FILE ▸ Export MIDI...: the project's notes as a type 1 file (spec §10.8): a conductor track (the tempo, tempo
 /// control points, time signatures, markers), then a track per channel with notes. `song`: the current arrangement's
 /// pattern clips, each cut at its end; else pattern `n`.
@@ -565,6 +561,9 @@ fn place(s: &mut State, imp: Imported, o: &Options, name: &str, n: u16) {
         };
         let ch = &mut s.project.channels[row];
         ch.name = Some(part.name.clone());
+        if o.instrument == Instrument::EightBit {
+            ch.plugin_state = Some(crate::osc3::squares_state());
+        }
         ch.mixer_track = if o.mixer { (i as u16 + 1).min(max) } else { 0 };
     }
     let index: Vec<u16> = s.project.channels[base..].iter().map(|c| c.index).collect();
@@ -680,8 +679,6 @@ impl App {
             s.piano.reset();
             s.playlist.reset();
             s.history.reset();
-            s.control.reset();
-            s.control.event(&crate::control::By::User, "opened", "New project", Vec::new());
             crate::playlist::load_view(s);
             s.rack.reset();
             crate::rack::from_model(s);
@@ -692,9 +689,14 @@ impl App {
             let s = &mut self.state;
             // As every playlist step does (`playlist::snapshot_as`), the arrangement exists before the step.
             crate::playlist::arr_mut(s);
-            // One undo step through the control plane, as the rack's other channel adds (`control::edit`).
+            let snap = Snap::Several(vec![
+                Snap::Patterns { patterns: s.project.patterns.clone(), current: s.pattern },
+                Snap::Playlist(Box::new(crate::playlist::capture(s))),
+                Snap::Tail(Box::new(history::Tail::now(s, s.project.channels.len()))),
+            ]);
+            history::record(s, IMPORT_STEP, snap);
             let n = s.pattern;
-            crate::control::edit(s, IMPORT_STEP, crate::control::command::Region::Project, |s| place(s, imp, o, &name, n));
+            place(s, imp, o, &name, n);
         }
         let s = &mut self.state;
         crate::piano::center_keys(s, self.piano_grid.map_or(700.0, |g| g.h));
@@ -809,25 +811,6 @@ impl App {
         project_file(&s.project, s.song_mode, s.pattern, s.tempo)
     }
 
-    /// TOOLS ▸ Save MIDI clipboard to browser (Lemon Studio's design after the original's entry; greyed while nothing
-    /// is copied): the piano roll's clipboard goes to "MIDI clipboard <n>.mid" in the user folder's "Clipboard files"
-    /// (the original's browser has a folder of that name), the next free number; the folder joins the browser and
-    /// opens there.
-    pub(crate) fn save_midi_clipboard(&mut self) {
-        let s = &self.state;
-        let Some(dir) = clipboard_dir() else { return };
-        let file = clipboard_file(&s.piano.clipboard, s.project.ppq, s.tempo);
-        let path = (1..).map(|n| dir.join(format!("MIDI clipboard {n}.mid"))).find(|p| !p.exists()).expect("a free name");
-        match std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, os_smf::write(&file))) {
-            Ok(()) => {
-                self.add_browser_folder(dir);
-                self.state.message = Some(format!("Saved {}", path.display()));
-            }
-            Err(e) => self.state.message = Some(format!("Could not write {}: {e}", path.display())),
-        }
-        self.invalidate();
-    }
-
     /// The save dialog's file: written.
     pub(crate) fn midi_export_chosen(&mut self, path: PathBuf, piano: bool) {
         let path = if path.extension().is_none() { path.with_extension("mid") } else { path };
@@ -846,28 +829,6 @@ mod tests {
 
     fn ev(tick: u32, kind: Ev) -> Event {
         Event { tick, kind }
-    }
-
-    /// Save MIDI clipboard to browser is greyed until notes are copied, then writes them from the first note on
-    /// into a numbered file of the clipboard folder, which the browser then shows.
-    #[test]
-    fn save_midi_clipboard_to_browser() {
-        use crate::views::menus::{active, item_at, SAVE_MIDI_CLIP_LABEL, TOOLS_MENU};
-        let mut app = App::new(None);
-        let at = (0..60).find(|&i| item_at(TOOLS_MENU, i).is_some_and(|it| it.label == SAVE_MIDI_CLIP_LABEL)).unwrap();
-        assert!(!active(&app.state, TOOLS_MENU, item_at(TOOLS_MENU, at).unwrap()), "nothing copied");
-        app.state.piano.clipboard = vec![Note { position: 192, length: 96, key: 60, ..Note::step(0, 0) }, Note { position: 288, length: 48, key: 64, ..Note::step(0, 0) }];
-        assert!(active(&app.state, TOOLS_MENU, item_at(TOOLS_MENU, at).unwrap()));
-        let dir = clipboard_dir().unwrap();
-        let _ = std::fs::remove_dir_all(&dir);
-        app.menu_item(TOOLS_MENU, at);
-        app.menu_item(TOOLS_MENU, at);
-        let second = dir.join("MIDI clipboard 2.mid");
-        let f = os_smf::read(&std::fs::read(&second).unwrap()).unwrap();
-        let ons: Vec<(u32, u8)> = f.tracks[1].events.iter().filter_map(|e| if let Ev::NoteOn { key, velocity, .. } = e.kind { (velocity > 0).then_some((e.tick, key)) } else { None }).collect();
-        assert_eq!(ons, [(0, 60), (96, 64)]);
-        assert!(dir.join("MIDI clipboard 1.mid").exists() && app.state.browser_folders.contains(&dir));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn on(tick: u32, channel: u8, key: u8, velocity: u8) -> Event {
@@ -1116,7 +1077,7 @@ mod tests {
         assert_eq!(p.ppq, 96);
         assert_eq!(p.channels.iter().map(|c| c.name.as_deref().unwrap_or("")).collect::<Vec<_>>(), ["Piano", "Bass", "Drums"]);
         assert_eq!(p.channels.iter().map(|c| c.mixer_track).collect::<Vec<_>>(), [1, 2, 3]);
-        assert!(p.channels.iter().all(|c| c.plugin.as_deref() == Some(crate::osc3::FILE_NAME)), "Lemon Trio plays them");
+        assert!(p.channels.iter().all(|c| c.plugin.as_deref() == Some(crate::osc3::FILE_NAME)), "Mango Trio plays them");
         assert_eq!(p.patterns.len(), 1);
         assert_eq!(p.patterns[0].name.as_deref(), Some(stem(&path).as_str()));
         assert_eq!(p.patterns[0].notes.len(), 4);
@@ -1149,7 +1110,7 @@ mod tests {
         let notes = app.state.project.pattern(1).unwrap().notes.len();
         assert_eq!(notes, before.pattern(1).map_or(0, |p| p.notes.len()) + 4);
         let after = app.state.project.clone();
-        assert_eq!(crate::history::undo(&mut app.state).as_deref(), Some(IMPORT_STEP));
+        assert_eq!(crate::history::undo(&mut app.state), Some(IMPORT_STEP));
         assert_eq!(app.state.project, before);
         crate::history::redo(&mut app.state);
         assert_eq!(app.state.project.channels.len(), after.channels.len());
@@ -1290,5 +1251,32 @@ mod tests {
             assert_eq!(a.notes, b.notes);
         }
         assert_eq!(again.tempos, imp.tempos);
+    }
+
+    /// The type combo's silly half: 8-bit gives Trio channels whose saved state is squares all round (the patch is the
+    /// channel's state, so hosting starts from it and the file keeps it), and the monk gives Mango Monk channels.
+    #[test]
+    fn imported_as_eight_bit_or_monk() {
+        let f = three(96);
+        let path = std::env::temp_dir().join(format!("os_midi_chiptune_{}.mid", std::process::id()));
+        std::fs::write(&path, os_smf::write(&f)).unwrap();
+        let mut app = test_app();
+        // 8-bit: every part is a Trio channel with squares in its state.
+        let o = Options { instrument: Instrument::EightBit, ..Options::default() };
+        app.import_into_project(&path, &f, &o);
+        let trio = app.state.project.channels.iter().filter(|c| crate::osc3::is_osc3(c)).count();
+        assert_eq!(trio, 3, "three parts, all 3x Osc channels");
+        for c in app.state.project.channels.iter().filter(|c| crate::osc3::is_osc3(c)) {
+            let vals = lemon_3x_osc::params::values_of(c.plugin_state.as_deref().expect("the patch is the state"));
+            for n in 0..3 {
+                assert_eq!(vals[lemon_3x_osc::params::osc(n) + lemon_3x_osc::params::SHAPE], 2, "osc {} is a square", n + 1);
+            }
+        }
+        // The monk: every part is a Mango Monk channel with no state of its own.
+        let o = Options { instrument: Instrument::Monk, ..Options::default() };
+        app.import_into_project(&path, &f, &o);
+        let monks: Vec<&str> = app.state.project.channels.iter().filter_map(|c| c.plugin.as_deref()).collect();
+        assert_eq!(monks.iter().filter(|n| **n == crate::plugins::MANGO_MONK).count(), 3, "three parts chant: {monks:?}");
+        let _ = std::fs::remove_file(&path);
     }
 }

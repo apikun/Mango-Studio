@@ -1,0 +1,179 @@
+# Builds Mango Studio for Windows, Linux and Android and attaches the builds to a GitHub release: a `v*` tag pushed
+# to the repository (or a manual dispatch) becomes a release with `Mango-Studio-windows-x64.zip`,
+# `Mango-Studio-linux-x64.zip` and `Mango-Studio-android-arm64.apk`. The builds are the ones CI checks (see ci.yml): Windows 10+, x64 — the build Winlator
+# (Wine on Android) runs, since nothing needs the GPU — and Linux on X11 or Wayland, x64.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag, created if it does not exist (e.g. v0.2.0)'
+        required: true
+        default: 'v0.2.0'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The Windows image ships LLVM, whose libclang generates the time stretcher's and the ASIO SDK's bindings.
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked -p os-app
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/mangostudio.exe dist/
+          Copy-Item README.md dist/
+          Copy-Item THIRD-PARTY-NOTICES.txt dist/
+          Compress-Archive -Path dist/* -DestinationPath Mango-Studio-windows-x64.zip -Force
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          name: Mango Studio ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          body: |
+            Mango Studio for Windows (x64), Linux (x64) and Android (arm64): the portable builds run on Windows 10 and
+            11, Linux on X11 or Wayland, and — new in v0.4 — natively on Android, no Wine needed.
+
+            Mango Studio is based on Lemon Studio by ItsAlphaNeon (https://github.com/ItsAlphaNeon/Lemon-Studio), free software
+            under the GPL 3.0 or later. The Android port's scaffolding follows daijro's honeydew
+            (https://github.com/daijro/honeydew), credited in THIRD-PARTY-NOTICES.txt.
+
+            - Unzip and run `mangostudio` (`mangostudio.exe` on Windows): no installer, and nothing else to install.
+              On Android, install the APK and open Mango Studio from the launcher.
+            - v0.4: Mango Studio Mobile — the whole app (devices, plugins, Mango Beat included) runs on Android; one
+              finger is the mouse and a held finger is a right click. The new Mango Beat (a Gross Beat-style time
+              manipulator) joins the effects, automation clips gained Ableton-style shapes and an LFO, and the piano
+              roll draws slide and portamento notes (the Note properties menu).
+            - Desktop audio is unchanged; on Android the device plays through AAudio at the device's own settings.
+            - If it will not start, `%APPDATA%\Mango Studio\panic-log.txt` (Windows), `~/.config/Mango Studio/panic-log.txt`
+              (Linux) or the app folder's panic-log.txt (Android) says why.
+          files: Mango-Studio-windows-x64.zip
+          fail_on_unmatched_files: true
+
+  linux:
+    name: Linux x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # libclang for the time stretcher's bindings, ALSA's and Wayland's development files for the build (as ci.yml).
+      - name: Native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev libwayland-dev libclang-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked -p os-app
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp target/release/mangostudio dist/
+          cp README.md dist/
+          cp THIRD-PARTY-NOTICES.txt dist/
+          zip -r Mango-Studio-linux-x64.zip dist
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          name: Mango Studio ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          body: |
+            Mango Studio for Windows (x64), Linux (x64) and Android (arm64): the portable builds run on Windows 10 and
+            11, Linux on X11 or Wayland, and — new in v0.4 — natively on Android, no Wine needed.
+
+            Mango Studio is based on Lemon Studio by ItsAlphaNeon (https://github.com/ItsAlphaNeon/Lemon-Studio), free software
+            under the GPL 3.0 or later. The Android port's scaffolding follows daijro's honeydew
+            (https://github.com/daijro/honeydew), credited in THIRD-PARTY-NOTICES.txt.
+
+            - Unzip and run `mangostudio` (`mangostudio.exe` on Windows): no installer, and nothing else to install.
+              On Android, install the APK and open Mango Studio from the launcher.
+            - v0.4: Mango Studio Mobile — the whole app (devices, plugins, Mango Beat included) runs on Android; one
+              finger is the mouse and a held finger is a right click. The new Mango Beat (a Gross Beat-style time
+              manipulator) joins the effects, automation clips gained Ableton-style shapes and an LFO, and the piano
+              roll draws slide and portamento notes (the Note properties menu).
+            - Desktop audio is unchanged; on Android the device plays through AAudio at the device's own settings.
+            - If it will not start, `%APPDATA%\Mango Studio\panic-log.txt` (Windows), `~/.config/Mango Studio/panic-log.txt`
+              (Linux) or the app folder's panic-log.txt (Android) says why.
+          files: Mango-Studio-linux-x64.zip
+          fail_on_unmatched_files: true
+
+  android:
+    name: Android arm64
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # The NDK (r28b) and its licence; the image's SDK provides the rest. libclang: the time stretcher's
+      # bindings, as on the desktop jobs.
+      - name: Install Linux packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libclang-dev
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;28.1.13356709" >/dev/null
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build and package
+        run: tools/android-dist.sh
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          name: Mango Studio ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          body: |
+            Mango Studio for Windows (x64), Linux (x64) and Android (arm64): the portable builds run on Windows 10 and
+            11, Linux on X11 or Wayland, and — new in v0.4 — natively on Android, no Wine needed.
+
+            Mango Studio is based on Lemon Studio by ItsAlphaNeon (https://github.com/ItsAlphaNeon/Lemon-Studio), free software
+            under the GPL 3.0 or later. The Android port's scaffolding follows daijro's honeydew
+            (https://github.com/daijro/honeydew), credited in THIRD-PARTY-NOTICES.txt.
+
+            - Unzip and run `mangostudio` (`mangostudio.exe` on Windows): no installer, and nothing else to install.
+              On Android, install the APK and open Mango Studio from the launcher.
+            - v0.4: Mango Studio Mobile — the whole app (devices, plugins, Mango Beat included) runs on Android; one
+              finger is the mouse and a held finger is a right click. The new Mango Beat (a Gross Beat-style time
+              manipulator) joins the effects, automation clips gained Ableton-style shapes and an LFO, and the piano
+              roll draws slide and portamento notes (the Note properties menu).
+            - Desktop audio is unchanged; on Android the device plays through AAudio at the device's own settings.
+            - If it will not start, `%APPDATA%\Mango Studio\panic-log.txt` (Windows), `~/.config/Mango Studio/panic-log.txt`
+              (Linux) or the app folder's panic-log.txt (Android) says why.
+          files: Mango-Studio-android-arm64.apk
+          fail_on_unmatched_files: true

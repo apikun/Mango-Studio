@@ -392,7 +392,7 @@ pub(crate) fn open(name: Option<&str>, mode: Mode, rate: Option<u32>, buffer: Op
     let (tx, rx) = mpsc::channel();
     let name = name.map(str::to_string);
     let thread = std::thread::Builder::new()
-        .name("lemonstudio wasapi".into())
+        .name("mangostudio wasapi".into())
         .spawn({
             let stop = stop.clone();
             move || render(name.as_deref(), mode, rate, buffer, mix, errors, &stop, tx)
@@ -549,7 +549,7 @@ fn exclusive(
         // A rate the device does not run at itself: its own.
         None => match pick(m.rate)? {
             Some(f) => (m.rate, f),
-            None => return Err(Refused::Other("it takes none of the sample formats Lemon Studio writes".into())),
+            None => return Err(Refused::Other("it takes none of the sample formats Mango Studio writes".into())),
         },
     };
     let w = wave(format, rate, m.channels, m.mask);
@@ -588,7 +588,7 @@ fn small(d: &IMMDevice, m: &MixFormat, rate: Option<u32>, buffer: Option<u32>) -
         if rate.is_some_and(|r| r != m.rate) {
             return Err(Refused::OwnRate(m.rate));
         }
-        let format = m.format.ok_or_else(|| Refused::Other("the system mixer's sample format is not one Lemon Studio writes".into()))?;
+        let format = m.format.ok_or_else(|| Refused::Other("the system mixer's sample format is not one Mango Studio writes".into()))?;
         c3.InitializeSharedAudioStream(AUDCLNT_STREAMFLAGS_EVENTCALLBACK, period, &m.wave.Format, None).map_err(|e| Refused::of(&e))?;
         let client: IAudioClient = c3.cast().map_err(|e| Refused::Other(text(&e)))?;
         Ok((client, format, m.rate, (min, def)))

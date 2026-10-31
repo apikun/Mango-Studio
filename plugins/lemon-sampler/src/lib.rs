@@ -389,7 +389,7 @@ impl Shared {
             }
             let disk = match &old {
                 Some(d) => Some(d.disk().clone()),
-                None => stream::Disk::open(Path::new(&path), l).map_err(|e| nih_log!("Lemon Sampler: {e}")).ok(),
+                None => stream::Disk::open(Path::new(&path), l).map_err(|e| nih_log!("Mango Sampler: {e}")).ok(),
             };
             if let Some(disk) = disk {
                 let played = stream::Played::new(disk, &points, old.as_deref());
@@ -437,7 +437,7 @@ impl Shared {
         let s = match os_engine::sample::load_shared(Path::new(path)) {
             Ok(s) => s,
             Err(e) => {
-                nih_log!("Lemon Sampler: {e}");
+                nih_log!("Mango Sampler: {e}");
                 return None;
             }
         };
@@ -713,8 +713,8 @@ impl LemonSampler {
 }
 
 impl Plugin for LemonSampler {
-    const NAME: &'static str = "Lemon Sampler";
-    const VENDOR: &'static str = "Lemon Studio";
+    const NAME: &'static str = "Mango Sampler";
+    const VENDOR: &'static str = "Mango Studio";
     const URL: &'static str = "";
     const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
@@ -756,7 +756,7 @@ impl Plugin for LemonSampler {
         let path = self.params.sample_path.read().map(|p| p.clone()).unwrap_or_default();
         if !path.is_empty() && path != self.shared.loaded_path() {
             if let Err(e) = self.shared.load_for_host(&path, &self.params) {
-                nih_log!("Lemon Sampler: {e}");
+                nih_log!("Mango Sampler: {e}");
             }
         } else if path.is_empty() && !self.shared.loaded_path().is_empty() {
             // A restored state without a sample (the host undid a load into an empty channel): nothing plays.
@@ -831,7 +831,7 @@ impl Plugin for LemonSampler {
 // plugins by them (spec: plugins/plugin-formats.md, identity).
 impl ClapPlugin for LemonSampler {
     const CLAP_ID: &'static str = "org.openstudio.open-sampler";
-    const CLAP_DESCRIPTION: Option<&'static str> = Some("Lemon Studio's sampler instrument");
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("Mango Studio's sampler instrument");
     const CLAP_MANUAL_URL: Option<&'static str> = None;
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::Instrument, ClapFeature::Sampler, ClapFeature::Stereo];

@@ -76,6 +76,82 @@ impl App {
         self.file_dialog(FileDlg::new(Mode::Folder, "Add a plugin folder", "plugins", crate::dialog::Then::PluginFolder));
     }
 
+    /// Install yabridge (Windows plugins, Linux): downloads it on a background thread, then looks for plugins.
+    pub(crate) fn install_yabridge(&mut self) {
+        self.windows_job("Installing yabridge from github.com/robbert-vdh/yabridge...", || crate::yabridge::install().map(|v| format!("Installed yabridge {v}")));
+    }
+
+    /// Run Windows installer...: a Windows plugin's installer (`.exe`, `.msi`), run in Wine.
+    pub(crate) fn pick_windows_installer(&mut self) {
+        use crate::filedlg::{FileDlg, Mode};
+        let dlg = FileDlg::new(Mode::Open, "Run a Windows plugin installer", "windows installer", crate::dialog::Then::WindowsInstaller).filter("Windows installers", &["exe", "msi"]);
+        let downloads = std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Downloads"));
+        self.file_dialog(dlg.start(downloads.as_deref()));
+    }
+
+    /// The installer chosen: it runs in Wine (its own windows); when it ends, Mango looks for plugins.
+    pub(crate) fn run_windows_installer(&mut self, path: std::path::PathBuf) {
+        let name = path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let msi = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("msi"));
+        self.windows_job(&format!("Running {name} in Wine: finish the installer, then Mango Studio looks for the new plugins"), move || {
+            let mut cmd = std::process::Command::new("wine");
+            if msi {
+                cmd.args(["msiexec", "/i"]);
+            }
+            match cmd.arg(&path).status() {
+                Ok(_) => Ok(format!("{name} is done")),
+                Err(e) => Err(format!("Wine did not start: {e}")),
+            }
+        });
+    }
+
+    /// Add Windows folder...: a folder of Windows plugins (`.dll`, `.vst3`, `.clap`) for yabridge to bridge.
+    pub(crate) fn add_windows_folder(&mut self) {
+        use crate::filedlg::{FileDlg, Mode};
+        let start = crate::yabridge::prefix().map(|p| p.join("drive_c"));
+        self.file_dialog(FileDlg::new(Mode::Folder, "Add a folder of Windows plugins", "windows plugins", crate::dialog::Then::WindowsFolder).start(start.as_deref()));
+    }
+
+    /// The Windows folder chosen: the scan has yabridge bridge it, then finds its plugins.
+    pub(crate) fn windows_folder_chosen(&mut self, path: std::path::PathBuf) {
+        self.state.message = Some(format!("Added Windows plugin folder {}: looking for plugins", path.display()));
+        self.state.plugdb.win_add.push(path);
+        self.start_scan(Mode::Changed);
+    }
+
+    /// Runs `job` on a background thread, saying `doing` meanwhile; its outcome comes back in `windows_tick`.
+    fn windows_job(&mut self, doing: &str, job: impl FnOnce() -> Result<String, String> + Send + 'static) {
+        if self.win_job.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(job());
+            os_host::wake();
+        });
+        self.win_job = Some(rx);
+        self.state.plugdb.win_busy = Some(doing.to_string());
+        self.state.message = Some(doing.to_string());
+        self.invalidate();
+    }
+
+    /// UI tick: Install yabridge or a Windows installer ended: what happened, then a look for new plugins.
+    pub(crate) fn windows_tick(&mut self) {
+        let Some(rx) = &self.win_job else { return };
+        let Ok(done) = rx.try_recv() else { return };
+        self.win_job = None;
+        self.state.plugdb.win_busy = None;
+        self.state.plugdb.windows = crate::yabridge::info();
+        match done {
+            Ok(said) => {
+                self.start_scan(Mode::Changed);
+                self.state.message = Some(format!("{said}: looking for plugins"));
+            }
+            Err(e) => self.state.message = Some(e),
+        }
+        self.invalidate();
+    }
+
     /// The folder chosen in Add folder...
     pub(crate) fn plugin_folder_chosen(&mut self, path: std::path::PathBuf) {
         self.state.message = Some(if self.state.plugdb.prefs.add_folder(&path) {

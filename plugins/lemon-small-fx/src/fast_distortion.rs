@@ -40,9 +40,9 @@ const CONTROLS: [Control; 5] = [
 ];
 
 pub const SPEC: &Spec = &Spec {
-    name: "Lemon Fast Distortion",
+    name: "Mango Fast Distortion",
     word: "FAST DISTORTION",
-    about: "Lemon Studio's fast distortion",
+    about: "Mango Studio's fast distortion",
     settings: &SETTINGS,
     version: None,
     any_version: false,
@@ -59,6 +59,7 @@ pub const SPEC: &Spec = &Spec {
     labels: &[],
     text,
     parse,
+    shown: None,
     sound,
     rings: false,
 };
@@ -130,7 +131,7 @@ pub struct FastDistortionKind;
 impl Kind for FastDistortionKind {
     const SPEC: &'static Spec = SPEC;
     const CLAP_ID: &'static str = "org.openstudio.lemon-fast-distortion";
-    const CLAP_DESCRIPTION: &'static str = "Lemon Studio's fast distortion";
+    const CLAP_DESCRIPTION: &'static str = "Mango Studio's fast distortion";
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Distortion, ClapFeature::Stereo];
     const VST3_CLASS_ID: [u8; 16] = *b"LemonStudioFDist";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Fx, Vst3SubCategory::Distortion];

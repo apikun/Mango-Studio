@@ -1,5 +1,4 @@
 // Copyright (C) 2026 ItsAlphaNeon
-// Copyright (C) 2026 thacer13
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
@@ -65,8 +64,6 @@ pub enum Then {
     ExportFolder,
     OpenProject,
     LoadTheme,
-    /// VIEW ▸ Background ▸ Set image wallpaper... (`App::set_wallpaper`).
-    Wallpaper,
     /// The Arpeggiate dialog's folder button (spec: ui/piano-arpeggiate.md §1).
     ArpPattern,
     /// The Quantize dialog's folder button (spec: ui/piano-quantize.md §1).
@@ -74,6 +71,10 @@ pub enum Then {
     /// The Chop dialog's folder button (spec: ui/piano-chop.md §1).
     ChopPattern,
     PluginFolder,
+    /// Plugins ▸ Add Windows folder...: a folder of Windows plugins for yabridge (`crate::yabridge`).
+    WindowsFolder,
+    /// Plugins ▸ Run Windows installer...: a Windows plugin's installer, run in Wine.
+    WindowsInstaller,
     /// The missing files box (`crate::missing`): Find samples... (Yes) or OK.
     MissingFiles,
     /// The folder the missing samples are looked for in.
@@ -110,12 +111,10 @@ pub enum Then {
     SongSignature(crate::timesig::SongSig, u8, u8),
     /// The project's data folder: its questions and folder pickers (`crate::data_folder`).
     DataFolder(crate::data_folder::DThen),
-    /// A control-plane client's proposal: Yes applies it, No discards it (`crate::control::propose`).
-    Proposal(u64),
-    /// A control-plane client asks to save the project to this file: Yes saves it.
-    ClientSave(PathBuf),
     /// The MIDI file to import (`crate::midi_file`); true: from the piano roll.
     MidiImport(bool),
+    /// FILE ▸ Import ▸ Audio file...: the audio file to place on the playlist.
+    AudioImport,
     /// Where to export a MIDI file; true: the piano roll's channel.
     MidiExport(bool),
     /// File ▸ FL Studio factory content folder: the folder picked (`App::set_factory_folder`).

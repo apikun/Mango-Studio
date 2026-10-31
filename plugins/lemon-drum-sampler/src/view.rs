@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
-//! Lemon Drum Sampler editor: painting and hit regions (platform independent), in the Lemon "Pith" plugin look on a
+//! Mango Drum Sampler editor: painting and hit regions (platform independent), in the Lemon "Pith" plugin look on a
 //! 6 px grid: the header band (the lemon mark and "DRUMS" on one line, the bank buttons), the 4 × 4 pad grid (pad 1
 //! at the bottom left), and the cards of the chosen pad (its key, cut groups and levels) and of its chosen layer (its
 //! sample, velocity range and levels).
 //!
-// spec: plugins/lemon-drum-sampler.md §3, ui/lemon-design.md §11.1
+// spec: plugins/lemon-drum-sampler.md §4, ui/lemon-design.md §11.1
 
 use os_theme::design::lemon as brand;
 use os_theme::Palette;

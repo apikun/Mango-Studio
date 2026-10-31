@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The app is one NativeActivity over libos_android.so: everything else is Rust. The activity shape follows
+     daijro's honeydew (GPL-3.0-or-later), https://github.com/daijro/honeydew. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The app saves in the public Documents (Documents/Mango Studio), which a file manager reaches on
+         every device; Android 11+ gates direct writes there behind All files access (the activity opens
+         the settings page for it once), older systems use the runtime WRITE permission. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <!-- The mixer's tracks and One-click recording take an input device in (the microphone): the
+         runtime grant is asked for once at the launch (MainActivity). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <application
+        android:allowBackup="false"
+        android:requestLegacyExternalStorage="true"
+        android:icon="@drawable/mangostudio"
+        android:label="@string/app_name"
+        android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen">
+        <activity
+            android:name="dev.apikun.mangostudio.MainActivity"
+            android:screenOrientation="fullSensor"
+            android:configChanges="orientation|screenSize|smallestScreenSize|keyboard|keyboardHidden|density|uiMode"
+            android:exported="true">
+            <meta-data android:name="android.app.lib_name" android:value="os_android" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
-"""Generate the Lemon Studio logo data from crates/os-app/assets/logo/*-lemon.svg.
+"""Generate the Mango Studio logo data from crates/os-app/assets/logo/*-mango.svg.
 
     python tools/logo/gen.py            (run from the repository root)
     python tools/logo/gen.py --rs       (logo.rs only: no Pillow needed)
@@ -10,9 +10,9 @@
 Writes:
   crates/os-app/src/logo.rs        the full-colour logo's parts (the startup splash) and the greyscale mark (drawn in
                                    one tint), as absolute M/L/Q/C/Z path data
-  crates/os-app/assets/lemonstudio.ico  app icon, 16..256 px (exe, window, taskbar), from the owner's
-                                        bitmap assets/logo/icon-lemon.png (edited in icon-lemon.pdn, Paint.NET)
-  crates/os-app/assets/lemonstudio.png  the same icon at 256 px (Linux: window icon and desktop entry)
+  crates/os-app/assets/mangostudio.ico  app icon, 16..256 px (exe, window, taskbar), from the owner's
+                                        bitmap assets/logo/icon-mango.png (edited in icon-lemon.pdn, Paint.NET)
+  crates/os-app/assets/mangostudio.png  the same icon at 256 px (Linux: window icon and desktop entry)
 """
 import importlib.util
 import os
@@ -61,22 +61,23 @@ def d_string(cmds):
 
 
 def write_rs():
-    vb, grey = layers(os.path.join(ASSETS, "logo", "logo-greyscale-lemon.svg"))
-    colour = parts_by_id(os.path.join(ASSETS, "logo", "logo-colored-lemon.svg"))
+    vb, grey = layers(os.path.join(ASSETS, "logo", "logo-greyscale-mango.svg"))
+    colour = parts_by_id(os.path.join(ASSETS, "logo", "logo-colored-mango.svg"))
     d = {name: d_string(tg.convert(colour[sid])) for name, sid in PARTS}
     slices = [d_string(tg.convert(colour[sid])) for sid in SLICES]
-    # The greyscale mark is the coloured one's shapes without the label and the shimmer.
-    shared = [d["RECORD"], d["CENTER"], d["RIND"]] + slices
+    # The greyscale mark is the coloured one's shapes without the badge, the label and the shimmer.
+    shared = [d["CENTER"], d["RIND"]] + slices
     assert [d_string(cmds) for _, cmds in grey] == shared, "the greyscale and full-colour logos differ in shape"
     lines = tg.HEADER + [
-        "//! Lemon Studio logo, generated from `assets/logo/logo-colored-lemon.svg` and `logo-greyscale-lemon.svg` by",
+        "//! Mango Studio logo, generated from `assets/logo/logo-colored-mango.svg` and `logo-greyscale-mango.svg` by",
         "//! `tools/logo/gen.py`: do not edit. Absolute M/L/Q/C/Z path data in viewBox units.",
         "",
         "pub const VIEW_W: f32 = %s;" % tg.fmt(vb[2]),
         "pub const VIEW_H: f32 = %s;" % tg.fmt(vb[3]),
         "",
-        "// The full-colour logo's parts, back to front (the startup splash). The greyscale mark is the same shapes without",
-        "// the label and the shimmer seen through the record's two windows.",
+        "// The full-colour logo's parts, back to front (the startup splash): the label and the shimmer (hidden), the round",
+        "// badge (RECORD), the stem (CENTER), the mango's skin (RIND), the equalizer's three bars and the leaf (SLICES). The",
+        "// greyscale mark is the same shapes without the badge, the label and the shimmer.",
     ]
     lines += ['pub const %s: &str = "%s";' % (name, d[name]) for name, _ in PARTS]
     lines.append("pub const SLICES: [&str; 4] = [")
@@ -85,7 +86,7 @@ def write_rs():
         "];",
         "",
         "/// The greyscale mark, drawn in one tint (`icons::logo`).",
-        "pub const PATHS: &[&str] = &[RECORD, CENTER, RIND, SLICES[0], SLICES[1], SLICES[2], SLICES[3]];",
+        "pub const PATHS: &[&str] = &[CENTER, RIND, SLICES[0], SLICES[1], SLICES[2], SLICES[3]];",
     ]
     with open(os.path.join(ROOT, "crates", "os-app", "src", "logo.rs"), "w", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
@@ -94,16 +95,16 @@ def write_rs():
 def write_icons():
     from PIL import Image
 
-    src = Image.open(os.path.join(ASSETS, "logo", "icon-lemon.png")).convert("RGBA")
+    src = Image.open(os.path.join(ASSETS, "logo", "icon-mango.png")).convert("RGBA")
     src = src.crop(src.getchannel("A").getbbox())  # no transparent margin: fill the whole icon cell
     side = max(src.size)
     sq = Image.new("RGBA", (side, side), (0, 0, 0, 0))
     sq.paste(src, ((side - src.width) // 2, (side - src.height) // 2))
     sizes = (256, 128, 64, 48, 40, 32, 24, 20, 16)
     imgs = [sq.resize((s, s), Image.LANCZOS) for s in sizes]
-    imgs[0].save(os.path.join(ASSETS, "lemonstudio.ico"), sizes=[(s, s) for s in sizes], append_images=imgs[1:])
+    imgs[0].save(os.path.join(ASSETS, "mangostudio.ico"), sizes=[(s, s) for s in sizes], append_images=imgs[1:])
     # Linux: the freedesktop icon named after the app id (Wayland compositors show it through lemonstudio.desktop).
-    imgs[0].save(os.path.join(ASSETS, "lemonstudio.png"))
+    imgs[0].save(os.path.join(ASSETS, "mangostudio.png"))
 
 
 def main():

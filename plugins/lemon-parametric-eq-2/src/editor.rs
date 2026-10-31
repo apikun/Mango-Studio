@@ -23,7 +23,7 @@ use crate::params::{self, byte, flag, freq_id, level_id, order_id, set_byte, set
 use crate::view::{self, Hit, Target, ViewState, MAIN_FADER};
 use crate::Shared;
 
-/// "Lock B" (Options menu) is not saved; it lasts while the plugin instance lives.
+/// "Lock spare state" (Options menu) is not saved; it lasts while the plugin instance lives.
 static LOCK_SPARE: AtomicBool = AtomicBool::new(false);
 
 pub struct EqEditor {
@@ -326,8 +326,8 @@ impl Logic {
             Some(Target::Tokens) => "View band tokens".into(),
             Some(Target::Phones) => "Band solo on shift".into(),
             Some(Target::Monitor(m)) => format!("Monitor: {}", ["off", "input", "output"][usize::from(m.min(2))]),
-            Some(Target::Store) => if LOCK_SPARE.load(Ordering::Relaxed) { "Copy to B (locked)".into() } else { "Copy to B".into() },
-            Some(Target::Flip) => "Swap A / B".into(),
+            Some(Target::Store) => if LOCK_SPARE.load(Ordering::Relaxed) { "Store in spare state (locked)".into() } else { "Store in spare state".into() },
+            Some(Target::Flip) => "Flip with spare state (A/B compare)".into(),
             _ => {
                 let _ = extra;
                 String::new()
@@ -624,14 +624,14 @@ impl Logic {
                 m.sep(Cmd::None);
                 m.add(MenuItem::item("Copy value"), Cmd::CopyValue(id.clone()));
                 m.add(MenuItem::item("Paste value").enabled(self.copied.is_some()), Cmd::PasteValue(id.clone()));
-                m.add(MenuItem::item("Enter value..."), Cmd::TypeIn(id.clone()));
+                m.add(MenuItem::item("Type in value..."), Cmd::TypeIn(id.clone()));
                 // Automation belongs to the host: offered when Lemon Studio hosts the editor (host link).
                 m.sep(Cmd::None);
                 m.add(MenuItem::item("Create automation clip").enabled(self.hosted), Cmd::Automate(id.clone()));
             }
             MenuReq::Options => {
                 m.head("Options", Cmd::None);
-                check(&mut m, "Lock B", LOCK_SPARE.load(Ordering::Relaxed), Cmd::LockSpare);
+                check(&mut m, "Lock spare state", LOCK_SPARE.load(Ordering::Relaxed), Cmd::LockSpare);
                 m.submenu("Band solo on Shift", self.solo_menu(&extra), Cmd::None);
                 // Greyed out: nothing reads the minimum phase mod speed (parameter smoothing), phase rotation or the
                 // heatmap's enhanced frequency and high precision yet. The linear phase mod speed is LIN's crossfade time.
@@ -658,8 +658,8 @@ impl Logic {
                 m.submenu("Heatmap position", opt_menu(&extra, Opt::HeatmapPosition, &["Top", "Bottom", "Full"], 0), Cmd::None);
                 m.sep(Cmd::None);
                 let mut about = MenuDef::new(MenuStyle::Context);
-                about.add(MenuItem::item("Lemon Parametric EQ").enabled(false), Cmd::None);
-                about.add(MenuItem::item(&format!("Lemon Studio {} - GPLv3", env!("CARGO_PKG_VERSION"))).enabled(false), Cmd::None);
+                about.add(MenuItem::item("Mango Parametric EQ").enabled(false), Cmd::None);
+                about.add(MenuItem::item(&format!("Mango Studio {} - GPLv3", env!("CARGO_PKG_VERSION"))).enabled(false), Cmd::None);
                 about.add(MenuItem::item("Filters after the RBJ Audio EQ Cookbook").enabled(false), Cmd::None);
                 m.submenu("About", about, Cmd::None);
             }
@@ -836,7 +836,7 @@ mod win32 {
                 tracking: false,
                 slot: slot.clone(),
             });
-            let title = pw::wide("Lemon Parametric EQ");
+            let title = pw::wide("Mango Parametric EQ");
             let hwnd = CreateWindowExW(
                 0,
                 class.as_ptr(),
@@ -1478,7 +1478,7 @@ mod tests {
         for label in ["Phase rotation", "Enhanced frequency", "High precision", "Smooth", "Adaptive", "Inherit bandwidth"] {
             assert!(!clickable(&o, label), "{label}");
         }
-        for label in ["Lock B", "-120dB", "Average mode", "Highest", "Ultra"] {
+        for label in ["Lock spare state", "-120dB", "Average mode", "Highest", "Ultra"] {
             assert!(clickable(&o, label), "{label}");
         }
         assert!(l.menu(&MenuReq::Phones).items.iter().all(|it| !it.clickable()));

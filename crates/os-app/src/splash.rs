@@ -56,19 +56,22 @@ pub const LOADED: f32 = 0.96;
 // concentric).
 const C: (f32, f32) = (490.4, 488.1);
 const R: f32 = 476.5;
-// The full-colour logo's fills (`assets/logo/logo-colored-lemon.svg`): the label and the rind, the slices from the
-// lower right round to the upper left, the record's edge and its gradient (lower right to upper left).
-const LEMON: u32 = 0xffe066;
-const SLICE_FILLS: [u32; 4] = [0xffe066, 0xffe88a, 0xffeda3, 0xfff1b8];
+// The full-colour logo's fills (`assets/logo/logo-colored-mango.svg`): the label (hidden under the badge), the stem,
+// the mango's skin, the equalizer's three bars and the leaf, the badge's edge and its gradient (lower right to upper
+// left).
+const LABEL: u32 = 0xffb02e;
+const STEM: u32 = 0x6b3e1f;
+const SKIN: u32 = 0xf2711c;
+const SLICE_FILLS: [u32; 4] = [0xffb02e, 0xffc35c, 0xffd27a, 0x5cb85c];
 const RECORD_EDGE: u32 = 0x2d2d2d;
 const RECORD_FROM: (f32, f32) = (857.748, 789.317);
 const RECORD_TO: (f32, f32) = (147.545, 158.696);
 const RECORD_STOPS: [(f32, u32); 3] = [(0.0, 0x2d2d2d), (0.387, 0x171717), (0.8914, 0x000000)];
 /// The empty part of the gauge: each fill this far toward the workspace grey.
 const EMPTY: (u32, f32) = (0x262626, 0.8);
-/// The pie sector the gauge fills, clockwise from the rind's lower end (degrees clockwise from +x).
-const GAUGE_FROM: f32 = 36.0;
-const GAUGE_SWEEP: f32 = 192.0;
+/// The pie sector the gauge fills, clockwise from the top all the way round (degrees clockwise from +x).
+const GAUGE_FROM: f32 = -90.0;
+const GAUGE_SWEEP: f32 = 360.0;
 /// The groove light: two opposite wedges of this half-angle and reach (degrees, logo units), turning at this speed
 /// (degrees a second), lighting the grooves (rings from 190 units out, 8.4 apart, 1.7 wide) and a faint glow.
 const WEDGE: f32 = 18.0;
@@ -76,7 +79,7 @@ const WEDGE_R: f32 = 520.0;
 const TURN: f32 = 165.0;
 const GROOVES: (f32, f32, usize) = (190.0, 8.4, 34);
 const GROOVE_W: f32 = 1.7;
-const GROOVE_ALPHA: f32 = 0.6;
+const GROOVE_ALPHA: f32 = 0.0;
 const GLOW_ALPHA: f32 = 0.13;
 
 /// Seconds: the intro (the light fades in), the fade in, how quickly the gauge follows startup, and the finish: the
@@ -442,11 +445,11 @@ impl Painter {
         let t = Transform::from_translate(cx, cy).pre_scale(k, k).pre_translate(-C.0, -C.1);
         let fill = |px: &mut Pixmap, path: &Path, c: u32, mask: Option<&Mask>| px.fill_path(path, &solid(c), FillRule::Winding, t, mask);
         // The record half: the label and the shimmer seen through its cut-outs, the record, the spindle.
-        fill(px, &p.label, LEMON, None);
+        fill(px, &p.label, LABEL, None);
         fill(px, &p.shimmer, 0xffffff, None);
         px.fill_path(&p.record, &record_paint(), FillRule::Winding, t, None);
         fill(px, &p.record_edge, RECORD_EDGE, None);
-        fill(px, &p.center, 0x000000, None);
+        fill(px, &p.center, STEM, None);
         // The groove light: its two wedges and the grooves inside them, on the record only, brightest along the
         // wedges' middle.
         if look.light > 0.001 {
@@ -462,7 +465,7 @@ impl Painter {
             }
         }
         // The lemon half: empty, then filled round as far as the gauge.
-        let lemon = std::iter::once((&p.rind, LEMON)).chain(p.slices.iter().zip(SLICE_FILLS));
+        let lemon = std::iter::once((&p.rind, SKIN)).chain(p.slices.iter().zip(SLICE_FILLS));
         if look.progress < 1.0 {
             for (path, c) in lemon.clone() {
                 fill(px, path, mix(c, EMPTY.0, EMPTY.1), None);
@@ -483,7 +486,7 @@ impl Painter {
                 fill(px, path, c, mask);
             }
             // The rind's outline, as in the logo.
-            fill(px, &p.rind_edge, LEMON, mask);
+            fill(px, &p.rind_edge, SKIN, mask);
         }
         let at = (((DISC.0 - DISC.2 / 2.0) * s).round() as i32, ((DISC.1 + DISC.2 / 2.0 + CAPTION_GAP) * s).round() as i32);
         px.draw_pixmap(at.0, at.1, self.caption.pixmap.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
@@ -611,7 +614,7 @@ mod win {
 
     use super::{device, Anim, Painter, Shared};
 
-    const CLASS: &str = "LemonStudioSplash";
+    const CLASS: &str = "MangoStudioSplash";
     /// The frame timer and its period (ms).
     const TIMER: usize = 1;
     const FRAME_MS: u32 = 15;
@@ -718,7 +721,7 @@ mod win {
             wc.hInstance = inst;
             wc.lpszClassName = class.as_ptr();
             RegisterClassW(&wc);
-            let title = wide("Lemon Studio");
+            let title = wide("Mango Studio");
             // Layered (per-pixel alpha) and transparent to the mouse; above every window that is not topmost too; a
             // tool window takes no taskbar button; never activated, so the main window gets the focus as before.
             let hwnd = CreateWindowExW(
@@ -912,8 +915,8 @@ mod x11 {
         if let (Some(ty), Some(splash)) = (atom(b"_NET_WM_WINDOW_TYPE"), atom(b"_NET_WM_WINDOW_TYPE_SPLASH")) {
             let _ = c.change_property32(PropMode::REPLACE, win, ty, AtomEnum::ATOM, &[splash]);
         }
-        let _ = c.change_property8(PropMode::REPLACE, win, AtomEnum::WM_NAME, AtomEnum::STRING, b"Lemon Studio");
-        let _ = c.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, b"lemonstudio\0LemonStudio\0");
+        let _ = c.change_property8(PropMode::REPLACE, win, AtomEnum::WM_NAME, AtomEnum::STRING, b"Mango Studio");
+        let _ = c.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, b"mangostudio\0MangoStudio\0");
         // No input region: clicks go through to what is behind.
         let _ = c.shape_rectangles(shape::SO::SET, shape::SK::INPUT, ClipOrdering::UNSORTED, win, 0, 0, &[]);
         let gc = c.generate_id().ok()?;
@@ -1255,18 +1258,21 @@ mod tests {
             let (below, above) = (rgba(cx, cy + r + gap).3, rgba(cx, cy - r - gap).3);
             assert!(below > above && above > 0, "a soft shadow falling down, scale {scale}: {below} vs {above}");
             assert_eq!(rgba(w - 1, cy).3, 0, "it fades out before the window's edge, scale {scale}");
-            // The gauge at a quarter: the lower right slice filled, the upper left one still empty.
-            let (x1, y1) = at(scale, 602.0, 691.0);
-            let (x4, y4) = at(scale, 272.0, 410.0);
-            assert_eq!(rgba(x1, y1), (0xff, 0xe0, 0x66, 0xff), "slice 1 filled, scale {scale}");
-            let empty = mix(SLICE_FILLS[3], EMPTY.0, EMPTY.1);
+            // The gauge at a quarter (clockwise from the top): the mango's skin at the upper right filled, the left bar of
+            // the equalizer still empty.
+            let (x1, y1) = at(scale, 613.4, 365.1);
+            let (x4, y4) = at(scale, 375.4, 538.1);
+            let rgb = |c: u32| ((c >> 16) as u8, (c >> 8) as u8, c as u8);
+            let f1 = rgb(SKIN);
+            assert_eq!(rgba(x1, y1), (f1.0, f1.1, f1.2, 0xff), "the skin filled, scale {scale}");
+            let empty = mix(SLICE_FILLS[0], EMPTY.0, EMPTY.1);
             let e = rgba(x4, y4);
-            assert_eq!((u32::from(e.0) << 16) | (u32::from(e.1) << 8) | u32::from(e.2), empty, "slice 4 empty, scale {scale}");
+            assert_eq!((u32::from(e.0) << 16) | (u32::from(e.1) << 8) | u32::from(e.2), empty, "the left bar empty, scale {scale}");
             let full = p.paint(&look(1.0, 0.0)).clone();
             let c = full.pixel(x4 as u32, y4 as u32).unwrap().demultiply();
-            assert_eq!((c.red(), c.green(), c.blue()), (0xff, 0xf1, 0xb8), "slice 4 filled at the end, scale {scale}");
-            // The groove light: the record brighter along the wedge (pointing up and right, clear of the record's
-            // windows), and as it was 30 degrees off it.
+            assert_eq!((c.red(), c.green(), c.blue()), rgb(SLICE_FILLS[0]), "the left bar filled at the end, scale {scale}");
+            // The light: the badge brighter along the wedge (pointing up and right, clear of the mango), and as it was
+            // 30 degrees off it.
             let lit = p.paint(&look(0.25, 1.0)).clone();
             let a = (-30f32).to_radians();
             let (lx, ly) = at(scale, C.0 + 300.0 * a.cos(), C.1 + 300.0 * a.sin());

@@ -459,18 +459,17 @@ fn display(ui: &mut Ui, look: &Look) {
     ui.hit(d, Target::Display);
 }
 
-/// The lemon mark and "LEMON" in lemon beside a large faint "LIMITER", right-aligned at `right` and centred on `cy`
+/// "MANGO" in mango beside a large faint "LIMITER", right-aligned at `right` and centred on `cy`
 /// (as Lemon Sampler's in its waveform well).
 fn wordmark(c: &mut Canvas, right: f32, cy: f32) {
     let (big, small) = (Font::condensed(22, 0).bold(), Font::condensed(10, 0).bold());
     let wb = lemon::spaced_width(c, big, "LIMITER", 2.0);
-    let ws = lemon::spaced_width(c, small, "LEMON", 2.5);
+    let ws = lemon::spaced_width(c, small, "MANGO", 2.5);
     let (lh_b, lh_s) = (c.line_height(big), c.line_height(small));
     let bx = right - wb;
     lemon::spaced(c, big, bx, (cy - lh_b / 2.0).round(), Color::rgb(0xffffff).with_alpha(82), "LIMITER", 2.0);
     let sx = bx - 8.0 - ws;
-    lemon::spaced(c, small, sx, (cy - lh_s / 2.0).round() + 1.0, brand::MAIN, "LEMON", 2.5);
-    lemon::lemon_mark(c, sx - 8.0, cy, 4.0, brand::MAIN);
+    lemon::spaced(c, small, sx, (cy - lh_s / 2.0).round() + 1.0, brand::MAIN, "MANGO", 2.5);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -488,8 +487,8 @@ pub fn hint(t: &Target, m: &dyn Model, names: &dyn Fn(&str) -> String, mouse: Op
         Target::Layer(k) => LAYER_HINTS[(*k).min(LAYERS - 1)].into(),
         Target::Speed => "Scrolling speed".into(),
         Target::Menu => "Display options".into(),
-        Target::Store => "Copy to B".into(),
-        Target::Flip => "Swap A / B".into(),
+        Target::Store => "Store in spare state".into(),
+        Target::Flip => "Flip with spare state (A/B compare)".into(),
         Target::Display => {
             let a = mouse.map_or(0.0, |(_, y)| display_amp(y));
             if a <= 0.0 { "-INFdB 0.00".into() } else { format!("{:.1}dB {:.2}", 20.0 * a.log10(), a) }

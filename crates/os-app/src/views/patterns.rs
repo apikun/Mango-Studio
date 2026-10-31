@@ -50,7 +50,7 @@ fn colour_tab(ui: &mut Ui, r: Rect, col: Color, hint: &'static str) {
         // A small chevron: the tile opens the colours.
         let (cx, cy) = (tile.x + tile.w / 2.0, tile.y + tile.h / 2.0);
         let luma = (0.299 * f32::from(col.r) + 0.587 * f32::from(col.g) + 0.114 * f32::from(col.b)) / 255.0;
-        let ink = if luma > 0.55 { Color::rgb(0x473900) } else { Color::rgb(0xffffff).with_alpha(200) };
+        let ink = if luma > 0.55 { Color::rgb(0x4a2300) } else { Color::rgb(0xffffff).with_alpha(200) };
         ui.c.line(cx - 3.0, cy - 1.5, cx, cy + 1.5, 1.5, ink);
         ui.c.line(cx, cy + 1.5, cx + 3.0, cy - 1.5, 1.5, ink);
         return;
@@ -85,7 +85,7 @@ pub fn paint(ui: &mut Ui, s: &State) {
         ui.hit(r, Action::Pat(Hit::Inside), "");
         let named = matches!(b.target, BoxTarget::Name(_));
         // The colour tab: patterns and channels (spec: ui/channel-rack.md §13).
-        let tabbed = named || matches!(b.target, BoxTarget::Rack(crate::rack::RBox::Channel(_) | crate::rack::RBox::ColorSel));
+        let tabbed = named || matches!(b.target, BoxTarget::Rack(crate::rack::RBox::Channel(_)));
         let field = Rect::new(r.x + 4.0, r.y + 4.0, r.w - if !tabbed { 8.0 } else if lemon { 34.0 } else { 30.0 }, 22.0);
         if lemon {
             ui.c.fill_rrect(field, 4.0, t.tempo_box);
@@ -127,7 +127,6 @@ pub fn paint(ui: &mut Ui, s: &State) {
         let tab_col = match b.target {
             BoxTarget::Name(n) => Some(s.project.pattern(n).and_then(|p| p.color)),
             BoxTarget::Rack(crate::rack::RBox::Channel(r)) => Some(s.project.channels.get(r).and_then(|c| c.color)),
-            BoxTarget::Rack(crate::rack::RBox::ColorSel) => Some(s.rack.sel.first().and_then(|&r| s.project.channels.get(r)).and_then(|c| c.color)),
             _ => None,
         };
         if let Some(col) = tab_col {
