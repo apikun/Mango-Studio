@@ -613,18 +613,17 @@ fn waveform(ui: &mut Ui, sv: &SampleView) {
         ui.c.fill_rect(Rect::new(area.x, gy, area.w, 1.0), plug::GRID);
     }
     ui.c.pop_clip();
-    // Wordmark: the lemon mark and "LEMON" in lemon, "SAMPLER" in a light grey.
+    // Wordmark: "MANGO" in mango, "SAMPLER" in a light grey.
     let (big, small) = (Font::condensed(22, 0).bold(), Font::condensed(10, 0).bold());
     let wb = lemon::spaced_width(ui.c, big, "SAMPLER", 2.0);
-    let ws = lemon::spaced_width(ui.c, small, "LEMON", 2.5);
+    let ws = lemon::spaced_width(ui.c, small, "MANGO", 2.5);
     let lh_b = ui.c.line_height(big);
     let lh_s = ui.c.line_height(small);
     let wy = y(328.0) + 15.0;
     let bx = 547.0 - wb;
     lemon::spaced(ui.c, big, bx, (wy - lh_b / 2.0).round(), Color::rgb(0xffffff).with_alpha(82), "SAMPLER", 2.0);
     let sx = bx - 8.0 - ws;
-    lemon::spaced(ui.c, small, sx, (wy - lh_s / 2.0).round() + 1.0, brand::MAIN, "LEMON", 2.5);
-    lemon::lemon_mark(ui.c, sx - 8.0, wy, 4.0, brand::MAIN);
+    lemon::spaced(ui.c, small, sx, (wy - lh_s / 2.0).round() + 1.0, brand::MAIN, "MANGO", 2.5);
     // Overview bar: an outlined strip with arrows at both ends and the visible range as a lighter thumb.
     let ov = overview_track();
     lemon::outlined(ui.c, rr(12.0, 555.0, 437.0, 453.0), 6.0, Color::rgb(0x1a1a1a), Color::rgb(0x232323));

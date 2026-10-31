@@ -45,12 +45,26 @@ pub const STEP_EDIT: &str = "Step edit";
 pub const MIXER_VOLUME: &str = "Mixer track volume";
 /// A generator added to the rack (`plugin_menu::add_generator`).
 pub const ADD_CHANNEL: &str = "Add channel";
+<<<<<<< HEAD
 /// Channels deleted from the rack (`rack::delete_step`).
+=======
+/// An instrument loaded straight onto an arranger track (`crate::plugin_menu::add_generator_on_track`): the channel,
+/// its pattern and the track's clip in one step.
+pub const ADD_TO_TRACK: &str = "Add instrument to track";
+/// Channels deleted from the rack (`delete_channels`).
+>>>>>>> main
 pub const DELETE_CHANNEL: &str = "Delete channel";
 /// A value of Settings > Project changed (`timebase`).
 pub const PROJECT_SETTINGS: &str = "Project settings";
 /// A channel's generator replaced (`plugin_menu::replace_generator`).
 pub const REPLACE_CHANNEL: &str = "Replace channel";
+<<<<<<< HEAD
+=======
+/// Settings > Info's text changed (`project_info`).
+pub const PROJECT_INFO: &str = "Project info";
+/// The tempo changed: the tempo box's drag, a count of the tempo tapper (`tempo`).
+pub const TEMPO: &str = "Tempo";
+>>>>>>> main
 /// A mixer track's audio input, output, record source or monitor mode changed (`track_io`).
 pub const MIXER_TRACK_IO: &str = "Mixer track audio input / output";
 
@@ -63,10 +77,23 @@ pub enum Snap {
     Playlist(Box<crate::playlist::Snapshot>),
     /// A knob's value: the model's own for the channel knobs, else the knob's 0..1.
     Knob(KnobId, f64),
+<<<<<<< HEAD
     /// Mixer track `.0`'s audio input, output, record source and monitor mode (`MixerTrack::audio_in` ...); its armed
     /// state is no part of it (spec: audio/track-io.md §2.3).
     TrackIo(u16, [i32; 4]),
     /// What a sample load changes on channel `row`: its sample, its name ("Name channels after their sample or plugin"), its root note and its
+=======
+    /// Mixer track `.0`'s volume fader (0..1, the fader law; `None`: the track's default).
+    Fader(u16, Option<f64>),
+    /// Mixer track `.0`'s audio input, output, record source and monitor mode (`MixerTrack::audio_in` ...); its armed
+    /// state is no part of it (spec: audio/track-io.md §2.3).
+    TrackIo(u16, [i32; 4]),
+    /// Parameter `.1` of hosted plugin instance `.0` (normalized), set by Lemon Studio itself (`crate::params`).
+    Param(usize, usize, f64),
+    /// The tempo, in BPM (the tempo box, the tempo tapper).
+    Tempo(f64),
+    /// What a sample load changes on channel `row`: its sample, its name ("Auto name channels"), its root note and its
+>>>>>>> main
     /// stretch ("Read sample root note" and "Read sample tempo information", `rack::read_tags`) and its sampler flags
     /// (Keep on disk, "Auto keep long audio on disk").
     Sample { row: usize, path: Option<String>, name: Option<String>, root: u8, stretch: [u32; 4], flags: Option<u32> },
@@ -166,8 +193,16 @@ impl Snap {
             Snap::Pattern { number, .. } => Snap::pattern(s, *number),
             Snap::Playlist(_) => Snap::Playlist(Box::new(crate::playlist::capture(s))),
             Snap::Knob(id, _) => Snap::Knob(*id, knob_value(s, *id)),
+<<<<<<< HEAD
             // A track gone since is left as the step has it (`put` does nothing then).
             Snap::TrackIo(t, _) => crate::mixer::track(s, *t).map_or_else(|| self.clone(), |m| Snap::TrackIo(*t, track_io_of(m))),
+=======
+            // A track or an instance gone since is left as the step has it (`put` does nothing then).
+            Snap::Fader(t, _) => crate::mixer::track(s, *t).map_or_else(|| self.clone(), |m| Snap::Fader(*t, m.volume)),
+            Snap::TrackIo(t, _) => crate::mixer::track(s, *t).map_or_else(|| self.clone(), |m| Snap::TrackIo(*t, track_io_of(m))),
+            Snap::Param(key, i, _) => crate::params::param_value(s, *key, *i).map_or_else(|| self.clone(), |v| Snap::Param(*key, *i, v)),
+            Snap::Tempo(_) => Snap::Tempo(s.tempo),
+>>>>>>> main
             // A channel gone since is left as the step has it (`put` does nothing then).
             Snap::Sample { row, .. } => Snap::sample(s, *row).unwrap_or_else(|| self.clone()),
             Snap::Channel { row, .. } => Snap::Channel { row: *row, ch: s.project.channels.get(*row).cloned().map(Box::new) },
@@ -213,7 +248,37 @@ impl Snap {
             Snap::Several(v) => v.iter_mut().for_each(|x| x.rescale(from, to)),
             Snap::Commands(v) => v.iter_mut().for_each(|c| c.rescale(from, to)),
             // A channel or an initial value holds no ticks; a timebase step's are at its own timebase.
+<<<<<<< HEAD
             Snap::Knob(..) | Snap::TrackIo(..) | Snap::Sample { .. } | Snap::Channel { .. } | Snap::Init(..) | Snap::Rack(_) | Snap::Timebase(_) => {}
+=======
+            Snap::Knob(..)
+            | Snap::Fader(..)
+            | Snap::TrackIo(..)
+            | Snap::Param(..)
+            | Snap::Tempo(_)
+            | Snap::Sample { .. }
+            | Snap::Channel { .. }
+            | Snap::Init(..)
+            | Snap::Rack(_)
+            | Snap::Tail(_)
+            | Snap::Generator(..)
+            | Snap::Settings(_)
+            | Snap::Replace(_)
+            | Snap::Timebase(_)
+            | Snap::Info(_) => {}
+            Snap::Rows(r) | Snap::Insert(r, _) => {
+                for p in &mut r.patterns {
+                    p.notes.iter_mut().for_each(|n| n.rescale(from, to));
+                    p.controls.iter_mut().for_each(|c| c.rescale(from, to));
+                    p.markers.iter_mut().for_each(|m| m.rescale(from, to));
+                    p.length = p.length.map(|l| os_model::rescale_length(l, from, to));
+                }
+                for a in &mut r.arrangements {
+                    a.clips.iter_mut().for_each(|c| c.rescale(from, to));
+                    a.markers.iter_mut().for_each(|m| m.rescale(from, to));
+                }
+            }
+>>>>>>> main
         }
     }
 
@@ -233,6 +298,22 @@ impl Snap {
                     (x.audio_in, x.audio_out, x.rec_source, x.monitor) = (i, o, r as u8, m as u8);
                 }
             }
+<<<<<<< HEAD
+=======
+            Snap::TrackIo(t, [i, o, r, m]) => {
+                if let Some(x) = crate::mixer::track_mut(s, t) {
+                    (x.audio_in, x.audio_out, x.rec_source, x.monitor) = (i, o, r as u8, m as u8);
+                }
+            }
+            Snap::Param(key, i, v) => {
+                crate::params::set_param_value(s, key, i, v);
+            }
+            // The engine and the piano roll follow from the next tick, as for any tempo edit (`App::set_tempo`).
+            Snap::Tempo(v) => {
+                s.tempo = v;
+                s.piano.dirty = true;
+            }
+>>>>>>> main
             Snap::Sample { row, path, name, root, stretch, flags } => {
                 if let Some(ch) = s.project.channels.get_mut(row) {
                     (ch.sample_path, ch.name, ch.misc.root, ch.sound.stretch) = (path.clone(), name, root, stretch);
@@ -347,6 +428,10 @@ pub struct History {
     run: Option<Run>,
     /// The newest step was recorded since the last button release (`settle` looks at it then).
     fresh: bool,
+    /// The plugin parameter the newest step's run of values (sent without a gesture) goes into (`plugin_run`).
+    param_run: Option<(usize, usize)>,
+    /// The newest step is a tempo tapper's count, which the count's later taps go into (`tap_tempo`).
+    tap_run: bool,
 }
 
 /// A run of changes that make one step (`History::run`).
@@ -467,6 +552,8 @@ pub fn record_named(s: &mut State, name: Cow<'static, str>, snap: Snap) {
     h.undid = false;
     h.run = None;
     h.fresh = true;
+    h.param_run = None;
+    h.tap_run = false;
     h.trim();
 }
 
@@ -550,8 +637,99 @@ fn track_io_of(m: &os_model::MixerTrack) -> [i32; 4] {
 /// input / output".
 pub fn track_io(s: &mut State, track: u16) {
     let Some(m) = crate::mixer::track(s, track) else { return };
+<<<<<<< HEAD
     let snap = Snap::TrackIo(track, track_io_of(m));
     record(s, MIXER_TRACK_IO, snap);
+=======
+    let snap = Snap::Fader(track, m.volume);
+    record(s, MIXER_VOLUME, snap);
+    if wheel {
+        s.history.wheel = me;
+    }
+}
+
+/// A mixer track's input, output, record source and monitor mode, as `Snap::TrackIo` holds them.
+fn track_io_of(m: &os_model::MixerTrack) -> [i32; 4] {
+    [m.audio_in, m.audio_out, i32::from(m.rec_source), i32::from(m.monitor)]
+}
+
+/// Before mixer track `track`'s audio input, output, record source or monitor mode changes: a step, "Mixer track audio
+/// input / output".
+pub fn track_io(s: &mut State, track: u16) {
+    let Some(m) = crate::mixer::track(s, track) else { return };
+    let snap = Snap::TrackIo(track, track_io_of(m));
+    record(s, MIXER_TRACK_IO, snap);
+}
+
+/// After Lemon Studio set parameter `index` of plugin instance `key` from `before` to `to` (Type in value, the
+/// parameter menu's Set... and Paste value): a step, "Plugin parameter", unless Undo knob tweaks is off or the value
+/// stays. A plugin editor's own changes make none.
+pub fn param(s: &mut State, key: usize, index: usize, before: Option<f64>, to: f64) {
+    let Some(v) = before.filter(|&v| v != to && prefs::check(&prefs::UNDO_KNOB_TWEAKS)) else { return };
+    record(s, PLUGIN_PARAMETER, Snap::Param(key, index, v));
+    // A plugin may take the value on its next idle, so the button's release does not judge the step (`settle`).
+    s.history.fresh = false;
+>>>>>>> main
+}
+
+/// A gesture starts in the plugin's own window on parameter `index` of instance `key`, which has `before` as its value:
+/// a step, "Plugin parameter", unless Undo knob tweaks is off. Returns the step's place (`plugin_end` finds it by it).
+pub fn plugin_begin(s: &mut State, key: usize, index: usize, before: f64) -> Option<usize> {
+    if !prefs::check(&prefs::UNDO_KNOB_TWEAKS) {
+        return None;
+    }
+    record(s, PLUGIN_PARAMETER, Snap::Param(key, index, before));
+    // The plugin takes the editor's values later: the button's release does not judge the step (`settle`).
+    s.history.fresh = false;
+    Some(s.history.done)
+}
+
+/// The editor sent a value for parameter `index` of instance `key` without a gesture (an editor that does not report
+/// them): one step for a run of such values, until another step comes.
+pub fn plugin_run(s: &mut State, key: usize, index: usize, before: f64) {
+    let h = &s.history;
+    if !prefs::check(&prefs::UNDO_KNOB_TWEAKS) || (h.param_run == Some((key, index)) && h.done == h.steps.len()) {
+        return;
+    }
+    record(s, PLUGIN_PARAMETER, Snap::Param(key, index, before));
+    s.history.fresh = false;
+    s.history.param_run = Some((key, index));
+}
+
+/// The gesture of step `step` (`plugin_begin`) ended; `unchanged`: the value is the one it started from. The step goes
+/// when nothing else was done since.
+pub fn plugin_end(s: &mut State, step: usize, unchanged: bool) {
+    if unchanged && s.history.done == step && s.history.done == s.history.steps.len() {
+        unrecord(s);
+    }
+}
+
+/// Before the tempo changes (the tempo box's press, turning the tapper's Apply tempo on): a step, "Tempo". A press that
+/// goes on to change nothing leaves none (`settle`), and neither does a tempo that stays.
+pub fn tempo(s: &mut State, to: f64) {
+    if s.tempo != to {
+        record(s, TEMPO, Snap::Tempo(s.tempo));
+    }
+}
+
+/// A new tempo tapper count starts: its taps are a step of their own (`tap_tempo`).
+pub fn end_tap_run(s: &mut State) {
+    s.history.tap_run = false;
+}
+
+/// Before a tapper count's tap sets the tempo to `to`: the count's first tap that sets it is a step, "Tempo", and the
+/// taps after it (the count's average moves on) go into that step, until a new count or another step.
+pub fn tap_tempo(s: &mut State, to: f64) {
+    let h = &s.history;
+    if h.tap_run && h.done == h.steps.len() {
+        return;
+    }
+    if s.tempo != to {
+        record(s, TEMPO, Snap::Tempo(s.tempo));
+        s.history.tap_run = true;
+        // The tap is no press: the button's release does not judge the step (`settle`).
+        s.history.fresh = false;
+    }
 }
 
 /// Before knob `id` turns: a step unless Undo knob tweaks is off. `wheel`: a mouse-wheel notch, which joins the step

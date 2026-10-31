@@ -314,9 +314,11 @@ impl Layout {
         Some(Layout { rows, logo })
     }
 
-    /// The layout kept in `settings.txt`; the classic one when there is none or it cannot be read.
+    /// The layout kept in `settings.txt`; the classic one when there is none or it cannot be read. Tests start with
+    /// "Caption left", every panel at its home, where they measure the panels.
     pub fn load() -> Layout {
-        crate::settings_file::get(KEY).and_then(|v| Layout::parse(&v)).unwrap_or_else(Layout::classic)
+        let first = if cfg!(test) { PRESETS[CAPTION_LEFT].layout() } else { Layout::classic() };
+        crate::settings_file::get(KEY).and_then(|v| Layout::parse(&v)).unwrap_or(first)
     }
 
     /// Keeps the layout for the next start.
@@ -379,18 +381,34 @@ fn row_width(row: &[Panel], editing: bool) -> f32 {
     lead + row.iter().map(|&p| if p == Panel::Flex { flex } else { p.width() }).sum::<f32>()
 }
 
+/// Whether row `row` ends with the caption buttons: they keep to the band's top right corner (`place`).
+pub fn pinned(row: &[Panel]) -> bool {
+    row.last() == Some(&Panel::Caption)
+}
+
+/// The room the caption buttons keep at the band's right end when a row ends with them, else 0: the logo and the ▶
+/// arrow go left of them.
+pub fn corner(l: &Layout) -> f32 {
+    if l.rows.iter().any(|r| pinned(r)) { Panel::Caption.width() } else { 0.0 }
+}
+
 /// The panels of `l` laid out in a band `width` px wide, each row after its grip while editing. The flexible spaces of
-/// a row share what the band leaves over (whole px), the logo's room excepted.
+/// a row share what the band leaves over (whole px), the logo's and the corner's room excepted. Caption buttons at a
+/// row's end sit at the band's right edge, as on the desktop's own windows.
 pub fn place(l: &Layout, width: f32, editing: bool) -> Vec<Placed> {
     let (lead, min_flex) = edit_sizes(editing);
-    let avail = width - if l.logo { LOGO_ROOM } else { 0.0 };
+    let avail = width - corner(l) - if l.logo { LOGO_ROOM } else { 0.0 };
     let mut out = Vec::new();
     for (r, row) in l.rows.iter().enumerate() {
+        let rest = if pinned(row) { &row[..row.len() - 1] } else { &row[..] };
         let flexes = row.iter().filter(|&&p| p == Panel::Flex).count();
-        let share = if flexes == 0 { 0.0 } else { ((avail - row_width(row, editing)).max(0.0) / flexes as f32).floor() };
+        let share = if flexes == 0 { 0.0 } else { ((avail - row_width(rest, editing)).max(0.0) / flexes as f32).floor() };
         let mut x = lead;
         for (idx, &panel) in row.iter().enumerate() {
             let w = if panel == Panel::Flex { min_flex + share } else { panel.width() };
+            if idx == rest.len() {
+                x = width - w;
+            }
             out.push(Placed { panel, row: r, idx, x, w });
             x += w;
         }
@@ -419,10 +437,10 @@ impl Preset {
 use Panel::*;
 
 /// The factory presets, in the Toolbars menu's order.
-pub const PRESETS: [Preset; 8] = [
+pub const PRESETS: [Preset; 9] = [
     Preset {
         name: "Classic",
-        rows: &[&[Caption, Hint, Transport, Recording, Time, Monitor, Cpu, Utilities], &[Menu, Volume, Pitch, SongPos, Modes, Snap, Pattern, Windows, Tools]],
+        rows: &[&[Hint, Transport, Recording, Time, Monitor, Cpu, Utilities, Flex, Caption], &[Menu, Volume, Pitch, SongPos, Modes, Snap, Pattern, Windows, Tools]],
         logo: true,
     },
     Preset {
@@ -448,7 +466,16 @@ pub const PRESETS: [Preset; 8] = [
     Preset { name: "Compact", rows: &[&[Menu, Transport, Time, Pattern, Flex, Caption], &[Hint, SongPos, Windows, Snap]], logo: false },
     Preset { name: "One row", rows: &[&[Menu, Hint, Transport, Time, Monitor, Pattern, Snap, Windows, Cpu, Flex, Caption]], logo: false },
     Preset { name: "One row, centered", rows: &[&[Menu, Flex, Transport, Time, Monitor, Pattern, Windows, Flex, Hint, Caption]], logo: false },
+    // FL's own toolbar: the caption buttons at the top left (the panels' homes).
+    Preset {
+        name: "Caption left",
+        rows: &[&[Caption, Hint, Transport, Recording, Time, Monitor, Cpu, Utilities], &[Menu, Volume, Pitch, SongPos, Modes, Snap, Pattern, Windows, Tools]],
+        logo: true,
+    },
 ];
+
+/// `PRESETS`' "Caption left": every panel at its home.
+pub const CAPTION_LEFT: usize = 8;
 
 /// Where the user's presets are: the user folder's `Toolbar presets` (in tests the thread's folder, `app::theme_dir`).
 pub fn user_dir() -> Option<PathBuf> {
@@ -638,10 +665,10 @@ pub fn apply(l: &mut Layout, d: &BarDrag, to: Target) -> bool {
 mod tests {
     use super::*;
 
-    /// The classic layout puts every panel at its home and is 1440 px wide: the toolbar of spec ui/main-window.md.
+    /// "Caption left" puts every panel at its home and is 1440 px wide: the toolbar of spec ui/main-window.md.
     #[test]
-    fn classic_is_at_home() {
-        let l = Layout::classic();
+    fn caption_left_is_at_home() {
+        let l = PRESETS[CAPTION_LEFT].layout();
         assert_eq!((natural_width(&l, false), l.band_h(), l.logo), (1440.0, 83.0, true));
         for p in place(&l, 1920.0, false) {
             assert_eq!(p.at(), At::default(), "{:?}", p.panel);
@@ -653,6 +680,25 @@ mod tests {
             }
         }
         assert_eq!((Panel::at_home(100.0, 20.0), Panel::at_home(837.0, 75.0), Panel::at_home(4.0, 78.0)), (Some(Panel::Hint), Some(Panel::Pattern), Some(Panel::Menu)));
+    }
+
+    /// The classic layout keeps the caption buttons in the band's top right corner, the logo left of them, and is as
+    /// wide as "Caption left".
+    #[test]
+    fn classic_keeps_the_caption_in_the_corner() {
+        let l = Layout::classic();
+        assert_eq!((natural_width(&l, false), corner(&l), l.logo), (1440.0, 68.0, true));
+        let p = place(&l, 1920.0, false);
+        let cap = p.iter().find(|p| p.panel == Panel::Caption).expect("caption");
+        assert_eq!((cap.row, cap.x, cap.w), (0, 1920.0 - 68.0, 68.0));
+        let flex = p.iter().find(|p| p.panel == Panel::Flex).expect("flex");
+        assert_eq!(flex.x + flex.w, 1920.0 - 68.0 - LOGO_ROOM);
+        // Row 1 starts with the hint panel, 68 px left of its home; row 2 is at home.
+        assert_eq!(p[0].at(), At { dx: -68.0, dy: 0.0 });
+        assert!(p.iter().filter(|p| p.row == 1).all(|p| p.at() == At::default()));
+        // Too narrow: the caption stays in the corner.
+        let cap = place(&l, 1000.0, false).into_iter().find(|p| p.panel == Panel::Caption).expect("caption");
+        assert_eq!(cap.x, 1000.0 - 68.0);
     }
 
     #[test]
@@ -699,7 +745,7 @@ mod tests {
     /// Dragging moves a panel within and between rows, takes it off onto the palette and puts a tile back.
     #[test]
     fn drops_move_remove_and_add() {
-        let mut b = Bar { layout: Layout::classic(), editing: true, user: Vec::new() };
+        let mut b = Bar { layout: PRESETS[CAPTION_LEFT].layout(), editing: true, user: Vec::new() };
         let palette = (b.layout.band_h(), 400.0);
         // The hint panel (row 1, second) dropped right of the transport: after it.
         let d = BarDrag { moving: Moving::Item(0, 1), grab: (5.0, 5.0) };
@@ -736,7 +782,7 @@ mod tests {
     fn rows_come_and_go() {
         let mut l = Layout::classic();
         l.set_rows(1);
-        assert_eq!((l.rows.len(), l.rows[0].len(), l.band_h(), l.row_span(0)), (1, 17, 42.0, (0.0, 40.0)));
+        assert_eq!((l.rows.len(), l.rows[0].len(), l.band_h(), l.row_span(0)), (1, 18, 42.0, (0.0, 40.0)));
         l.set_rows(2);
         assert_eq!((l.rows[1].len(), l.band_h(), l.row_span(1)), (0, 83.0, (42.0, 81.0)));
     }

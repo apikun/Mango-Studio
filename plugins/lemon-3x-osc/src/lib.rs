@@ -185,8 +185,8 @@ impl LemonTrio {
 }
 
 impl Plugin for LemonTrio {
-    const NAME: &'static str = "Lemon Trio";
-    const VENDOR: &'static str = "Lemon Studio";
+    const NAME: &'static str = "Mango Trio";
+    const VENDOR: &'static str = "Mango Studio";
     const URL: &'static str = "";
     const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
@@ -219,7 +219,7 @@ impl Plugin for LemonTrio {
             if path.is_empty() {
                 self.shared.set_custom(None, "", &self.params);
             } else if let Err(e) = self.shared.load(&path, &self.params) {
-                nih_log!("Lemon Trio: {e}");
+                nih_log!("Mango Trio: {e}");
                 self.shared.set_custom(None, &path, &self.params);
             }
         }
@@ -293,7 +293,7 @@ impl Plugin for LemonTrio {
 // plugins by them (spec: plugins/plugin-formats.md, identity).
 impl ClapPlugin for LemonTrio {
     const CLAP_ID: &'static str = "org.openstudio.open-3x-osc";
-    const CLAP_DESCRIPTION: Option<&'static str> = Some("Lemon Studio's three-oscillator synthesizer");
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("Mango Studio's three-oscillator synthesizer");
     const CLAP_MANUAL_URL: Option<&'static str> = None;
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::Instrument, ClapFeature::Synthesizer, ClapFeature::Stereo];

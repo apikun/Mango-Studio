@@ -8,7 +8,11 @@
 //! sample onto a pad (the open dialog, or a file dropped on the pad). Every edit changes the saved state the voices
 //! play.
 //!
+<<<<<<< HEAD
 // spec: plugins/lemon-drum-sampler.md §3, plugins/host-link.md
+=======
+// spec: plugins/lemon-drum-sampler.md §4, plugins/host-link.md
+>>>>>>> main
 
 use std::any::Any;
 use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
@@ -225,7 +229,11 @@ impl Logic {
             Some(Target::Prev) => "Previous layer".into(),
             Some(Target::Next) => "Next layer".into(),
             Some(Target::Load) => "Load a sample onto the pad".into(),
+<<<<<<< HEAD
             Some(Target::Logo) => "Lemon Drum Sampler".into(),
+=======
+            Some(Target::Logo) => "Mango Drum Sampler".into(),
+>>>>>>> main
             None => String::new(),
         }
     }
@@ -359,7 +367,11 @@ impl Logic {
                 m.add(MenuItem::item("Clear pad").enabled(has), Cmd::Clear);
             }
             MenuReq::About => {
+<<<<<<< HEAD
                 m.head("Lemon Drum Sampler", Cmd::None);
+=======
+                m.head("Mango Drum Sampler", Cmd::None);
+>>>>>>> main
                 m.add(MenuItem::item(&format!("Version {}", env!("CARGO_PKG_VERSION"))).enabled(false), Cmd::None);
                 m.add(MenuItem::item("Lemon Studio's recreation of FPC").enabled(false), Cmd::None);
             }
@@ -546,7 +558,11 @@ mod win32 {
                 last_raw: u64::MAX,
                 last_kit: u64::MAX,
             });
+<<<<<<< HEAD
             let title = pw::wide("Lemon Drum Sampler");
+=======
+            let title = pw::wide("Mango Drum Sampler");
+>>>>>>> main
             let hwnd = CreateWindowExW(
                 0,
                 class.as_ptr(),

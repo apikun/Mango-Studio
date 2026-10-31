@@ -78,7 +78,7 @@ fn shoot(window: isize, path: &Path) -> bool {
 
 pub fn run(args: &[String]) -> i32 {
     let Some((dir, files)) = args.split_first() else {
-        eprintln!("usage: lemonstudio --plugin-window-check <dir> <plugin file>...");
+        eprintln!("usage: mangostudio --plugin-window-check <dir> <plugin file>...");
         return 2;
     };
     let dir = PathBuf::from(dir);

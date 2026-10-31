@@ -35,6 +35,8 @@ clicking it does nothing. The full, item-by-item roadmap lives on the
 ## ✅ Piano roll
 
 - Full tool set, with velocity and event lanes
+- Note types (the toolbar's Note properties menu): new notes are drawn plain, as slide notes or as portamento
+  notes, and the selected notes change type with the menu's Make entries
 - Quantize (FL's templates and Snap grids, sensitivity, four duration modes, levels), chop (FL's patterns, tied rows, levels, groups), glue, legato, strum,
   arpeggiate, flam, claw machine (trash, stretch, time distribution), flip, scale levels, limit (key / scale, range,
   transpose), LFO (sine, triangle or square into any event lane, Start to End ramps, a channel lane's control points)
@@ -49,6 +51,9 @@ clicking it does nothing. The full, item-by-item roadmap lives on the
 ## ✅ Song arrangement
 
 - Playlist with pattern, audio and automation clips
+- FILE ▸ Import ▸ Audio file... (WAV, MP3, FLAC, Ogg, AIFF, M4A / AAC — the kinds the samplers decode): the audio
+  clip channel and clip at the playhead on the first track free over it, from the selected track down, one undo step.
+  Audio files also drop on the playlist, the rack and plugin windows
 - Clip groups, markers and several arrangements
 - Time markers with FL's actions (right-click a marker): Start, Loop, Marker loop, Marker skip and Marker pause
   play in SONG mode; exports start at the Start marker and jump at skips. Move content left / right, Place loop
@@ -159,7 +164,7 @@ clicking it does nothing. The full, item-by-item roadmap lives on the
 - A plugin the interface is using is waited for briefly instead of skipped, and the interface only touches
   a plugin when it has work for it
 - Cut groups, voice limits, mono and portamento glides
-- Slide notes (silent; they glide the channel's sounding notes)
+- Slide notes (silent; they glide the channel's sounding notes); drawn with the piano roll's Note properties menu
 - Layer channels play their children
 - The channel's level adjustments (volume multiplier, pan and mod X / Y offsets) and each note's own pan
   and mod X / Y reach the instrument
@@ -228,6 +233,7 @@ and Touch controller. Kept with the program's settings, not the project. Which w
   LFO (on / off, multiply or add, amount, speed, tension, skew, pulse width, and its own envelope) shape what it
   hands on, in the original's arithmetic; the clip's channel window sets them, each change an undo step, and
   projects keep every LFO field
+<<<<<<< HEAD
 - The event editor (Edit events on a control's menu: channel volume, pan and pitch, mixer controls, the tempo, plugin
   parameters) shows the control's events in the selected pattern as its level over time, in the setting's own unit: left
   drag draws freehand on the global snap, right drag a straight line, Erase and Select tools, the wheel scrolls and
@@ -240,6 +246,9 @@ and Touch controller. Kept with the program's settings, not the project. Which w
   with the knob's value there (one undo step)
 - Not yet in the event editor: the Paint, Interpolate and Zoom tools, Scale levels and LFO, inserting and deleting time,
   a second window
+=======
+- Not yet: recording of movements
+>>>>>>> main
 
 ## 🚧 Project files
 
@@ -250,6 +259,15 @@ and Touch controller. Kept with the program's settings, not the project. Which w
   Fruity effects that an old project hosts through the plugin wrapper stay wrapped, and a 3x Osc saved before FL
   Studio 21 opens with its envelope and filter settings at their defaults
 - Anything in a file that Lemon Studio does not understand yet is kept and written back unchanged
+<<<<<<< HEAD
+=======
+- A project saved by FL 20 to 24.1 (the layout before 24.2) is converted in memory as it is read, as FL 26 does
+  (channel block ends, mixer tracks, clip and track records, mixer places, send levels, the stretch length, the track
+  count), and opens without a file name: Save asks for a new file, so the original is never written over. Checked
+  with test files made in that layout and with the optional `OPENSTUDIO_LEGACY_PAIRS` comparison of originals and
+  FL's own re-saves, not with a collection of real old projects
+- A project from before FL 20 is refused with a dialog that says which versions are read
+>>>>>>> main
 - An opened project's samples load behind a progress panel, one file at a time or on up to 4 threads
   (General settings ▸ Advanced ▸ Threaded project sample loading)
 - A save that writes a file over General settings ▸ Hints and warnings ▸ Project data size warning (100 MB
@@ -280,11 +298,21 @@ and Touch controller. Kept with the program's settings, not the project. Which w
   zones, generators, loops and stereo pairs, and is a VST3 and CLAP plugin too
 - Citrus, a six-operator synthesizer (a recreation of Sytrus) with its editor: it plays every Sytrus channel of a
   project and Sytrus patches, keeping their state byte for byte; also a VST3 and CLAP plugin
+<<<<<<< HEAD
 - Lemon Slicer (Fruity Slicer) as a VST3 and CLAP plugin with a Pith editor: it loads a loop and slices it by the
   file's markers, by beats or by transients, plays slice n on C5 + n (pitch, attack, decay, declick, reverse, play to
   end), and dumps the slices to the piano roll as notes. A project's Fruity Slicer channels play and open in it and
   are saved back byte for byte; a loop newly loaded and sliced in it opens in the original too. The time stretch and
   the original's other dump modes aren't played or offered yet, and Slicex channels aren't supported
+=======
+- Lemon Kick (a recreation of FL's Fruit Kick), Lemon Boom (of BassDrum) and Lemon Bass (of BooBass), the small
+  generators: a kick drum, a bass drum whose body holds the base note under its sweep, and a Karplus-Strong bass
+  guitar of four strings. They share the small generators' plugin, state and editor (`lemon-small-gen`), like the
+  small effects do, and are also VST3 and CLAP plugins. The newer small generators join them on the same shared
+  frame: Mango Acid (of Transistor Bass), Mango Monk (a port of MonkSynth), Mango Pluck (Karplus-Strong plucked
+  strings), Mango Mini (a two-oscillator subtractive synth), Mango DX (a small FM synth), Mango Autogun (a
+  seed-grown patch synth), Mango Drums (six synthesized drums) and Mango Keys (an electric piano)
+>>>>>>> main
 - Lemon Limiter (Fruity Limiter: limiter, compressor and noise gate), Lemon Reverb (Fruity Reeverb 2) and Lemon
   Delay (Fruity Delay 3), also VST3 and CLAP plugins. A project's Fruity Reeverb 2, Fruity Delay 3 and Fruity Limiter
   slots play through the same sound (the Limiter's compressor, gate, look-ahead and sidechain included)
@@ -299,14 +327,18 @@ and Touch controller. Kept with the program's settings, not the project. Which w
 - Lemon Filter (Fruity Filter: a resonant low, band and high pass mix, X 2 and the DC remover) as a VST3 and CLAP
   plugin, with its response drawn in the editor; a project's Fruity Filter slots play through the same sound, which
   matches FL Studio 2026's exports in the tests (10 of 13 cases sample for sample, the rest below -180 dB)
+<<<<<<< HEAD
 - Pulp Filter (Fruity Love Philter: a pattern-controlled multi-filter) and Press (Maximus: a multiband maximiser) as
   VST3 and CLAP plugins; a project's Fruity Love Philter and Maximus slots play and open in them, and are saved back
   as the original effects with their state
+=======
+>>>>>>> main
 - Lemon Flanger and Lemon Phaser as VST3 and CLAP plugins, each with the original's 27 presets as factory presets; a
   project's Fruity Flanger and Fruity Phaser play through the same sound in the mixer. Their sine waves use the true
   pi, where the original's is a hair off: the flanger still matches FL Studio 2026's exports sample for sample in the
   tests (36 cases), the phaser in 11 of 35 and the rest at least 86 dB below the test signal; the phaser's LFO starts
   as after 512 idle frames, one of the two starts (512 or 1024) FL's exports make
+<<<<<<< HEAD
 - Vocoder: Lemon Vocoder (VST3 and CLAP, Pith editor) is a band vocoder with a sidechain input: the voice on the
   track and the synth from another track, or the other way round. A project's Vocodex slots open as it and save back
   unchanged. It plays the wet level, the pass-throughs, added noise, hold, attack and release (peak or RMS), band
@@ -332,6 +364,8 @@ and Touch controller. Kept with the program's settings, not the project. Which w
   formula that doesn't compile leaves its targets alone, as in the original. Rand and SeededRand use our own
   generators, Time counts from the program's start, Date is the UTC day and the mouse reads 0; the comments are kept
   but not shown
+=======
+>>>>>>> main
 - The Stereo Shaper's difference output plays in the mixer (added to the track it names, from the first tick, without
   delay compensation); Lemon Stereo Shaper as a plugin keeps the setting but has no output for it
 - Lemon Parametric EQ plays FL's Parametric EQ 2 in every quality mode, in a project's mixer slots and as a plugin:
@@ -528,6 +562,10 @@ ASIO is a registered trademark of Steinberg Media Technologies GmbH.
 - The General, Audio, MIDI, File, Theme, Project and Info pages work: the controls that are not greyed out act, but for
   a few that are only kept for now (Smart disable, Resampling quality and others Lemon Studio has nothing to change
   with yet); the program's choices are kept in `settings.txt` in the user folder
+- Recording: the Record button's options are the page's checks, the same program settings its right-click menu and the
+  option buttons keep: the recording filter (Notes, Automation; Audio is greyed until mixer tracks record, with where
+  audio records today on the page), ask what to record, recording starts playback, disarm on stop, Start on input with
+  its two sub-checks, Recording precount and its duration, the quantize checks, Loop record and Blend recorded notes
 - General ▸ Input ▸ Manage shortcuts: the F8 keys (browser, plugin picker, plugin database) and the audio clip
   double-click can be swapped
 - File ▸ Browser extra search folders: the folders added to the browser, renamed or replaced from here
@@ -536,4 +574,3 @@ ASIO is a registered trademark of Steinberg Media Technologies GmbH.
   leave an arrow
 - General ▸ System ▸ Associate project files (Windows): `.flp` files open with Lemon Studio, for your user
   only, and unticking puts the previous program back
-- Not yet: the recording settings

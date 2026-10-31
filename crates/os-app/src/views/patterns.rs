@@ -50,7 +50,7 @@ fn colour_tab(ui: &mut Ui, r: Rect, col: Color, hint: &'static str) {
         // A small chevron: the tile opens the colours.
         let (cx, cy) = (tile.x + tile.w / 2.0, tile.y + tile.h / 2.0);
         let luma = (0.299 * f32::from(col.r) + 0.587 * f32::from(col.g) + 0.114 * f32::from(col.b)) / 255.0;
-        let ink = if luma > 0.55 { Color::rgb(0x473900) } else { Color::rgb(0xffffff).with_alpha(200) };
+        let ink = if luma > 0.55 { Color::rgb(0x4a2300) } else { Color::rgb(0xffffff).with_alpha(200) };
         ui.c.line(cx - 3.0, cy - 1.5, cx, cy + 1.5, 1.5, ink);
         ui.c.line(cx, cy + 1.5, cx + 3.0, cy - 1.5, 1.5, ink);
         return;

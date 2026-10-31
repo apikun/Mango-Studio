@@ -167,7 +167,7 @@ impl IHostApplication for HostApp {
         if name.is_null() {
             return kInvalidArgument;
         }
-        unsafe { write_str128(name, "Lemon Studio") };
+        unsafe { write_str128(name, "Mango Studio") };
         kResultOk
     }
 
@@ -378,18 +378,28 @@ impl IComponentHandler for Handler {
 #[cfg_attr(not(target_os = "linux"), VST3(implements(IPlugFrame)))]
 pub struct Frame {
     shared: Arc<Shared>,
-    /// What the editor registered with the run loop (Linux): its handler or timer object and the run loop's token.
-    run: RefCell<Vec<(usize, u64)>>,
+    /// What the editor registered with the run loop (Linux): its handler or timer object and the run loop's token. Shared
+    /// with the UI thread's work for a registration made on another thread (`os_host::runloop::on_ui`).
+    run: Arc<Mutex<Vec<(usize, u64)>>>,
 }
+
+/// A plugin's handler or timer object, handed to the UI thread to register there (`os_host::runloop::on_ui`). The run
+/// loop only ever calls it on the UI thread, the thread such registrations are made on as a rule.
+#[cfg(target_os = "linux")]
+struct Handed<T>(T);
+// SAFETY: the object is a COM pointer to the plugin's handler; it is moved to the UI thread once and only called there.
+#[cfg(target_os = "linux")]
+unsafe impl<T> Send for Handed<T> {}
 
 impl Frame {
     pub fn create(shared: Arc<Shared>) -> Com<Frame> {
-        Com::new(Frame::allocate(shared, RefCell::new(Vec::new())))
+        Com::new(Frame::allocate(shared, Arc::new(Mutex::new(Vec::new()))))
     }
 
     /// Drops what a closed editor left registered with the run loop (it should have unregistered in `removed`).
     pub fn clear_run_loop(&self) {
-        for (_, token) in self.run.borrow_mut().drain(..) {
+        let run: Vec<(usize, u64)> = self.run.lock().map(|mut r| r.drain(..).collect()).unwrap_or_default();
+        for (_, token) in run {
             #[cfg(target_os = "linux")]
             os_host::runloop::remove(token);
             #[cfg(not(target_os = "linux"))]
@@ -400,11 +410,17 @@ impl Frame {
     /// Removes the run loop entries of the handler or timer object at `key`.
     #[cfg(target_os = "linux")]
     fn unregister(&self, key: usize) {
-        self.run.borrow_mut().retain(|&(k, token)| {
-            if k == key {
-                os_host::runloop::remove(token);
+        // On the UI thread, where the run loop lives (a removal on another thread is handed over, after its registration).
+        let run = self.run.clone();
+        os_host::runloop::on_ui(move || {
+            if let Ok(mut r) = run.lock() {
+                r.retain(|&(k, token)| {
+                    if k == key {
+                        os_host::runloop::remove(token);
+                    }
+                    k != key
+                });
             }
-            k != key
         });
     }
 }
@@ -416,8 +432,16 @@ impl IRunLoop for Frame {
     unsafe fn register_event_handler(&self, h: SharedVstPtr<dyn IEventHandler>, fd: FileDescriptor) -> tresult {
         let Some(handler) = h.upgrade() else { return kInvalidArgument };
         let key = { h }.as_ptr() as usize;
-        let token = os_host::runloop::add_fd(fd, os_host::runloop::READ, move |fd, _| unsafe { handler.on_fd_is_set(fd) });
-        self.run.borrow_mut().push((key, token));
+        // The UI thread registers it, also when the editor asks from another thread (one joining its window off the UI
+        // thread: `Plugin::begin_editor`).
+        let (run, handler) = (self.run.clone(), Handed(handler));
+        os_host::runloop::on_ui(move || {
+            let handler = handler;
+            let token = os_host::runloop::add_fd(fd, os_host::runloop::READ, move |fd, _| unsafe { handler.0.on_fd_is_set(fd) });
+            if let Ok(mut r) = run.lock() {
+                r.push((key, token));
+            }
+        });
         kResultOk
     }
 
@@ -429,8 +453,14 @@ impl IRunLoop for Frame {
     unsafe fn register_timer(&self, t: SharedVstPtr<dyn ITimerHandler>, ms: TimerInterval) -> tresult {
         let Some(timer) = t.upgrade() else { return kInvalidArgument };
         let key = { t }.as_ptr() as usize;
-        let token = os_host::runloop::add_timer(std::time::Duration::from_millis(ms), move || unsafe { timer.on_timer() });
-        self.run.borrow_mut().push((key, token));
+        let (run, timer) = (self.run.clone(), Handed(timer));
+        os_host::runloop::on_ui(move || {
+            let timer = timer;
+            let token = os_host::runloop::add_timer(std::time::Duration::from_millis(ms), move || unsafe { timer.0.on_timer() });
+            if let Ok(mut r) = run.lock() {
+                r.push((key, token));
+            }
+        });
         kResultOk
     }
 

@@ -296,7 +296,7 @@ pub fn save_body(path: &Path, h: &Header, body: &Body) -> std::io::Result<()> {
 /// or made for another plugin (`id` given and different from the file's).
 pub fn load(path: &Path, id: &str) -> Result<(Header, Body), String> {
     let bytes = read(path)?;
-    let (h, rest) = decode(&bytes).ok_or_else(|| format!("{} is not a Lemon Studio preset", shown_name(path)))?;
+    let (h, rest) = decode(&bytes).ok_or_else(|| format!("{} is not a Mango Studio preset", shown_name(path)))?;
     if !id.is_empty() && !h.id.is_empty() && !h.id.eq_ignore_ascii_case(id) {
         return Err(format!("{} belongs to {}", shown_name(path), if h.plugin.is_empty() { &h.id } else { &h.plugin }));
     }
@@ -561,7 +561,7 @@ pub fn run(app: &mut App, c: PCmd) -> Option<String> {
         PCmd::Rename(key) => {
             let cur = own_current(app, key)?;
             let dlg = crate::filedlg::FileDlg::new(crate::filedlg::Mode::Save, "Rename preset", "preset", crate::dialog::Then::RenamePreset(key, cur.clone()))
-                .filter("Lemon Studio preset", &[EXT])
+                .filter("Mango Studio preset", &[EXT])
                 .start(cur.parent())
                 .name(&format!("{}.{EXT}", shown_name(&cur)));
             app.file_dialog(dlg);
@@ -695,7 +695,7 @@ fn save_as(app: &mut App, key: usize) -> Option<String> {
     let _ = std::fs::create_dir_all(&dir);
     let start = app.plugins.presets.get(&key).map(|p| shown_name(p)).unwrap_or_else(|| "New preset".into());
     let dlg = crate::filedlg::FileDlg::new(crate::filedlg::Mode::Save, "Save preset as", "preset", crate::dialog::Then::SavePreset(key))
-        .filter("Lemon Studio preset", &[EXT])
+        .filter("Mango Studio preset", &[EXT])
         .start(Some(&dir))
         .name(&format!("{start}.{EXT}"));
     app.file_dialog(dlg);
@@ -893,7 +893,7 @@ mod tests {
 
     #[test]
     fn preset_files_round_trip() {
-        let h = Header { plugin: "Lemon Sampler".into(), id: "org.openstudio.open-sampler".into(), format: "clap".into(), body: String::new() };
+        let h = Header { plugin: "Mango Sampler".into(), id: "org.openstudio.open-sampler".into(), format: "clap".into(), body: String::new() };
         let state = b"\x05\0\0\0\0\0\0\0{\"a\"}\n\x00binary";
         let b = encode(&h, state);
         let (h2, s2) = decode(&b).unwrap();
@@ -913,7 +913,7 @@ mod tests {
     // spec: plugins/presets.md "File format": a parameter list instead of the state.
     #[test]
     fn parameter_list_presets() {
-        let h = Header { plugin: "Lemon Reverb".into(), id: "clap:x".into(), format: "clap".into(), body: String::new() };
+        let h = Header { plugin: "Mango Reverb".into(), id: "clap:x".into(), format: "clap".into(), body: String::new() };
         let params = vec![("Decay time".to_string(), 25.0), ("Wet = level".to_string(), -0.5)];
         let b = encode_params(&h, &params);
         assert!(std::str::from_utf8(&b).unwrap().ends_with("body=params\nDecay time = 25\nWet = level = -0.5\n"));
@@ -925,7 +925,7 @@ mod tests {
         // Windows line ends, as a text editor (or a Git checkout) may leave them.
         let crlf = String::from_utf8(b.clone()).unwrap().replace('\n', "\r\n");
         let (h2, rest) = decode(crlf.as_bytes()).unwrap();
-        assert_eq!((h2.plugin.as_str(), h2.body.as_str()), ("Lemon Reverb", PARAMS_BODY));
+        assert_eq!((h2.plugin.as_str(), h2.body.as_str()), ("Mango Reverb", PARAMS_BODY));
         assert_eq!(parse_params(std::str::from_utf8(rest).unwrap()).unwrap(), params);
         assert!(parse_params("Mix: 1").is_err());
         assert!(parse_params("= 1").is_err());
@@ -959,14 +959,14 @@ mod tests {
     // spec: plugins/presets.md "Factory presets"
     #[test]
     fn factory_presets_are_listed_and_read_by_path() {
-        static FILES: &[(&str, &[u8])] = &[("Lemon Reverb/Room.ospreset", b"r"), ("Lemon Reverb/Halls/Big.ospreset", b"b"), ("Lemon Reverb/Halls/Air.ospreset", b"a"), ("Lemon Trio/Bass.ospreset", b"t"), ("Lemon Reverb/a/b/c.ospreset", b"deep")];
-        let l = factory_in(FILES, "Lemon Reverb");
+        static FILES: &[(&str, &[u8])] = &[("Mango Reverb/Room.ospreset", b"r"), ("Mango Reverb/Halls/Big.ospreset", b"b"), ("Mango Reverb/Halls/Air.ospreset", b"a"), ("Mango Trio/Bass.ospreset", b"t"), ("Mango Reverb/a/b/c.ospreset", b"deep")];
+        let l = factory_in(FILES, "Mango Reverb");
         let names: Vec<&str> = l.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, ["Room", "Halls/Air", "Halls/Big"], "deeper folders are left out");
         assert!(l.iter().all(|p| p.factory && is_factory(&p.path)));
         assert_eq!(factory_bytes_in(FILES, &l[2].path), Some(&b"b"[..]));
-        assert_eq!(factory_bytes_in(FILES, Path::new("<factory>/Lemon Trio/Lead.ospreset")), None);
-        assert!(!is_factory(Path::new("C:/Presets/Lemon Trio/Bass.ospreset")));
+        assert_eq!(factory_bytes_in(FILES, Path::new("<factory>/Mango Trio/Lead.ospreset")), None);
+        assert!(!is_factory(Path::new("C:/Presets/Mango Trio/Bass.ospreset")));
         // The compiled-in presets all read as presets of the plugin they are filed under.
         for (rel, bytes) in FACTORY {
             let (h, rest) = decode(bytes).unwrap_or_else(|| panic!("{rel} is not a preset"));
@@ -1013,6 +1013,49 @@ mod tests {
             }
         }
         assert!(checked > 0 || FACTORY.is_empty());
+    }
+
+    /// Mango 12's factory presets land their gains where they mean to: a preset's value is a step count from the
+    /// parameter's reported minimum (nih-plug reports stepped parameters as 0..steps, not raw), so for the ±12 dB
+    /// gains 120 is 0 dB and 0 is -12 dB — the values 0 that first shipped put both knobs at the bottom.
+    #[test]
+    fn mango_12s_factory_presets_land_their_gains() {
+        let mut pl = crate::plugins::Plugins::default();
+        pl.available = crate::plugins::builtin();
+        pl.effects = crate::plugins::builtin_effects();
+        let mut key = None;
+        for i in 0..pl.effects.len() {
+            let k = crate::plugins::fx_key(1, i as u8);
+            pl.create_effect(1, i as u8, i, None).unwrap();
+            if pl.descriptor(k).unwrap().name == "Mango 12" {
+                key = Some(k);
+                break;
+            }
+        }
+        let key = key.expect("Mango 12 is built in");
+        let d = pl.descriptor(key).unwrap();
+        let wanted: &[(&str, &[(&str, &str)])] = &[
+            ("Default", &[("Gain In", "0.0dB"), ("Gain Out", "0.0dB")]),
+            ("Drum crunch", &[("Gain In", "6.0dB"), ("Gain Out", "0.0dB")]),
+            ("Radio filter", &[("Gain In", "0.0dB"), ("Gain Out", "0.0dB")]),
+            ("Pitch down", &[("Gain In", "0.0dB"), ("Gain Out", "0.0dB")]),
+            ("Deep detune", &[("Gain In", "0.0dB"), ("Gain Out", "0.0dB")]),
+            ("Subtle glue", &[("Gain In", "0.0dB"), ("Gain Out", "0.0dB")]),
+            ("Side crunch", &[("Gain In", "3.0dB"), ("Gain Out", "0.0dB")]),
+        ];
+        for p in factory_in(FACTORY, &d.name) {
+            let (_, want) = wanted.iter().find(|(n, _)| *n == p.name).unwrap_or_else(|| panic!("{}: not covered", p.name));
+            let Ok((_, body)) = load(&p.path, &d.uid()) else { panic!("{} does not load", p.name) };
+            let Body::Params(list) = body else { panic!("{}: not a parameter list", p.name) };
+            pl.apply_params(key, &list).unwrap();
+            let infos = pl.param_infos(key);
+            let plugin = pl.hosted.get(&key).unwrap().plugin.lock().unwrap();
+            for (name, text) in *want {
+                let i = infos.iter().find(|i| &i.name == name).unwrap_or_else(|| panic!("{}: no {name}", p.name));
+                let v = plugin.param_value(i.id).unwrap();
+                assert_eq!(plugin.param_text(i.id, v).unwrap(), *text, "{}/{}", p.name, name);
+            }
+        }
     }
 
     // spec: plugins/presets.md "Import": VST 3 and VST 2 files are taken by a plugin of their format and id only.
@@ -1075,13 +1118,13 @@ mod tests {
         save(&file_for(&root.join("Open 3x Osc"), "Bass"), &Header::default(), b"x").unwrap();
         save(&file_for(&root.join("Lemon 3x Osc"), "Lead"), &Header::default(), b"x").unwrap();
         let dir = dir_in(&root, crate::osc3::LEMON_TRIO);
-        assert_eq!(dir, root.join("Lemon Trio"));
+        assert_eq!(dir, root.join("Mango Trio"));
         assert_eq!(list_in(&dir)[0].name, "Lead");
         assert!(root.join("Open 3x Osc").exists());
         save(&file_for(&root.join("Open Sampler"), "Kick"), &Header::default(), b"x").unwrap();
         save(&file_for(&root.join("Open Thing"), "Pad"), &Header::default(), b"x").unwrap();
         let dir = dir_in(&root, crate::plugins::LEMON_SAMPLER);
-        assert_eq!(dir, root.join("Lemon Sampler"));
+        assert_eq!(dir, root.join("Mango Sampler"));
         assert_eq!(list_in(&dir).len(), 1);
         assert!(!root.join("Open Sampler").exists());
         assert_eq!(dir_in(&root, "Thing"), root.join("Thing"));
@@ -1112,7 +1155,7 @@ mod tests {
     fn presets_of_a_hosted_plugin() {
         let (mut app, dir, _env) = hosted_sampler("hosted");
         let h = header(&app, 0).unwrap();
-        assert_eq!(h.plugin, "Lemon Sampler");
+        assert_eq!(h.plugin, "Mango Sampler");
         assert!(h.id.starts_with("clap:"));
         let state = app.plugins.state(0).unwrap();
         // Two presets: the default state, and one with a sample path.
@@ -1237,7 +1280,7 @@ mod tests {
         app.state.show_browser = false;
         run(&mut app, PCmd::Browse(0));
         assert!(app.state.show_browser);
-        assert_eq!(app.state.browser_sel.as_deref(), Some(format!("{}/Lemon Sampler", crate::views::browser::presets_key()).as_str()));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(format!("{}/Mango Sampler", crate::views::browser::presets_key()).as_str()));
         let rows = crate::views::browser::rows(&app.state);
         assert!(rows.iter().any(|r| r.label == "Snare" && matches!(&r.item, crate::views::browser::Item::Preset(p) if Path::new(p) == copy)));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1284,7 +1327,7 @@ mod tests {
         // Effect slots: off by default.
         run(&mut app, PCmd::Load(fx, bandpass.clone()));
         // The slot shows the Lemon effect that plays Delay 3 (`plugins::FL_RECREATIONS`).
-        assert_eq!(slot(&app), "Lemon Delay", "off: the slot keeps its name");
+        assert_eq!(slot(&app), "Mango Delay", "off: the slot keeps its name");
         prefs::set_check(&AUTO_NAME_EFFECT_SLOTS, true);
         run(&mut app, PCmd::Load(fx, chorus));
         assert_eq!(slot(&app), "Chorus");

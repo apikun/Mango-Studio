@@ -64,9 +64,12 @@ const CLOSE_AFTER: Duration = Duration::from_millis(40);
 /// What a stream keeps queued beyond the block its device is about to take (spec: audio/devices.md "Render-ahead"):
 /// one block more, since some drivers ask for two blocks back to back, but at least `MARGIN_MIN` seconds (the feeder
 /// has to wake and render a tick between two blocks) and at most `MARGIN_MAX`. Together with the block and part of a
-/// tick it is what a live edit or note waits for.
-const MARGIN_MIN: f64 = 0.003;
-const MARGIN_MAX: f64 = 0.006;
+/// tick it is what a live edit or note waits for. Android keeps 0.2-0.4 s instead of 3-6 ms: the feeder there shares
+/// the phone's CPU with full-screen software rendering and slower synthesis, so a wake that runs late ate the few
+/// milliseconds a desktop keeps and the queue ran dry mid-tick — the crackle. The lag an edit or a live note waits
+/// grew with it (the queue holds about eleven seconds, so the extra render-ahead fits easily).
+const MARGIN_MIN: f64 = if cfg!(target_os = "android") { 0.2 } else { 0.003 };
+const MARGIN_MAX: f64 = if cfg!(target_os = "android") { 0.4 } else { 0.006 };
 /// A stream's queue: samples (interleaved stereo) and ticks it can hold, and the room the feeder leaves for one more
 /// tick (a tick at 10 BPM and 24 PPQ at 192 kHz is 96 000 samples).
 const QUEUE_SAMPLES: usize = 1 << 19;
@@ -110,6 +113,9 @@ pub struct Shared {
     sounding: Mutex<Vec<(u16, u16)>>,
     /// The last samples that left the playback / live stream, for the toolbar monitor and meter.
     tap: Mutex<Tap>,
+    /// The rolling sampler's tape of the newest master output (`crate::rolling`): what the strip between the
+    /// toolbar and the playlist shows and drops onto the playlist. Fed where the tap is, previews excluded.
+    rolling: crate::rolling::Rolling,
     /// The playback's last block: how the position moves through it while the device plays it (`Transport::tick`).
     pace: Mutex<Option<Pace>>,
     /// Peaks per mixer track (L, R) since the mixer meters last read them (`TrackPeaks`).
@@ -492,6 +498,8 @@ impl Transport {
         let latest = Arc::new(Mutex::new(None));
         let instruments: Instruments = Arc::new(Mutex::new(Hosts::default()));
         let shared = Arc::new(Shared { sounding: Mutex::new(Vec::with_capacity(256)), ..Shared::default() });
+        // The rolling sampler starts as the settings ask (Audio ▸ Rolling sampler).
+        shared.rolling.sync(crate::prefs::check(&crate::prefs::ROLLING_SAMPLER), crate::prefs::rolling_secs());
         let s = shared.clone();
         let thread = std::thread::Builder::new()
             .name("openstudio-audio".into())
@@ -605,6 +613,13 @@ impl Transport {
         self.shared.jump.store(0, Ordering::Relaxed);
         self.shared.song.store(matches!(mode, PlayMode::Song), Ordering::Relaxed);
         self.shared.rewind(start_tick);
+        // The position is the start's from now on, not the song's start until the stream opens (a take placed by it
+        // reads it from the first tick: `one_click_tick`).
+        let rate = self.shared.sample_rate.load(Ordering::Relaxed);
+        if start_tick > 0.0 && rate > 0 {
+            let tempo = project.tick_tempo(project.tempo.unwrap_or(140.0));
+            self.shared.position.store(os_engine::laws::tick_to_frame(start_tick, project.ppq.max(1), tempo, rate), Ordering::Relaxed);
+        }
         self.shared.state.store(PLAYING, Ordering::Release);
         let starts = Starts { count_in: bars, ..Starts::from_prefs() };
         let _ = self.tx.send(Cmd::Play(Box::new(project.clone()), mode, start_tick, generation, starts));
@@ -809,6 +824,12 @@ impl Transport {
     /// The output stream's sample rate (0 until the first stream opened).
     pub fn sample_rate(&self) -> u32 {
         self.shared.sample_rate.load(Ordering::Relaxed)
+    }
+
+    /// The rolling sampler's tape (`crate::rolling`): the strip between the toolbar and the playlist reads,
+    /// renders and clears it through here.
+    pub fn rolling(&self) -> &crate::rolling::Rolling {
+        &self.shared.rolling
     }
 
     /// Output peaks (L, R) of what was heard since the last call (the toolbar meter's feed).
@@ -1026,6 +1047,9 @@ struct Feeder {
     rendered: u64,
     /// The engine's voices after the last fill (registered in `Shared::engine_voices`).
     voices: Arc<AtomicU32>,
+    /// When the queue's state last went to the audio log (`audiolog`), so it stays every couple of
+    /// seconds, not every wake.
+    last_logged: Option<Instant>,
 }
 
 /// Frames a stream keeps queued beyond a device block of `block` frames (see `MARGIN_MIN`).
@@ -1091,6 +1115,19 @@ impl Feeder {
             }
         }
         self.voices.store(e.voice_count() as u32, Ordering::Relaxed);
+        // The audio log carries the queue's state every couple of seconds while frames render: how
+        // far ahead the engine is, what the device lost, and the render's load (all three say which
+        // side a "no sound" report fails on).
+        if frames > 0 && self.last_logged.is_none_or(|t| t.elapsed() >= Duration::from_secs(2)) {
+            self.last_logged = Some(Instant::now());
+            crate::audiolog::log(&format!(
+                "queue: {} frames ahead, block {}, underruns {}, load {:.0}%",
+                self.queue.queued() / 2,
+                self.queue.block.load(Ordering::Relaxed),
+                self.shared.underruns.load(Ordering::Relaxed),
+                f32::from_bits(self.shared.load.load(Ordering::Relaxed)) * 100.0
+            ));
+        }
         // A hosted plugin that missed a tick (busy elsewhere) is heard as a gap: a dropout like an empty block.
         let missed = e.take_missed();
         if missed > 0 {
@@ -1148,7 +1185,7 @@ impl FeedThread {
     fn spawn(mut feeder: Feeder) -> FeedThread {
         let stop = Arc::new(AtomicBool::new(false));
         let handle = std::thread::Builder::new()
-            .name("lemonstudio-feeder".into())
+            .name("mangostudio-feeder".into())
             .spawn({
                 let stop = stop.clone();
                 move || {
@@ -1203,8 +1240,38 @@ pub(crate) fn raise_priority() {
     }
 }
 
+<<<<<<< HEAD
 #[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) fn raise_priority() {}
+=======
+/// Android: `android.os.Process.setThreadPriority(THREAD_PRIORITY_URGENT_AUDIO)` for the calling thread, the
+/// priority the framework grants a native audio app's own threads without root. A JVM that is not there yet, or one
+/// that refuses (an OEM's restriction), leaves the thread as it was.
+#[cfg(target_os = "android")]
+fn raise_priority() {
+    use jni::objects::JValue;
+    // THREAD_PRIORITY_URGENT_AUDIO, what AudioTrack's own threads ask for.
+    const URGENT_AUDIO: i32 = -19;
+    let Some(vm) = crate::mobile::audio_vm() else { return };
+    let Ok(mut env) = vm.attach_current_thread() else { return };
+    let ask = env.call_static_method("android/os/Process", "setThreadPriority", "(I)V", &[JValue::Int(URGENT_AUDIO)]);
+    // A pending exception would sit on the thread for everything after this: clear it.
+    if ask.is_err() {
+        let _ = env.exception_clear();
+    }
+}
+
+/// Linux: real-time priority, by itself or through rtkit (`crate::rt`); at normal priority when neither allows it.
+#[cfg(target_os = "linux")]
+fn raise_priority() {
+    if let Err(e) = crate::rt::promote(crate::rt::tid()) {
+        eprintln!("Audio: the feeder runs at normal priority ({e})");
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "android", target_os = "linux")))]
+fn raise_priority() {}
+>>>>>>> main
 
 /// The sample library for engines whose sampler channels Lemon Sampler instances play. They stretch for themselves
 /// (spec: audio/time-stretch.md), and of a sample one of them plays the engine keeps only the length and rate Lemon
@@ -1232,12 +1299,45 @@ fn engine(project: &Project, library: &mut SampleLibrary, rate: u32, mode: PlayM
     e
 }
 
+/// What one pass of pattern `pattern` plays: the rows of the channels with notes in it and of their layers' children,
+/// and which mixer tracks they reach (their own, those routes lead on to, and the master). The other channels'
+/// plugins, and the effects of the tracks none of them reach, would only process silence in its render.
+fn pattern_parts(project: &Project, pattern: u16) -> (Vec<usize>, Vec<bool>) {
+    let mut playing: Vec<u16> = project.pattern(pattern).map(|p| p.notes.iter().map(|n| n.channel).collect()).unwrap_or_default();
+    let children: Vec<u16> =
+        project.channels.iter().filter(|c| playing.contains(&c.index)).flat_map(|c| c.layer_children.iter().copied()).collect();
+    playing.extend(children);
+    let rows: Vec<usize> = project.channels.iter().enumerate().filter(|(_, c)| playing.contains(&c.index)).map(|(row, _)| row).collect();
+    let mut reached = vec![false; project.mixer.len()];
+    let mut todo: Vec<usize> = rows.iter().map(|&r| usize::from(project.channels[r].mixer_track)).collect();
+    todo.push(0);
+    while let Some(t) = todo.pop() {
+        if t >= reached.len() || reached[t] {
+            continue;
+        }
+        reached[t] = true;
+        todo.extend(project.mixer[t].routes.iter().map(|&r| usize::from(r)));
+    }
+    (rows, reached)
+}
+
 /// Renders a whole song (or one pass of a pattern, or a span of either) with the hosted plugins and writes the files of
 /// `job`; returns the written length in seconds and the files. Runs on the audio thread with no stream open.
 // spec: audio/export.md
 fn export(project: &Project, mode: PlayMode, rate: u32, job: &crate::export::Job, library: &mut SampleLibrary, inst: &Instruments, shared: &Shared) -> Result<(f64, Vec<PathBuf>), String> {
     let o = &job.options;
-    let mut e = engine(project, library, rate, mode, inst, true);
+    let mut e = match mode {
+        // A pattern's render hosts only what plays in it (`pattern_parts`).
+        PlayMode::Pattern(p) => {
+            let (rows, reached) = pattern_parts(project, p);
+            let (list, fx) = inst.lock().map(|l| (l.inst.clone(), l.fx.clone())).unwrap_or_default();
+            let list: Vec<_> = list.into_iter().filter(|(row, _)| rows.contains(row)).collect();
+            let mut e = Engine::with_instruments(project, library, rate, mode, &list);
+            crate::project_plugins::attach_effects(&mut e, project, fx.into_iter().filter(|&(t, _, _)| reached.get(t).copied().unwrap_or(true)));
+            e
+        }
+        _ => engine(project, library, rate, mode, inst, true),
+    };
     e.set_interpolation(o.points);
     e.set_effects(o.insert_fx, o.master_fx);
     match job.span {
@@ -1822,7 +1922,7 @@ fn audio_thread(rx: Receiver<Cmd>, shared: Arc<Shared>, latest: Arc<Mutex<Option
                 release_paused(&session);
                 match open_live(p, true, &mut library, &mut device) {
                     Ok(s) => live = Some(s),
-                    Err(e) => eprintln!("lemonstudio: live stream for the open plugin editor: {e}"),
+                    Err(e) => eprintln!("mangostudio: live stream for the open plugin editor: {e}"),
                 }
             }
         }
@@ -1906,7 +2006,7 @@ struct At {
     count_in: u32,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     /// Playback (pattern or song): reports position, peaks and sounding notes; patterns loop.
     Song,
@@ -1997,6 +2097,16 @@ impl Session {
             e.set_record_tap(shared.record.lock().ok().and_then(|t| t.clone()));
         }
         let engine = Arc::new(Mutex::new(e));
+        let report = engine.lock().map(|e| e.report.clone()).ok();
+        crate::audiolog::log(&format!(
+            "playback start: {:?} at {rate} Hz, {} channels, {} notes queued, plugin channels silent {}, missing samples {}, playing a tone for {}",
+            kind,
+            project.channels.len(),
+            project.patterns.iter().map(|p| p.notes.len()).sum::<usize>(),
+            report.as_ref().map_or(0, |r| r.plugin_channels_silent),
+            report.as_ref().map_or(0, |r| r.missing_samples.len()),
+            report.as_ref().map_or(0, |r| r.substituted),
+        ));
         let done = Arc::new(AtomicBool::new(false));
         let ctl = Arc::new(Ctl { paused: AtomicBool::new(at.paused), held: AtomicBool::new(false), report: AtomicBool::new(song) });
         if kind != Kind::Preview {
@@ -2024,7 +2134,7 @@ impl Feeder {
             v.retain(|w| w.strong_count() > 0);
             v.push(Arc::downgrade(&voices));
         }
-        Feeder { engine, queue, shared, ctl, meters: true, rate, busy: Duration::ZERO, rendered: 0, voices }
+        Feeder { engine, queue, shared, ctl, meters: true, rate, busy: Duration::ZERO, rendered: 0, voices, last_logged: None }
     }
 }
 
@@ -2065,8 +2175,19 @@ impl Renderer {
         let held = self.gain == 0.0 && self.ctl.paused.load(Ordering::Relaxed);
         self.render_block(stereo);
         if self.tap && !held {
+            let now = Instant::now();
+            let block = crate::device::blocks();
             if let Ok(mut t) = self.shared.tap.try_lock() {
+<<<<<<< HEAD
                 t.push(stereo, self.queue.w, crate::device::blocks(), Instant::now(), self.shared.sample_rate.load(Ordering::Relaxed));
+=======
+                t.push(stereo, self.queue.w, block, now, self.shared.sample_rate.load(Ordering::Relaxed));
+            }
+            // The rolling sampler's tape (the strip between the toolbar and the playlist): the same gate as the
+            // monitor's tap (previews excluded); off, one relaxed load and no lock.
+            if self.shared.rolling.enabled() {
+                self.shared.rolling.push(stereo, self.queue.w, block, now, self.shared.sample_rate.load(Ordering::Relaxed));
+>>>>>>> main
             }
         }
     }
@@ -2346,6 +2467,27 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    /// A pattern's render plays only the channels with notes in it and their layers' children, and runs the effects of
+    /// the mixer tracks they reach: their own, the tracks those route on to, and the master.
+    #[test]
+    fn a_pattern_render_hosts_only_what_plays() {
+        let mut p = crate::app::test_project();
+        p.patterns[0].notes = vec![os_model::Note::step(1, 0), os_model::Note::step(1, 96)];
+        p.patterns.push(os_model::Pattern { number: 2, notes: vec![os_model::Note::step(3, 0)], ..Default::default() });
+        // Channel 3 is a layer of channel 4; insert 4 (channel 3's) routes on to insert 9.
+        p.channels[3].layer_children = vec![4];
+        p.mixer[4].routes = vec![9];
+        let (rows, reached) = pattern_parts(&p, 1);
+        assert_eq!(rows, [1]);
+        let on: Vec<usize> = reached.iter().enumerate().filter(|(_, r)| **r).map(|(t, _)| t).collect();
+        assert_eq!(on, [0, 2], "the master and channel 1's insert");
+        let (rows, reached) = pattern_parts(&p, 2);
+        assert_eq!(rows, [3, 4], "the layer and its child");
+        let on: Vec<usize> = reached.iter().enumerate().filter(|(_, r)| **r).map(|(t, _)| t).collect();
+        assert_eq!(on, [0, 4, 5, 9]);
+        assert_eq!(pattern_parts(&p, 7).0, Vec::<usize>::new(), "a pattern that is not there plays nothing");
+    }
+
     /// An export renders one pass of the pattern (not a loop) on the audio thread, with progress, into a WAV file.
     #[test]
     fn export_writes_a_wav_file() {
@@ -2527,6 +2669,40 @@ mod tests {
         t.note_off(4, 67);
         std::thread::sleep(Duration::from_millis(100));
         assert!(t.sounding().is_empty() && t.peaks() == (0.0, 0.0), "released: {:?}", t.peaks());
+    }
+
+    /// Linux: while a project plays, the feeder and the device callback run at real-time priority (`crate::rt`; needs an
+    /// audio device and rtkit or an rtprio limit): `hidden-tests cargo test -p os-app --bin lemonstudio
+    /// transport::tests::audio_threads_run_realtime -- --ignored --exact --nocapture`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore]
+    fn audio_threads_run_realtime() {
+        crate::rt::enable_in_tests();
+        let mut project = crate::app::test_project();
+        let ch = project.channels[0].index;
+        project.patterns = vec![os_model::Pattern { number: 1, notes: vec![os_model::Note { length: 24, key: 60, ..os_model::Note::step(ch, 0) }], ..Default::default() }];
+        let t = Transport::new(None);
+        t.play(&project, PlayMode::Pattern(1), 0.0);
+        wait_for(|| t.seconds() >= 0.5);
+        std::thread::sleep(Duration::from_millis(300));
+        let threads: Vec<(i32, String, bool)> = std::fs::read_dir("/proc/self/task")
+            .unwrap()
+            .flatten()
+            .filter_map(|e| {
+                let tid: i32 = e.file_name().to_str()?.parse().ok()?;
+                let name = std::fs::read_to_string(e.path().join("comm")).ok()?.trim().to_string();
+                Some((tid, name, crate::rt::is_realtime(tid)))
+            })
+            .collect();
+        t.stop();
+        let rt: Vec<&str> = threads.iter().filter(|t| t.2).map(|t| t.1.as_str()).collect();
+        let (promoted, demoted) = crate::rt::counts();
+        println!("real-time threads now: {rt:?}; promoted {promoted}, demoted by the safety cap {demoted}");
+        // A device that paces playback keeps both real-time; one that does not (the null device) lets them spin, and the
+        // safety cap puts them back to normal priority instead of the kernel killing the program.
+        assert!(promoted >= 2, "the feeder and the device callback were promoted: {threads:?}");
+        assert!(rt.len() + demoted >= 2, "each is real-time still, or was demoted: {rt:?}");
     }
 
     /// Pause holds the position silently; resume continues from it; Stop rewinds (needs an audio device).

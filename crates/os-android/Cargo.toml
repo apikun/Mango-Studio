@@ -1,0 +1,18 @@
+[package]
+name = "os-android"
+description = "Mango Studio Mobile: the Android entry (a NativeActivity cdylib)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+# The application, as a library (`os-app/src/lib.rs`): the same modules the desktop bin runs.
+os-app = { path = "../os-app" }
+# NativeActivity: the activity hands its app handle to `android_main`, which hands it on to
+# `os_app::mobile::run`. The Android scaffolding's shape (the activity subclass, the gradle
+# project, the JNI patterns) follows daijro's honeydew (GPL-3.0-or-later),
+# https://github.com/daijro/honeydew — see README and THIRD-PARTY-NOTICES.txt.
+android-activity = { version = "0.6", features = ["native-activity"] }

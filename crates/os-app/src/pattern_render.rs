@@ -30,6 +30,8 @@ pub struct Pending {
     pub pattern: u16,
     /// Render and replace: the pattern's clips get the audio.
     pub replace: bool,
+    /// The pattern tick the audio starts at (`start_tick`).
+    pub start: u32,
 }
 
 /// Where the renders go (§2): the data folder's Rendered folder; a project without a data folder uses one-click
@@ -50,6 +52,14 @@ pub fn file_stem(dir: &Path, name: &str) -> String {
         return safe;
     }
     (2..).map(|k| format!("{safe} #{k}")).find(|n| free(n)).unwrap_or(safe)
+}
+
+/// Where pattern `pattern`'s render starts, in ticks: the bar of its first note, so a pattern whose notes start late
+/// renders no empty bars before them (its audio clip starts with the sound).
+pub fn start_tick(s: &State, pattern: u16) -> u32 {
+    let first = s.project.pattern(pattern).and_then(|p| p.notes.iter().map(|n| n.position).min()).unwrap_or(0);
+    let bar = s.project.bar_ticks();
+    first / bar * bar
 }
 
 /// The export of the current pattern (§2): the Export form's defaults for one pass of a pattern (a 32-bit float WAV
@@ -73,14 +83,15 @@ pub fn job(s: &State, dir: &Path, stem: &str) -> ex::Job {
     };
     let tempo = s.project.tick_tempo(s.tempo);
     let ticks = crate::piano::pattern_length(s, s.pattern);
+    let start = start_tick(s, s.pattern).min(ticks.saturating_sub(1));
     ex::Job {
         options,
         folder: dir.to_path_buf(),
         name: stem.to_string(),
-        span: None,
+        span: (start > 0).then(|| (u64::from(start), u64::from(ticks))),
         markers: Vec::new(),
         loop_frames: None,
-        tempo: (tempo, f64::from(ticks) / f64::from(s.project.ppq.max(1))),
+        tempo: (tempo, f64::from(ticks - start) / f64::from(s.project.ppq.max(1))),
         track_names: Vec::new(),
         tracks: Vec::new(),
     }
@@ -124,17 +135,33 @@ pub fn add_channel(s: &mut State, path: &str, pattern: u16) -> u16 {
 
 /// Render and replace (§3): every clip of pattern `pattern` in the current arrangement gets a clip of channel `ch`
 /// just above it in drawing order, at the same position and track, as long, cut where the pattern clip was cut (its
-/// window converted to the audio's units) and muted if it was; the pattern clips are muted, not removed. The new
-/// clips are selected. Returns how many there were.
-pub fn replace_clips(s: &mut State, pattern: u16, ch: u16) -> usize {
+/// window converted to the audio's units) and muted if it was; the pattern clips are muted, not removed. The audio
+/// starts at pattern tick `start` (`start_tick`): a clip showing the pattern before it gets its audio clip that much
+/// later and shorter, and none when it shows only the empty start. The new clips are selected. Returns how many
+/// pattern clips there were.
+pub fn replace_clips(s: &mut State, pattern: u16, ch: u16, start: u32) -> usize {
     let src = ClipSource::Channel(ch);
     let found: Vec<Clip> = crate::playlist::clips(s).iter().filter(|c| c.source == ClipSource::Pattern(pattern)).copied().collect();
     if found.is_empty() {
         return 0;
     }
-    let windows: Vec<Option<(f64, f64)>> =
-        found.iter().map(|c| c.window.map(|(a, b)| (crate::playlist::to_src(s, src, a), crate::playlist::to_src(s, src, b)))).collect();
-    let mut windows = windows.into_iter();
+    // Each clip's audio: its delay past the pattern clip's start (ticks), and its window in the audio's units.
+    let start = f64::from(start);
+    let placed: Vec<Option<(u32, Option<(f64, f64)>)>> = found
+        .iter()
+        .map(|c| {
+            if c.window.is_none() && start == 0.0 {
+                return Some((0, None));
+            }
+            let (a, b) = c.window.unwrap_or((0.0, f64::from(c.length)));
+            let lead = (start - a).max(0.0).round() as u32;
+            (lead < c.length).then(|| {
+                let a = a + f64::from(lead) - start;
+                (lead, Some((crate::playlist::to_src(s, src, a), crate::playlist::to_src(s, src, b - start))))
+            })
+        })
+        .collect();
+    let mut placed = placed.into_iter();
     let a = crate::playlist::arr_mut(s);
     let mut clips = Vec::with_capacity(a.clips.len() + found.len());
     let mut sel = Vec::with_capacity(found.len());
@@ -143,13 +170,18 @@ pub fn replace_clips(s: &mut State, pattern: u16, ch: u16) -> usize {
             clips.push(c);
             continue;
         }
-        let mut audio = Clip::new(c.position, c.length, c.track, src);
-        audio.window = windows.next().flatten();
-        audio.muted = c.muted;
+        let audio = placed.next().flatten().map(|(lead, window)| {
+            let mut audio = Clip::new(c.position + lead, c.length - lead, c.track, src);
+            audio.window = window;
+            audio.muted = c.muted;
+            audio
+        });
         c.muted = true;
         clips.push(c);
-        sel.push(clips.len());
-        clips.push(audio);
+        if let Some(audio) = audio {
+            sel.push(clips.len());
+            clips.push(audio);
+        }
     }
     a.clips = clips;
     s.playlist.sel = sel;
@@ -171,8 +203,13 @@ pub fn place(s: &mut State, p: &Pending, path: &Path) -> String {
     if !p.replace {
         return format!("Rendered {} to {file}", crate::patterns::name_of(s, p.pattern));
     }
+<<<<<<< HEAD
     match replace_clips(s, p.pattern, ch) {
         0 => format!("Rendered {} to {file} (no clips of it in the arranger to replace)", crate::patterns::name_of(s, p.pattern)),
+=======
+    match replace_clips(s, p.pattern, ch, p.start) {
+        0 => format!("Rendered {} to {file} (no clips of it in the playlist to replace)", crate::patterns::name_of(s, p.pattern)),
+>>>>>>> main
         n => format!("Rendered {} to {file}: replaced {n} clip(s)", crate::patterns::name_of(s, p.pattern)),
     }
 }
@@ -198,7 +235,8 @@ impl App {
         }
         let stem = file_stem(&dir, &crate::patterns::name_of(s, pattern));
         let job = job(s, &dir, &stem);
-        self.pattern_render = Some(Pending { pattern, replace });
+        let start = job.span.map_or(0, |(a, _)| a as u32);
+        self.pattern_render = Some(Pending { pattern, replace, start });
         self.start_export(job, false);
     }
 
@@ -235,8 +273,15 @@ impl App {
             self.state.message = Some(format!("Render failed: {}: {e}", f.folder.display()));
             return self.invalidate();
         }
-        let job = self.export_job(f);
-        self.pattern_render = Some(Pending { pattern: self.state.pattern.max(1), replace: false });
+        let mut job = self.export_job(f);
+        // As the quick render: from the bar of the first note.
+        let pattern = self.state.pattern.max(1);
+        let (ticks, start) = (crate::piano::pattern_length(&self.state, pattern), start_tick(&self.state, pattern));
+        if job.span.is_none() && start > 0 && start < ticks {
+            job.span = Some((u64::from(start), u64::from(ticks)));
+        }
+        let start = job.span.map_or(0, |(a, _)| a as u32);
+        self.pattern_render = Some(Pending { pattern, replace: false, start });
         self.start_export(job, false);
     }
 
@@ -342,7 +387,7 @@ mod tests {
         a.clips.push(cut);
         let ch = add_channel(s, "x.wav", 1);
         assert_eq!(s.project.channels.last().unwrap().name.as_deref(), Some("Pattern 1"));
-        assert_eq!(replace_clips(s, 1, ch), 2);
+        assert_eq!(replace_clips(s, 1, ch, 0), 2);
         let c = crate::playlist::clips(s).to_vec();
         assert_eq!(c.len(), 5);
         assert!(c[0].source == ClipSource::Pattern(1) && c[0].muted);
@@ -355,7 +400,54 @@ mod tests {
         let ms = |t: u32| crate::playlist::to_src(s, ClipSource::Channel(ch), f64::from(t));
         assert!((w0 - ms(ppq)).abs() < 1e-9 && (w1 - ms(3 * ppq)).abs() < 1e-9);
         assert_eq!(s.playlist.sel, [1, 4]);
-        assert_eq!(replace_clips(s, 7, ch), 0, "no clips: nothing changes");
+        assert_eq!(replace_clips(s, 7, ch, 0), 0, "no clips: nothing changes");
+    }
+
+    /// A pattern whose notes start late renders from the bar of its first note: no empty bars at the start of the file
+    /// (or of its audio clip). One starting in its first bar renders from the start.
+    #[test]
+    fn the_render_skips_the_empty_start() {
+        let mut app = app();
+        let bar = app.state.project.bar_ticks();
+        let d = std::env::temp_dir();
+        assert!(job(&app.state, &d, "P").span.is_none(), "a note in the first bar");
+        let p = crate::patterns::pat_mut(&mut app.state, 1);
+        p.notes = vec![Note { length: 24, ..Note::step(0, 2 * bar + 48) }, Note::step(0, 3 * bar)];
+        let len = crate::piano::pattern_length(&app.state, 1);
+        let j = job(&app.state, &d, "P");
+        assert_eq!(j.span, Some((u64::from(2 * bar), u64::from(len))), "from the bar of the first note");
+        assert_eq!(start_tick(&app.state, 1), 2 * bar);
+    }
+
+    /// Render and replace with audio that starts at bar 3: a whole pattern clip gets its audio clip two bars later and
+    /// two bars shorter; a clip cut to show only the empty start gets none (it is muted all the same); a clip cut
+    /// inside the sound gets the matching part of the audio.
+    #[test]
+    fn replace_follows_a_late_start() {
+        let mut app = app();
+        let s = &mut app.state;
+        let bar = s.project.bar_ticks();
+        let a = crate::playlist::arr_mut(s);
+        a.clips.push(Clip::new(0, 4 * bar, 1, ClipSource::Pattern(1)));
+        let mut empty = Clip::new(8 * bar, bar, 2, ClipSource::Pattern(1));
+        empty.window = Some((0.0, f64::from(bar)));
+        a.clips.push(empty);
+        let mut inside = Clip::new(16 * bar, bar, 3, ClipSource::Pattern(1));
+        inside.window = Some((f64::from(3 * bar), f64::from(4 * bar)));
+        a.clips.push(inside);
+        let ch = add_channel(s, "x.wav", 1);
+        assert_eq!(replace_clips(s, 1, ch, 2 * bar), 3);
+        let c = crate::playlist::clips(s).to_vec();
+        assert_eq!(c.len(), 5, "no audio for the empty clip");
+        assert!(c.iter().filter(|c| c.source == ClipSource::Pattern(1)).all(|c| c.muted));
+        let ms = |t: u32| crate::playlist::to_src(s, ClipSource::Channel(ch), f64::from(t));
+        assert_eq!((c[1].source, c[1].position, c[1].length, c[1].track), (ClipSource::Channel(ch), 2 * bar, 2 * bar, 1));
+        let (w0, w1) = c[1].window.expect("cut to the audio");
+        assert!(w0.abs() < 1e-9 && (w1 - ms(2 * bar)).abs() < 1e-9);
+        assert_eq!((c[4].position, c[4].length, c[4].track), (16 * bar, bar, 3));
+        let (w0, w1) = c[4].window.unwrap();
+        assert!((w0 - ms(bar)).abs() < 1e-9 && (w1 - ms(2 * bar)).abs() < 1e-9);
+        assert_eq!(s.playlist.sel, [1, 4]);
     }
 
     /// Runs the render the command started, as the app's tick follows an export.
@@ -396,6 +488,28 @@ mod tests {
         app.state.pattern = 2;
         app.pattern_cmd(crate::patterns::Cmd::QuickRender);
         assert!(app.export.is_none() && app.pattern_render.is_none() && !app.state.dialogs.is_empty());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A quick render of a pattern whose notes start at bar 3 writes a file as long as the bars from there to the
+    /// pattern's end: two bars shorter than the pattern.
+    #[test]
+    fn quick_render_file_starts_at_the_sound() {
+        let mut app = app();
+        let d = temp("late");
+        with_data_folder(&mut app, &d);
+        let bar = app.state.project.bar_ticks();
+        crate::patterns::pat_mut(&mut app.state, 1).notes = vec![Note::step(0, 2 * bar), Note::step(0, 3 * bar)];
+        let len = crate::piano::pattern_length(&app.state, 1);
+        app.pattern_cmd(crate::patterns::Cmd::QuickRender);
+        finish(&mut app);
+        let ch = app.state.project.channels.last().unwrap();
+        let bytes = std::fs::metadata(ch.sample_path.clone().unwrap()).unwrap().len();
+        let rate = crate::transport::Transport::device_rate().unwrap_or(44100);
+        let secs = (bytes - 44) as f64 / 8.0 / f64::from(rate);
+        let tick_secs = 60.0 / f64::from(app.state.project.tick_tempo(app.state.tempo)) / f64::from(app.state.project.ppq);
+        let want = f64::from(len - 2 * bar) * tick_secs;
+        assert!((secs - want).abs() < 0.1 * want + 0.05, "{secs} s, want about {want} s (the pattern: {} s)", f64::from(len) * tick_secs);
         let _ = std::fs::remove_dir_all(&d);
     }
 

@@ -1,4 +1,5 @@
 // Copyright (C) 2026 ItsAlphaNeon
+// Copyright (C) 2026 Artig3nce
 // Copyright (C) 2026 thacer13
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
@@ -8,7 +9,7 @@
 
 use std::ops::Range;
 
-use os_ui::{Font, Rect};
+use os_ui::{Color, Font, Rect};
 
 use super::{menus, sunken, tool_button, FrameInfo};
 use crate::app::{Action, Live, State, Ui, Util, Win};
@@ -127,6 +128,8 @@ pub fn paint_hint_bar(ui: &mut Ui, s: &State, f: &FrameInfo) {
     for (dx, dy) in [(-3.0, -3.0), (3.0, -3.0), (-3.0, 3.0), (3.0, 3.0)] {
         ui.c.fill_circle(cx + dx, cy + dy, 1.3, t.s(0x5c6164));
     }
+    // The same rim as the toolbar readouts (theme token `display_edge`).
+    super::display_edge(ui.c, t, r, 0.0);
 }
 
 fn btn(x: f32, y: f32) -> Rect {
@@ -177,12 +180,22 @@ pub fn paint(ui: &mut Ui, s: &State, f: &FrameInfo, width: f32) {
     ui.hit(Rect::new(0.0, 0.0, width, h), Action::DragWindow, "");
 
     let placed = place(l, width, editing);
+    // Caption buttons in the corner always show; the rest of a narrow band ends left of them.
+    let corner = crate::toolbar::corner(l);
+    let fit = fit - corner;
     for row in 0..rows {
+        let pin = crate::toolbar::pinned(&l.rows[row]).then(|| l.rows[row].len() - 1);
+        let mut cut = false;
         for p in placed.iter().filter(|p| p.row == row) {
             let a = p.at();
-            let shows = if p.panel.repeats() { p.x + p.w <= fit } else { a.x(p.panel.first_end()) <= fit };
+            let corner = pin == Some(p.idx);
+            let shows = corner || if p.panel.repeats() { p.x + p.w <= fit } else { a.x(p.panel.first_end()) <= fit };
+            if cut && !corner {
+                continue;
+            }
             if !shows {
-                break;
+                cut = true;
+                continue;
             }
             // Group separators (2 px gaps measured in row 1 and row 2), each at the left edge of the panel it comes
             // with, shown with that panel; none at a row's start.
@@ -196,7 +209,7 @@ pub fn paint(ui: &mut Ui, s: &State, f: &FrameInfo, width: f32) {
                 item_frame(ui, l, p);
             }
             if !all {
-                break;
+                cut = true;
             }
         }
     }
@@ -215,7 +228,7 @@ pub fn paint(ui: &mut Ui, s: &State, f: &FrameInfo, width: f32) {
     // place. Hovering it says why; a click does nothing.
     let mid = (h / 2.0).floor();
     if fit.is_finite() {
-        let r = Rect::new(width - MORE_W, 0.0, MORE_W, h);
+        let r = Rect::new(width - corner - MORE_W, 0.0, MORE_W, h);
         ui.hit(r, Action::Swallow, MORE_HINT);
         os_ui::kit::triangle(ui.c, r.cx(), mid, 5.0, os_ui::kit::Dir::Right, t.glyph);
         return;
@@ -223,17 +236,22 @@ pub fn paint(ui: &mut Ui, s: &State, f: &FrameInfo, width: f32) {
     if !l.logo {
         return;
     }
-    // Logo spot (spans the rows): the Lemon Studio mark, just right of the last panel (x 1487 in the classic layout). It
-    // keeps to the right edge until the window is too narrow, then the edge crops it (spec ui/main-window.md §12); the
-    // toolbar never moves.
-    let end = placed.iter().map(|p| p.x + p.w).fold(0.0, f32::max);
-    let lx = (width - 45.0).max(end + 47.0);
+    // Logo spot (spans the rows): the Mango Studio mark, right of the last panel (x 1487 in the "Caption left" layout). It
+    // keeps to the right edge, left of caption buttons in the corner, until the window is too narrow, then the edge
+    // crops it (spec ui/main-window.md §12), or it goes when the caption buttons would cover it; the toolbar never
+    // moves.
+    let end = placed.iter().filter(|p| !(crate::toolbar::pinned(&l.rows[p.row]) && p.idx + 1 == l.rows[p.row].len())).map(|p| p.x + p.w).fold(0.0, f32::max);
+    let lx = (width - corner - 45.0).max(end + 47.0);
     let r = Rect::new(lx - 35.0, 0.0, 78.0, h - 1.0);
+    // No room left of the caption buttons in the corner: no logo, rather than one under them.
+    if corner > 0.0 && r.right() > width - corner {
+        return;
+    }
     if editing {
         ui.hit(r, Action::Bar(BarHit::Logo), "Logo - drag onto the palette to take it off");
         frame(ui, r.inset(2.0));
     } else {
-        ui.hit(r, Action::MenuItem(menus::HELP_MENU, menus::HELP_ABOUT), "About Lemon Studio");
+        ui.hit(r, Action::MenuItem(menus::HELP_MENU, menus::HELP_ABOUT), "About Mango Studio");
     }
     icons::logo(ui.c, lx, mid, 26.0 * h / 81.0, if lemon { t.toolbar_edge } else { t.toolbar_line });
 }
@@ -282,7 +300,7 @@ fn caption(ui: &mut Ui, c: &Ctx) {
     for (x, icon, action, hint) in [
         (4.0, Icon::Minimize, Action::Minimize, "Minimize"),
         (24.0, Icon::Restore, Action::Maximize, "Restore / maximize"),
-        (44.0, Icon::Close, Action::Close, "Exit Lemon Studio"),
+        (44.0, Icon::Close, Action::Close, "Exit Mango Studio"),
     ] {
         let r = a.r(Rect::new(x, 11.0, 19.0, 19.0));
         let hov = ui.hit(r, action, hint);
@@ -301,6 +319,8 @@ fn hint_panel(ui: &mut Ui, c: &Ctx) {
     let hint: &str = if !f.hint.is_empty() { &f.hint } else { s.message.as_deref().unwrap_or("") };
     ui.c.text_clip(Font::new(14), a.x(77.0), a.y(19.0), 280.0, t.text, hint);
     icons::draw(ui.c, Icon::MidiControl, a.span(360.0, 374.0, 17.0, 32.0), ui.t.s(0x515457));
+    // The same rim as the other readouts (theme token `display_edge`).
+    super::display_edge(ui.c, t, hp, 2.0);
 }
 
 /// Transport group: PAT / SONG, play, stop, record and the tempo (to the tempo box's right edge, x 570).
@@ -408,8 +428,9 @@ fn transport(ui: &mut Ui, c: &Ctx) {
         ui.c.fill_rrect(tb, 5.0, ui.t.s(0x5b5f61));
         ui.c.fill_rrect(tb.inset(1.0), 4.0, ui.t.s(0x5f6466));
     }
-    // Lemon displays show their digits in the brand colour.
-    let digits = if lemon { t.pill } else { t.glyph };
+    super::display_edge(ui.c, t, tb, 5.0);
+    // Lemon displays showed their digits in the brand colour; Mango's tempo and time read white, as its text does.
+    let digits = if lemon { t.text } else { t.glyph };
     // While playing, the tempo playback is at: tempo automation moves it (spec: audio/timing.md "Tempo that changes").
     let whole = format!("{}", f.tempo.trunc() as i64);
     let frac = format!(".{:03}", ((f.tempo.fract()) * 1000.0).round() as i64 % 1000);
@@ -460,8 +481,9 @@ fn time(ui: &mut Ui, c: &Ctx) {
         os_ui::kit::lemon::well(ui.c, t, tp, t.time_panel);
     } else {
         ui.c.fill_rect(tp, ui.t.s(0x212829));
-        ui.c.fill_rect(tp.inset(1.0), t.time_panel);
+        ui.c.fill_rect(tp.inset(1.0), Color::rgb(0x2e2e2e));
     }
+    super::display_edge(ui.c, t, tp, 4.0);
     // spec: ui/time-display.md §2-3 (the bar's signature is the project's).
     ui.hit(tp, Action::Clock, s.clock.hint());
     ui.live(Live::Clock, tp);
@@ -482,7 +504,7 @@ fn time(ui: &mut Ui, c: &Ctx) {
     let step_x = tick_x - 8.0 - sw;
     let bar_x = (step_x - 8.0 - bw).max(tp.x + 2.0);
     ui.c.push_clip(tp.inset(1.0));
-    let g = if lemon { t.pill } else { t.glyph };
+    let g = if lemon { t.text } else { t.glyph };
     if let Some(c) = s.rec.count.filter(|c| c.left() > 0) {
         // A recording count-in (spec: ui/recording.md §3): the beats left.
         ui.c.text_center(Font::light(22, 8), Rect::new(tp.x, tp.y + 2.0, tp.w, tp.h - 2.0), g, &format!("REC IN {}", c.left()));
@@ -517,6 +539,7 @@ fn monitor(ui: &mut Ui, c: &Ctx) {
         ui.c.fill_rect(scope, edge);
         ui.c.fill_rect(a.r(Rect::new(881.0, 5.0, 84.0, 31.0)), fill);
     }
+    super::display_edge(ui.c, ui.t, scope, 4.0);
     let (x0, bottom) = (a.x(881.0), a.y(36.0));
     match m.mode {
         Mode::Spectrum => {
@@ -552,6 +575,7 @@ fn monitor(ui: &mut Ui, c: &Ctx) {
         ui.c.fill_rect(peaks, edge);
         ui.c.fill_rect(a.r(Rect::new(969.0, 5.0, 75.0, 21.0)), fill);
     }
+    super::display_edge(ui.c, ui.t, peaks, 4.0);
     // Classic: both ends follow the theme's highlight key. Lemon: the displays' digit colour (like the scope's ink),
     // dimmed toward the panel at the left and full at the tip. The held peak takes the tip colour.
     let (lo, hi) = if lemon {
@@ -594,6 +618,7 @@ fn cpu(ui: &mut Ui, c: &Ctx) {
     let (t, a, s) = (ui.t, c.a, c.s);
     let cpu = a.r(crate::app::CPU_RECT);
     sunken(ui, cpu, t.sunken_dark);
+    super::display_edge(ui.c, t, cpu, 3.0);
     ui.hit(cpu, Action::CpuPanel, "");
     let r = &s.cpu.now;
     let level = |load: u32| match load {
@@ -844,6 +869,7 @@ fn pattern(ui: &mut Ui, c: &Ctx) {
     } else {
         ui.c.fill_rrect(pb, 2.0, t.tempo_box.shade(if hov { 0.16 } else { 0.08 }));
     }
+    super::display_edge(ui.c, t, pb, 4.0);
     let name = s
         .project
         .patterns
@@ -1274,7 +1300,7 @@ mod tests {
         app.paint(&mut c, None);
         assert_eq!(more(&app), None);
         assert!(has(&app, &Action::Monitor) && has(&app, &Action::CpuPanel) && has(&app, &Action::PatternPrev));
-        assert!(app.hits.iter().any(|h| h.hint == "About Lemon Studio"));
+        assert!(app.hits.iter().any(|h| h.hint == "About Mango Studio"));
         // No news panel: Lemon Studio has no online service.
         assert!(!app.hits.iter().any(|h| h.action == Action::Placeholder("News")));
 
@@ -1286,7 +1312,7 @@ mod tests {
         assert_eq!((r, action), (Rect::new(1920.0 - 2.0 * MORE_W, 0.0, 2.0 * MORE_W, 162.0), Action::Swallow));
         assert!(has(&app, &Action::Clock) && has(&app, &Action::GlobalSnap));
         assert!(!has(&app, &Action::Monitor) && !has(&app, &Action::CpuPanel) && !has(&app, &Action::PatternPrev));
-        assert!(!app.hits.iter().any(|h| h.hint == "About Lemon Studio"));
+        assert!(!app.hits.iter().any(|h| h.hint == "About Mango Studio"));
         app.mouse_move(r.cx(), r.cy());
         assert_eq!(app.hint, MORE_HINT);
         let before = (app.state.message.clone(), app.state.menu_open, app.state.settings.open);
@@ -1294,14 +1320,21 @@ mod tests {
         app.mouse_up();
         assert_eq!((app.state.message.clone(), app.state.menu_open, app.state.settings.open), before, "a click does nothing");
 
-        // Main on a narrower window: the same rule (the CPU panel fits, the last buttons don't).
+        // Main on a narrower window: the band scales down to fit it (auto fit, 2026-10-27), so every panel keeps
+        // showing — the Wine / Winlator reports' missing waveform display. Past the 50 % floor, panels leave again.
         set_choice(&TOOLBARS_SCALING, 0);
         let Ok(mut narrow) = Canvas::new(1300, 800, 1.0) else { return };
         app.invalidate();
         app.paint(&mut narrow, None);
+        assert_eq!(more(&app), None, "auto fit keeps every panel");
+        assert!(has(&app, &Action::Monitor) && has(&app, &Action::CpuPanel) && has(&app, &Action::PatternPrev));
+        // 600 px: the floor is past. The monitor still shows; the CPU panel and the utilities go, the arrow says why.
+        let Ok(mut tiny) = Canvas::new(600, 800, 1.0) else { return };
+        app.invalidate();
+        app.paint(&mut tiny, None);
         let (r, _) = more(&app).expect("the arrow");
-        assert_eq!(r, Rect::new(1300.0 - MORE_W, 0.0, MORE_W, 81.0));
-        assert!(has(&app, &Action::CpuPanel) && has(&app, &Action::PatternPrev));
-        assert!(!app.hits.iter().any(|h| h.hint == "About Lemon Studio" || h.hint == "Project info (F11)"));
+        assert_eq!(r, Rect::new(600.0 - MORE_W / 2.0, 0.0, MORE_W / 2.0, 81.0 * 0.5));
+        assert!(has(&app, &Action::Monitor) && has(&app, &Action::PatternPrev));
+        assert!(!has(&app, &Action::CpuPanel) && !app.hits.iter().any(|h| h.hint == "About Mango Studio"));
     }
 }

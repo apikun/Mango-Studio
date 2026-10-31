@@ -1591,7 +1591,7 @@ mod win32 {
                 tracking: false,
                 slot: slot.clone(),
             });
-            let title = wide("Lemon Sampler");
+            let title = wide("Mango Sampler");
             let hwnd = CreateWindowExW(
                 0,
                 class.as_ptr(),
@@ -2382,7 +2382,7 @@ mod win32 {
             return None;
         }
         let mut file = vec![0u16; 1024];
-        let filter: Vec<u16> = if save { "WAV files\0*.wav\0\0" } else { "Audio files\0*.wav;*.flac;*.ogg;*.wv;*.aif;*.aiff;*.mp3\0All files\0*.*\0\0" }
+        let filter: Vec<u16> = if save { "WAV files\0*.wav\0\0" } else { "Audio files\0*.wav;*.flac;*.ogg;*.wv;*.aif;*.aiff;*.mp3;*.m4a;*.aac\0All files\0*.*\0\0" }
             .encode_utf16()
             .collect();
         let title = wide(if save { "Save sample as" } else { "Open sample" });
@@ -2854,7 +2854,7 @@ mod gui {
             if save {
                 d.set_title("Save sample as").add_filter("WAV files", &["wav"]).save_file()
             } else {
-                d.set_title("Open sample").add_filter("Audio files", &["wav", "flac", "ogg", "wv", "aif", "aiff", "mp3"]).pick_file()
+                d.set_title("Open sample").add_filter("Audio files", &["wav", "flac", "ogg", "wv", "aif", "aiff", "mp3", "m4a", "aac"]).pick_file()
             }
         });
         path.flatten().map(|p| p.to_string_lossy().into_owned())

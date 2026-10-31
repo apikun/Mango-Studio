@@ -91,12 +91,21 @@ struct Conn {
 
 thread_local! {
     static CONN: RefCell<Option<Rc<Conn>>> = const { RefCell::new(None) };
+    /// The pointer came into a frame (`take_pointer_entered`).
+    static POINTER_ENTERED: Cell<bool> = const { Cell::new(false) };
     /// The main window has the keyboard focus (`main_focused`), known before the connection opens.
     static MAIN_FOCUSED: Cell<bool> = const { Cell::new(true) };
     /// Dialogs open now (`unpinned`): the frames are not kept above while there is one.
     static MODAL: Cell<u32> = const { Cell::new(0) };
     /// A docked frame moved, shrank or went: part of the main window was uncovered (`take_exposed`).
     static EXPOSED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether the pointer came into a plugin frame since the last call (UI thread). A docked frame shows the main window's
+/// cursor, which stays the last one the app chose (a tool's brush or pencil from the playlist) while the pointer is over
+/// the frame: the app shows the arrow when this is true.
+pub fn take_pointer_entered() -> bool {
+    POINTER_ENTERED.with(|p| p.replace(false))
 }
 
 /// Whether part of the main window was uncovered (a docked frame moved, was clipped or closed, or the X server exposed
@@ -167,7 +176,7 @@ struct Frame {
     gc: xproto::Gcontext,
     state: RefCell<State>,
     canvas: RefCell<Canvas>,
-    scale: f32,
+    scale: Cell<f32>,
     /// The frame needs painting (`paint_dirty`).
     dirty: Cell<bool>,
     /// The last left press (server time, position) for double clicks.
@@ -188,6 +197,17 @@ fn px(v: f32, k: f32) -> u16 {
     (v * k).round().clamp(1.0, f32::from(u16::MAX)) as u16
 }
 
+fn frame_scale(owner: isize, parent_scale: f32, server_scale: f32) -> f32 {
+    let scale = if owner != 0 { parent_scale } else { server_scale };
+    if scale.is_finite() && scale > 0.0 {
+        scale
+    } else if server_scale.is_finite() && server_scale > 0.0 {
+        server_scale
+    } else {
+        1.0
+    }
+}
+
 fn pixel(c: Color) -> u32 {
     u32::from(c.r) << 16 | u32::from(c.g) << 8 | u32::from(c.b)
 }
@@ -195,17 +215,22 @@ fn pixel(c: Color) -> u32 {
 impl FrameWindow {
     /// A hidden frame for an editor of `editor` logical px; `raise` shows it. Docked (a child of `owner`, the main
     /// window, at screen position `pos`) unless `detached` or the main window is not an X11 one (`owner` 0); a detached
-    /// frame is placed by the window manager, transient for `owner`. The scale is the X server's (`Xft.dpi`), not
-    /// `_scale`: under Wayland the main window's scale does not apply to X11 windows.
-    pub fn new(owner: isize, info: ChannelInfo, editor: (f32, f32), _scale: f32, pos: (i32, i32), detached: bool) -> Result<FrameWindow, String> {
+    /// frame is placed by the window manager, transient for `owner`. With an X11 main window it shares the main
+    /// window's scale; a native Wayland main window has no X11 owner, so the frame uses the X server's scale.
+    pub fn new(owner: isize, info: ChannelInfo, editor: (f32, f32), scale: f32, pos: (i32, i32), detached: bool) -> Result<FrameWindow, String> {
         let conn = conn()?;
         let fail = |e: &dyn std::fmt::Display| format!("could not create the plugin window: {e}");
-        let k = conn.scale;
+        let k = frame_scale(owner, scale, conn.scale);
         let owner = owner as xproto::Window;
         set_owner(&conn, owner);
         let docked = owner != 0 && !detached;
         let state = State::new(info, editor, !docked);
         let (w, h) = state.size();
+<<<<<<< HEAD
+=======
+        // A detached frame asks to be centred in the work area under the pointer, not for 0, 0 (which some window
+        // managers keep, under their bar and past the screen's edge).
+>>>>>>> main
         let (parent, at) = if docked { (owner, from_root(&conn, owner, pos)) } else { (conn.root, centred(&conn, (px(w, k), px(h, k)))) };
         let ay = state.area_y();
         let title = state.info.name.clone();
@@ -214,7 +239,7 @@ impl FrameWindow {
         let win = c.generate_id().map_err(|e| fail(&e))?;
         let area = c.generate_id().map_err(|e| fail(&e))?;
         let gc = c.generate_id().map_err(|e| fail(&e))?;
-        let events = EventMask::EXPOSURE | EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION | EventMask::STRUCTURE_NOTIFY;
+        let events = EventMask::EXPOSURE | EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION | EventMask::STRUCTURE_NOTIFY | EventMask::ENTER_WINDOW;
         let canvas = Canvas::new(u32::from(px(w, k)), u32::from(px(h, k)), k)?;
         let made = (|| -> Result<(), Box<dyn std::error::Error>> {
             // No background: every expose is painted from the canvas.
@@ -236,7 +261,7 @@ impl FrameWindow {
             c.change_property8(PropMode::REPLACE, win, AtomEnum::WM_NAME, AtomEnum::STRING, title.as_bytes())?;
             c.change_property8(PropMode::REPLACE, win, a._NET_WM_NAME, a.UTF8_STRING, title.as_bytes())?;
             // The desktop entry's id: the frame is grouped with Lemon Studio and gets its icon.
-            c.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, b"lemonstudio\0lemonstudio\0")?;
+            c.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, b"mangostudio\0mangostudio\0")?;
             c.change_property32(PropMode::REPLACE, win, a.WM_PROTOCOLS, AtomEnum::ATOM, &[a.WM_DELETE_WINDOW, a._NET_WM_PING])?;
             // The process and its host: the window manager can end an unresponsive Lemon Studio from a frame.
             c.change_property32(PropMode::REPLACE, win, a._NET_WM_PID, AtomEnum::CARDINAL, &[std::process::id()])?;
@@ -251,21 +276,35 @@ impl FrameWindow {
             if owner != 0 {
                 c.change_property32(PropMode::REPLACE, win, AtomEnum::WM_TRANSIENT_FOR, AtomEnum::WINDOW, &[owner as u32])?;
             }
+<<<<<<< HEAD
             // A dialog: tiling window managers float it, resizable or not (with a Wayland main window it has no owner to
             // be transient for, and once resizable its size no longer marks it as fixed).
             c.change_property32(PropMode::REPLACE, win, a._NET_WM_WINDOW_TYPE, AtomEnum::ATOM, &[a._NET_WM_WINDOW_TYPE_DIALOG])?;
+=======
+            // A dialog: tiling window managers float it, resizable or not (with a Wayland main window it has no owner to be
+            // transient for, and a window the user may resize is not marked as fixed in size).
+            if !docked {
+                c.change_property32(PropMode::REPLACE, win, a._NET_WM_WINDOW_TYPE, AtomEnum::ATOM, &[a._NET_WM_WINDOW_TYPE_DIALOG])?;
+            }
+>>>>>>> main
             // Opened from the active application: it starts above (taken when the window is mapped). Under X11 the main
             // window owns it instead (transient for it).
             if !docked && conn.above.get() {
                 c.change_property32(PropMode::REPLACE, win, a._NET_WM_STATE, AtomEnum::ATOM, &[a._NET_WM_STATE_ABOVE])?;
             }
+<<<<<<< HEAD
             // A detached frame tells the window manager where it opens (`centred`).
+=======
+>>>>>>> main
             size_hints(c, win, px(w, k), px(h, k), (!docked).then_some(at))?;
             // Clicks in the plugin's editor come here first (then go on to it, `pump`): they bring the window to the
             // front of the app's windows, as clicks on the frame do.
             for b in [xproto::ButtonIndex::M1, xproto::ButtonIndex::M2, xproto::ButtonIndex::M3] {
                 c.grab_button(false, area, EventMask::BUTTON_PRESS, xproto::GrabMode::SYNC, xproto::GrabMode::ASYNC, x11rb::NONE, x11rb::NONE, b, xproto::ModMask::ANY)?;
             }
+            // Ctrl+Z, Ctrl+Alt+Z and Ctrl+Shift+Z in the plugin window come here first (`grab_undo_keys`), whichever of its
+            // windows has the keyboard: the frame's or the editor's.
+            grab_undo_keys(c, win)?;
             c.map_window(area)?;
             // The plugin parents its editor into `area` through its own connection: it must exist on the server first.
             c.flush()?;
@@ -284,7 +323,7 @@ impl FrameWindow {
             gc,
             state: RefCell::new(state),
             canvas: RefCell::new(canvas),
-            scale: k,
+            scale: Cell::new(k),
             dirty: Cell::new(true),
             last_press: Cell::new(None),
             plain: Cell::new(false),
@@ -407,6 +446,21 @@ impl FrameWindow {
         }
     }
 
+    /// The size (logical px) of the work area of the monitor under the pointer (where the user opens the window), when it
+    /// is known.
+    pub fn work_size(&self) -> Option<(f32, f32)> {
+        let c = &self.f.conn.c;
+        let p = c.query_pointer(self.f.conn.root).ok().and_then(|r| r.reply().ok()).map_or((0, 0), |r| (i32::from(r.root_x), i32::from(r.root_y)));
+        let [x0, y0, x1, y1] = work_area(&self.f.conn, p)?;
+        let k = self.f.scale.get();
+        Some(((x1 - x0) as f32 / k, (y1 - y0) as f32 / k))
+    }
+
+    /// The window's chrome: what it adds to the editor (logical px).
+    pub fn chrome(&self) -> (f32, f32) {
+        self.f.state.borrow().chrome()
+    }
+
     /// The plugin's smallest editor size when the frame's edges may resize it (`None`: a fixed size).
     pub fn set_resizable(&self, min: Option<(f32, f32)>) {
         let mut st = self.f.state.borrow_mut();
@@ -445,9 +499,20 @@ impl FrameWindow {
         }
     }
 
-    /// The scale the frame is drawn at (the X server's).
+    /// The scale the frame is drawn at.
     pub fn scale(&self) -> f32 {
-        self.f.scale
+        self.f.scale.get()
+    }
+
+    pub fn set_scale(&self, scale: f32) {
+        if !scale.is_finite() || scale <= 0.0 || self.f.scale.get() == scale {
+            return;
+        }
+        self.f.scale.set(scale);
+        self.f.state.borrow_mut().clip_key = None;
+        self.f.layout();
+        self.f.apply_clip();
+        expose();
     }
 
     /// A point of the editor (logical px from its top-left) on the screen (screen px): where a menu the plugin asked
@@ -542,7 +607,7 @@ impl Frame {
         let (fw, fh) = st.size();
         let (ay, ed, show) = (st.area_y(), st.editor, !st.misc);
         drop(st);
-        let (k, c) = (self.scale, &self.conn.c);
+        let (k, c) = (self.scale.get(), &self.conn.c);
         let (w, h) = (px(fw, k), px(fh, k));
         let _ = fixed_size(c, self.win, w, h);
         let _ = c.configure_window(self.win, &ConfigureWindowAux::new().width(u32::from(w)).height(u32::from(h)));
@@ -642,7 +707,7 @@ impl Frame {
     /// What a maximized frame fills: docked, the app's workspace; detached, the work area of the monitor it is on.
     /// Its top-left (screen px) and size (logical px).
     fn max_target(&self) -> Option<((i32, i32), (f32, f32))> {
-        let k = self.scale;
+        let k = self.scale.get();
         let size = |r: [i32; 4]| ((r[2] - r[0]) as f32 / k, (r[3] - r[1]) as f32 / k);
         let docked = {
             let st = self.state.borrow();
@@ -683,7 +748,7 @@ impl Frame {
 
     /// A window point (logical px) on the X screen (physical px).
     fn to_screen(&self, x: f32, y: f32) -> (i32, i32) {
-        let k = self.scale;
+        let k = self.scale.get();
         let t = self.conn.c.translate_coordinates(self.win, self.conn.root, (x * k) as i16, (y * k) as i16);
         t.ok().and_then(|t| t.reply().ok()).map_or((0, 0), |r| (i32::from(r.dst_x), i32::from(r.dst_y)))
     }
@@ -742,12 +807,22 @@ impl Frame {
     }
 
     fn event(&self, e: Event) {
-        let k = self.scale;
+        let k = self.scale.get();
         let screen = |x: f32, y: f32| self.to_screen(x, y);
         match e {
             Event::Expose(_) => self.dirty.set(true),
             // A click in the plugin's editor (the grab on the area; `pump` lets the editor have it).
             Event::ButtonPress(e) if e.event == self.area => self.clicked(),
+            // The pointer came into the frame: a docked frame has the main window's cursor (a child window without a cursor
+            // of its own shows its parent's), which the main window cannot change while the pointer is here, as it gets
+            // no motion. The app shows the arrow (`take_pointer_entered`).
+            Event::EnterNotify(e) if e.event == self.win => POINTER_ENTERED.with(|p| p.set(true)),
+            // An undo key in the plugin window (the key grab on the frame; the editor does not get it).
+            Event::KeyPress(e) if e.event == self.win => {
+                if let Some((alt, shift)) = undo_key_of(e.state) {
+                    self.state.borrow_mut().events.push(FrameEvent::Undo { alt, shift });
+                }
+            }
             Event::ButtonPress(e) => {
                 if matches!(e.detail, 1..=3) {
                     self.clicked();
@@ -969,9 +1044,14 @@ fn work_area(conn: &Conn, p: (i32, i32)) -> Option<[i32; 4]> {
     Some(if r[0] < r[2] && r[1] < r[3] { r } else { mon })
 }
 
+<<<<<<< HEAD
 /// Where a detached frame of `size` (physical px) opens: centred in the work area of the monitor under the pointer. A
 /// window that asks for no place lands at 0, 0 under some window managers (Hyprland keeps it there, under its bar and
 /// past the screen's edge).
+=======
+/// Where a detached frame of `size` (physical px) opens: centred in the work area under the pointer, its top no higher
+/// than the area's.
+>>>>>>> main
 fn centred(conn: &Conn, size: (u16, u16)) -> (i32, i32) {
     let p = conn.c.query_pointer(conn.root).ok().and_then(|r| r.reply().ok()).map_or((0, 0), |r| (i32::from(r.root_x), i32::from(r.root_y)));
     let Some([l, t, r, b]) = work_area(conn, p) else { return (0, 0) };
@@ -1019,6 +1099,40 @@ pub fn pointer_in_docked() -> bool {
     conn.frames.borrow().get(&r.child).and_then(Weak::upgrade).is_some_and(|f| !f.state.borrow().detached)
 }
 
+/// A passive grab of Ctrl+Z, Ctrl+Alt+Z and Ctrl+Shift+Z on `area`, the frame of a plugin window: a grab on a window takes
+/// the keys when the keyboard is in it or in any window below it (an editor that took the focus for itself, or the frame
+/// when it did not), before the editor sees them, and the app's undo history moves, as from the main window
+/// (`FrameEvent::Undo`). The Z key is found by its letter on any layout in the keymap, else by its place on a PC keyboard. The grabs'
+/// cookies are returned, so a caller that wants to know if the server refused one can check them.
+fn grab_undo_keys(c: &RustConnection, area: xproto::Window) -> Result<Vec<x11rb::cookie::VoidCookie<'_, RustConnection>>, x11rb::errors::ConnectionError> {
+    let z = z_keycode(c);
+    let mut grabs = Vec::new();
+    for base in [KeyButMask::CONTROL, KeyButMask::CONTROL | KeyButMask::SHIFT, KeyButMask::CONTROL | KeyButMask::MOD1] {
+        // Whatever Caps Lock and Num Lock are doing.
+        for locks in [KeyButMask::default(), KeyButMask::LOCK, KeyButMask::MOD2, KeyButMask::LOCK | KeyButMask::MOD2] {
+            grabs.push(c.grab_key(true, area, xproto::ModMask::from((base | locks).bits()), z, xproto::GrabMode::ASYNC, xproto::GrabMode::ASYNC)?);
+        }
+    }
+    Ok(grabs)
+}
+
+/// The keycode of the Z key: the first key whose keysyms include z or Z in any group of the keymap (so a layout with
+/// Latin letters on a second group still finds it), else 52, where it is on a PC keyboard.
+fn z_keycode(c: &RustConnection) -> u8 {
+    const PC_Z: u8 = 52;
+    let setup = c.setup();
+    let (min, max) = (setup.min_keycode, setup.max_keycode);
+    let Some(map) = c.get_keyboard_mapping(min, max - min + 1).ok().and_then(|r| r.reply().ok()) else { return PC_Z };
+    let per = usize::from(map.keysyms_per_keycode).max(1);
+    map.keysyms.chunks(per).position(|syms| syms.iter().any(|&k| k == 0x7a || k == 0x5a)).map_or(PC_Z, |i| min.saturating_add(i as u8))
+}
+
+/// Which undo key a key press with modifiers `state` was (`alt`: Ctrl+Alt+Z, `shift`: Ctrl+Shift+Z); `None` without
+/// Control. Lock modifiers do not count.
+fn undo_key_of(state: KeyButMask) -> Option<(bool, bool)> {
+    state.contains(KeyButMask::CONTROL).then(|| (state.contains(KeyButMask::MOD1), state.contains(KeyButMask::SHIFT)))
+}
+
 /// The window an event is about.
 fn window_of(e: &Event) -> Option<xproto::Window> {
     Some(match e {
@@ -1026,6 +1140,8 @@ fn window_of(e: &Event) -> Option<xproto::Window> {
         Event::ButtonPress(e) => e.event,
         Event::ButtonRelease(e) => e.event,
         Event::MotionNotify(e) => e.event,
+        Event::KeyPress(e) => e.event,
+        Event::EnterNotify(e) => e.event,
         Event::ClientMessage(e) => e.window,
         _ => return None,
     })
@@ -1196,4 +1312,60 @@ pub fn default_position(owner: isize, scale: f32) -> (i32, i32) {
     }
     let (x, y) = to_root(&conn, owner as xproto::Window, (0, 0));
     (x + (420.0 * scale).round() as i32, y + (160.0 * scale).round() as i32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::frame_scale;
+
+    #[test]
+    fn x11_frames_share_the_host_scale() {
+        for scale in [0.75, 1.0, 1.25, 1.5, 2.0] {
+            assert_eq!(frame_scale(42, scale, 1.0), scale);
+        }
+        assert_eq!(frame_scale(0, 2.0, 1.25), 1.25);
+    }
+
+    #[test]
+    fn invalid_frame_scales_have_a_safe_fallback() {
+        for scale in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            assert_eq!(frame_scale(42, scale, 1.25), 1.25);
+            assert_eq!(frame_scale(0, 2.0, scale), 1.0);
+        }
+    }
+
+    /// An undo key in a plugin's editor: Control picks it up, Alt and Shift pick which (Ctrl+Alt+Z and Ctrl+Shift+Z), and
+    /// Caps Lock and Num Lock do not matter; without Control it is not one.
+    #[test]
+    fn undo_keys_are_told_apart() {
+        use super::undo_key_of;
+        use x11rb::protocol::xproto::KeyButMask as K;
+        assert_eq!(undo_key_of(K::CONTROL), Some((false, false)));
+        assert_eq!(undo_key_of(K::CONTROL | K::MOD1), Some((true, false)));
+        assert_eq!(undo_key_of(K::CONTROL | K::SHIFT), Some((false, true)));
+        assert_eq!(undo_key_of(K::CONTROL | K::LOCK | K::MOD2), Some((false, false)));
+        assert_eq!(undo_key_of(K::SHIFT), None);
+        assert_eq!(undo_key_of(K::MOD1), None);
+    }
+
+    /// The server takes the undo key grabs on a window (all twelve: three combinations, four lock states), and the Z key
+    /// is found. Skipped without an X server; an unmapped window, so nothing shows.
+    #[test]
+    fn the_server_accepts_the_undo_key_grabs() {
+        use x11rb::connection::Connection as _;
+        use x11rb::protocol::xproto::{ConnectionExt as _, CreateWindowAux, WindowClass};
+        let Ok((c, screen)) = x11rb::rust_connection::RustConnection::connect(None) else { return };
+        let root = c.setup().roots[screen].root;
+        let win = c.generate_id().unwrap();
+        c.create_window(0, win, root, 0, 0, 1, 1, 0, WindowClass::INPUT_OUTPUT, 0, &CreateWindowAux::new()).unwrap().check().unwrap();
+        let z = super::z_keycode(&c);
+        assert!((8..=255).contains(&z), "a keycode: {z}");
+        let grabs = super::grab_undo_keys(&c, win).unwrap();
+        assert_eq!(grabs.len(), 12);
+        for g in grabs {
+            g.check().expect("the server accepts the grab");
+        }
+        let _ = c.destroy_window(win);
+        let _ = c.flush();
+    }
 }

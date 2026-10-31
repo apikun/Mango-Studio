@@ -62,15 +62,15 @@ pub fn cli(args: &[String]) -> i32 {
     let o = match parse(args) {
         Ok(o) => o,
         Err(e) => {
-            eprintln!("lemonstudio --render: {e}");
-            eprintln!("usage: lemonstudio --render <project.flp> <out.wav> [--rate HZ] [--seconds S] [--from TICK] [--builtin-only]");
+            eprintln!("mangostudio --render: {e}");
+            eprintln!("usage: mangostudio --render <project.flp> <out.wav> [--rate HZ] [--seconds S] [--from TICK] [--builtin-only]");
             return 2;
         }
     };
     match render(&o) {
         Ok(()) => 0,
         Err(e) => {
-            eprintln!("lemonstudio --render: {e}");
+            eprintln!("mangostudio --render: {e}");
             1
         }
     }
@@ -113,8 +113,7 @@ pub fn render(o: &Opts) -> Result<(), String> {
     }
     // Instances start at the render rate (`Plugins::create_with` activates at the current rate).
     app.plugins.set_rate(o.rate);
-    app.open(o.project.clone());
-    let opened = app.state.path.is_some();
+    let opened = app.open(o.project.clone());
     eprintln!("OPEN {}", app.state.message.clone().unwrap_or_default());
     if !opened {
         app.reset_hosted();

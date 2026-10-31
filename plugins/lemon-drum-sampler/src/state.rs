@@ -4,10 +4,17 @@
 
 //! The original's saved state (an FPC channel's plugin state, event 213): a 4-byte head, then chunks of a u32 id, a
 //! u64 size and the payload. A pad (chunk 2) and a layer (chunk 0x69) hold chunks of their own; every other chunk is
+<<<<<<< HEAD
 //! kept as its bytes. Writing the tree back gives the bytes it was read from, so what Lemon Drum Sampler does not change
 //! stays as the file had it.
 //!
 // spec: plugins/fpc.md §1
+=======
+//! kept as its bytes. Writing the tree back gives the bytes it was read from, so what Mango Drum Sampler does not change
+//! stays as the file had it.
+//!
+// spec: plugins/fpc.md §1 – §3
+>>>>>>> main
 
 /// The head of every state seen.
 pub const HEAD: [u8; 4] = [0x03, 0xe4, 0x84, 0x1e];
@@ -227,7 +234,11 @@ pub fn new_layer(path: &str) -> Node {
     Node::Tree(P_LAYER, vec![Node::Leaf(L_PATH, utf16(path)), Node::Leaf(L_SETTINGS, s), Node::Leaf(L_END, Vec::new())])
 }
 
+<<<<<<< HEAD
 /// An envelope record as a new pad stores it (spec: plugins/fpc.md §1): three head ints (the last is the number of
+=======
+/// An envelope record as a new pad stores it (spec: plugins/fpc.md §2.3): three head ints (the last is the number of
+>>>>>>> main
 /// points), 24 bytes per point (f64 time, f64 level, f32 tension, u32 flags), then nine tail ints.
 struct Env {
     head: [i32; 3],

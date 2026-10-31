@@ -292,7 +292,7 @@ struct HostData {
     run: Mutex<Vec<(u32, bool, u64)>>,
 }
 
-static HOST_NAME: &CStr = c"Lemon Studio";
+static HOST_NAME: &CStr = c"Mango Studio";
 static HOST_URL: &CStr = c"";
 static HOST_VERSION: &CStr = c"0.0.1";
 
@@ -1330,6 +1330,31 @@ impl Plugin {
         (px(w), px(h))
     }
 
+    /// The open editor can be resized by the host (`clap_plugin_gui.can_resize`).
+    pub fn can_resize_editor(&self) -> bool {
+        self.editor && unsafe { (*self.gui).can_resize.is_some_and(|f| f(self.plugin)) }
+    }
+
+    /// Resizes the open editor to about `w` x `h` pixels: the plugin adjusts the request to a size it can take
+    /// (`adjust_size`), then takes it (`set_size`). Returns that size in pixels.
+    pub fn resize_editor(&mut self, w: u32, h: u32) -> Option<(u32, u32)> {
+        if !self.can_resize_editor() {
+            return None;
+        }
+        let from_px = |v: u32| (v as f32 / self.editor_scale).round().max(1.0) as u32;
+        let (mut w, mut h) = (from_px(w), from_px(h));
+        unsafe {
+            let g = &*self.gui;
+            if let Some(adjust) = g.adjust_size {
+                adjust(self.plugin, &mut w, &mut h);
+            }
+            if !g.set_size.is_some_and(|f| f(self.plugin, w, h)) {
+                return None;
+            }
+        }
+        Some(self.to_px((w, h)))
+    }
+
     pub fn close_editor(&mut self) {
         if self.editor {
             unsafe {
@@ -1742,6 +1767,14 @@ impl os_host::Plugin for Plugin {
 
     fn close_editor(&mut self) {
         Plugin::close_editor(self)
+    }
+
+    fn can_resize_editor(&self) -> bool {
+        Plugin::can_resize_editor(self)
+    }
+
+    fn resize_editor(&mut self, w: u32, h: u32) -> Option<(u32, u32)> {
+        Plugin::resize_editor(self, w, h)
     }
 
     fn save_state(&self) -> Option<Vec<u8>> {
@@ -2240,7 +2273,7 @@ mod tests {
     fn every_port_gets_a_buffer() {
         use os_engine::HostedEffect as _;
         let entry = &lemon_limiter::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void;
-        let lib = unsafe { Library::from_entry(entry, Path::new("Lemon Limiter.clap")) }.expect("linked limiter");
+        let lib = unsafe { Library::from_entry(entry, Path::new("Mango Limiter.clap")) }.expect("linked limiter");
         let mut p = Plugin::new(&lib, &lib.plugins[0].id).unwrap();
         assert!(os_host::Plugin::activate(&mut p, 48000));
         assert_eq!((p.ins, p.outs, p.aux_ins.as_slice(), p.aux_outs.as_slice()), (2, 2, &[2][..], &[][..]));
@@ -2261,7 +2294,7 @@ mod tests {
         // This test's own build folder (target*/debug/deps/x.exe -> target*), then the usual ones.
         let own = std::env::current_exe().ok().and_then(|e| Some(e.parent()?.parent()?.parent()?.to_path_buf()));
         for t in own.into_iter().chain(["target-dev", "target"].map(|t| root.join(t))) {
-            let p = t.join("bundled").join("Lemon Sampler.clap");
+            let p = t.join("bundled").join("Mango Sampler.clap");
             if p.exists() {
                 return Some(Library::load(&p).expect("load"));
             }
@@ -2272,7 +2305,7 @@ mod tests {
     /// The built-in Lemon Parametric EQ, linked into the test binary.
     fn lemon_eq() -> os_host::SharedPlugin {
         let entry = &lemon_parametric_eq_2::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void;
-        let lib = unsafe { Library::from_entry(entry, Path::new("Lemon Parametric EQ.clap")) }.expect("linked EQ");
+        let lib = unsafe { Library::from_entry(entry, Path::new("Mango Parametric EQ.clap")) }.expect("linked EQ");
         os_host::Library::create(lib.clone() as Arc<dyn os_host::Library>, &lib.plugins[0].id).unwrap()
     }
 
@@ -2283,7 +2316,7 @@ mod tests {
     fn note_levels_go_with_the_note() {
         use os_engine::HostedEffect as _;
         let entry = &lemon_parametric_eq_2::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void;
-        let lib = unsafe { Library::from_entry(entry, Path::new("Lemon Parametric EQ.clap")) }.expect("linked EQ");
+        let lib = unsafe { Library::from_entry(entry, Path::new("Mango Parametric EQ.clap")) }.expect("linked EQ");
         let mut p = Plugin::new(&lib, &lib.plugins[0].id).unwrap();
         assert!(os_host::Plugin::activate(&mut p, 48000));
         let (mut l, mut r) = (vec![0.0f32; 64], vec![0.0f32; 64]);
@@ -2545,7 +2578,10 @@ mod tests {
         assert!(shared.lock().unwrap().activate(48000));
         let main = shared.lock().unwrap().param_info(35).unwrap().id;
         let auto_ch = Channel {
+<<<<<<< HEAD
             id: os_model::Id::NONE,
+=======
+>>>>>>> main
             index: 0, kind: ChannelKind::Automation, name: None, plugin: None, color: None, enabled: true, volume: 1.0,
             pan: -1.0, pitch_cents: 0, mixer_track: 0, sample_path: None, layer_children: vec![], envelopes: Default::default(),
             rack: Default::default(), plugin_state: None, misc: Default::default(), sound: Default::default(),
@@ -2604,11 +2640,11 @@ mod tests {
     #[test]
     fn hosts_lemon_sampler() {
         let Some(lib) = lemon_sampler() else {
-            eprintln!("Lemon Sampler.clap not built; skipped");
+            eprintln!("Mango Sampler.clap not built; skipped");
             return;
         };
         let d = &lib.plugins[0];
-        assert_eq!(d.name, "Lemon Sampler");
+        assert_eq!(d.name, "Mango Sampler");
         assert!(d.is_instrument());
         let mut p = Plugin::new(&lib, &d.id).unwrap();
         assert!(p.has_editor());
@@ -2669,8 +2705,12 @@ mod tests {
         assert!(p.activate(48000));
         let shared: os_engine::SharedInstrument = Arc::new(Mutex::new(p));
         let ch = os_model::Channel {
+<<<<<<< HEAD
             id: os_model::Id::NONE,
             index: 0, kind: os_model::ChannelKind::Plugin, name: None, plugin: Some("Lemon Sampler".into()), plugin_state: None, color: None,
+=======
+            index: 0, kind: os_model::ChannelKind::Plugin, name: None, plugin: Some("Mango Sampler".into()), plugin_state: None, color: None,
+>>>>>>> main
             enabled: true, volume: 0.78125, pan: 0.0, pitch_cents: 0, mixer_track: 0, sample_path: None,
             layer_children: vec![], envelopes: Default::default(), rack: Default::default(), misc: Default::default(), sound: Default::default(),
         };
@@ -2686,7 +2726,7 @@ mod tests {
         let mut out = vec![0.0f32; 1024];
         e.process(&mut out);
         let peak = out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-        assert!(peak > 0.05, "engine output through Lemon Sampler (peak {peak})");
+        assert!(peak > 0.05, "engine output through Mango Sampler (peak {peak})");
     }
 
     /// An MP3 sample (os-engine's fixture: click of 0.9 at 0.1 s) loads and plays through Lemon Sampler at 48 kHz.
@@ -2703,8 +2743,12 @@ mod tests {
         assert!(p.activate(48000));
         let shared: os_engine::SharedInstrument = Arc::new(Mutex::new(p));
         let ch = os_model::Channel {
+<<<<<<< HEAD
             id: os_model::Id::NONE,
             index: 0, kind: os_model::ChannelKind::Plugin, name: None, plugin: Some("Lemon Sampler".into()), plugin_state: None, color: None,
+=======
+            index: 0, kind: os_model::ChannelKind::Plugin, name: None, plugin: Some("Mango Sampler".into()), plugin_state: None, color: None,
+>>>>>>> main
             enabled: true, volume: 0.78125, pan: 0.0, pitch_cents: 0, mixer_track: 0, sample_path: None,
             layer_children: vec![], envelopes: Default::default(), rack: Default::default(), misc: Default::default(), sound: Default::default(),
         };
@@ -2750,8 +2794,12 @@ mod tests {
         assert!(p.activate(48000));
         let shared: os_engine::SharedInstrument = Arc::new(Mutex::new(p));
         let ch = os_model::Channel {
+<<<<<<< HEAD
             id: os_model::Id::NONE,
             index: 0, kind: os_model::ChannelKind::Plugin, name: None, plugin: Some("Lemon Sampler".into()), plugin_state: None, color: None,
+=======
+            index: 0, kind: os_model::ChannelKind::Plugin, name: None, plugin: Some("Mango Sampler".into()), plugin_state: None, color: None,
+>>>>>>> main
             enabled: true, volume: 0.78125, pan: 0.0, pitch_cents: 0, mixer_track: 0, sample_path: None,
             layer_children: vec![], envelopes: Default::default(), rack: Default::default(), misc: Default::default(), sound: Default::default(),
         };
@@ -2803,8 +2851,12 @@ mod tests {
         assert!(p.activate(48000));
         let shared: os_engine::SharedInstrument = Arc::new(Mutex::new(p));
         let ch = os_model::Channel {
+<<<<<<< HEAD
             id: os_model::Id::NONE,
             index: 0, kind: os_model::ChannelKind::Plugin, name: None, plugin: Some("Lemon Sampler".into()), plugin_state: None, color: None,
+=======
+            index: 0, kind: os_model::ChannelKind::Plugin, name: None, plugin: Some("Mango Sampler".into()), plugin_state: None, color: None,
+>>>>>>> main
             enabled: true, volume: 0.78125, pan: 0.0, pitch_cents: 0, mixer_track: 0, sample_path: None,
             layer_children: vec![], envelopes: Default::default(), rack: Default::default(), misc: Default::default(), sound: Default::default(),
         };
@@ -2932,7 +2984,7 @@ mod tests {
     #[test]
     fn mono_portamento_glides_through_lemon_sampler() {
         let entry = &lemon_sampler::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void;
-        let lib = unsafe { Library::from_entry(entry, Path::new("Lemon Sampler.clap")) }.expect("linked Lemon Sampler");
+        let lib = unsafe { Library::from_entry(entry, Path::new("Mango Sampler.clap")) }.expect("linked Mango Sampler");
         let mut p = Plugin::new(&lib, &lib.plugins[0].id).unwrap();
         // 4 s of a 441 Hz sine at 48 kHz.
         let wav = std::env::temp_dir().join("os-clap-porta.wav");
@@ -2946,8 +2998,12 @@ mod tests {
         let shared: os_engine::SharedInstrument = Arc::new(Mutex::new(p));
         let misc = os_model::ChannelMisc { mono: true, porta: true, slide: 1.0, ..Default::default() };
         let ch = os_model::Channel {
+<<<<<<< HEAD
             id: os_model::Id::NONE,
             index: 0, kind: os_model::ChannelKind::Plugin, name: None, plugin: Some("Lemon Sampler".into()), plugin_state: None, color: None,
+=======
+            index: 0, kind: os_model::ChannelKind::Plugin, name: None, plugin: Some("Mango Sampler".into()), plugin_state: None, color: None,
+>>>>>>> main
             enabled: true, volume: 0.78125, pan: 0.0, pitch_cents: 0, mixer_track: 0, sample_path: None,
             layer_children: vec![], envelopes: Default::default(), rack: Default::default(), misc, sound: Default::default(),
         };
@@ -2996,7 +3052,7 @@ mod tests {
     /// at 48 kHz.
     fn sampler_of(wav: &Path) -> Plugin {
         let entry = &lemon_sampler::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void;
-        let lib = unsafe { Library::from_entry(entry, Path::new("Lemon Sampler.clap")) }.expect("linked Lemon Sampler");
+        let lib = unsafe { Library::from_entry(entry, Path::new("Mango Sampler.clap")) }.expect("linked Mango Sampler");
         let mut p = Plugin::new(&lib, &lib.plugins[0].id).unwrap();
         let state = format!("{{\"version\":\"0.0.1\",\"params\":{{}},\"fields\":{{\"sample-path\":{}}}}}", serde_string(&wav.to_string_lossy()));
         let mut blob = (state.len() as u64).to_le_bytes().to_vec();
@@ -3013,7 +3069,7 @@ mod tests {
         use os_engine::Instrument as _;
         let wav = dc_wav("bend");
         let mut p = sampler_of(&wav);
-        assert!(p.bend.is_none(), "Lemon Sampler takes CLAP notes");
+        assert!(p.bend.is_none(), "Mango Sampler takes CLAP notes");
         let (mut l, mut r) = (vec![0.0f32; 64], vec![0.0f32; 64]);
         p.note_on(0, 60, 0.8);
         p.tune(4, 60, 2.0);

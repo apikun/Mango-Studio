@@ -59,16 +59,29 @@ pub enum Instrument {
     Trio,
     Citrus,
     Sampler,
+    /// Every part chants: the channels are Mango Monk, the chanting monk.
+    Monk,
+    /// The Trio with every oscillator a square: the channels take the patch as their saved state.
+    EightBit,
 }
 
 impl Instrument {
-    pub const ALL: [Instrument; 3] = [Instrument::Trio, Instrument::Citrus, Instrument::Sampler];
+    pub const ALL: [Instrument; 5] = [Instrument::Trio, Instrument::Citrus, Instrument::Sampler, Instrument::Monk, Instrument::EightBit];
 
     pub fn label(self) -> &'static str {
         match self {
-            Instrument::Trio => crate::osc3::LEMON_TRIO,
+            Instrument::Trio | Instrument::EightBit => crate::osc3::LEMON_TRIO,
             Instrument::Citrus => crate::citrus::CITRUS,
             Instrument::Sampler => crate::plugins::LEMON_SAMPLER,
+            Instrument::Monk => crate::plugins::MANGO_MONK,
+        }
+    }
+
+    /// The type combo's entry: where the instrument stands in for a patch, the patch is named for itself.
+    pub fn list_label(self) -> &'static str {
+        match self {
+            Instrument::EightBit => "8-bit (squares)",
+            k => k.label(),
         }
     }
 }
@@ -192,7 +205,7 @@ impl MidiForm {
             (self.track_items(), self.o.track.map_or(0, |t| t + 1))
         } else {
             let now = Instrument::ALL.iter().position(|&i| i == self.o.instrument).unwrap_or(0);
-            (Instrument::ALL.iter().map(|i| i.label().to_string()).collect(), now)
+            (Instrument::ALL.iter().map(|i| i.list_label().to_string()).collect(), now)
         }
     }
 
@@ -565,6 +578,9 @@ fn place(s: &mut State, imp: Imported, o: &Options, name: &str, n: u16) {
         };
         let ch = &mut s.project.channels[row];
         ch.name = Some(part.name.clone());
+        if o.instrument == Instrument::EightBit {
+            ch.plugin_state = Some(crate::osc3::squares_state());
+        }
         ch.mixer_track = if o.mixer { (i as u16 + 1).min(max) } else { 0 };
     }
     let index: Vec<u16> = s.project.channels[base..].iter().map(|c| c.index).collect();
@@ -1116,7 +1132,7 @@ mod tests {
         assert_eq!(p.ppq, 96);
         assert_eq!(p.channels.iter().map(|c| c.name.as_deref().unwrap_or("")).collect::<Vec<_>>(), ["Piano", "Bass", "Drums"]);
         assert_eq!(p.channels.iter().map(|c| c.mixer_track).collect::<Vec<_>>(), [1, 2, 3]);
-        assert!(p.channels.iter().all(|c| c.plugin.as_deref() == Some(crate::osc3::FILE_NAME)), "Lemon Trio plays them");
+        assert!(p.channels.iter().all(|c| c.plugin.as_deref() == Some(crate::osc3::FILE_NAME)), "Mango Trio plays them");
         assert_eq!(p.patterns.len(), 1);
         assert_eq!(p.patterns[0].name.as_deref(), Some(stem(&path).as_str()));
         assert_eq!(p.patterns[0].notes.len(), 4);
@@ -1290,5 +1306,32 @@ mod tests {
             assert_eq!(a.notes, b.notes);
         }
         assert_eq!(again.tempos, imp.tempos);
+    }
+
+    /// The type combo's silly half: 8-bit gives Trio channels whose saved state is squares all round (the patch is the
+    /// channel's state, so hosting starts from it and the file keeps it), and the monk gives Mango Monk channels.
+    #[test]
+    fn imported_as_eight_bit_or_monk() {
+        let f = three(96);
+        let path = std::env::temp_dir().join(format!("os_midi_chiptune_{}.mid", std::process::id()));
+        std::fs::write(&path, os_smf::write(&f)).unwrap();
+        let mut app = test_app();
+        // 8-bit: every part is a Trio channel with squares in its state.
+        let o = Options { instrument: Instrument::EightBit, ..Options::default() };
+        app.import_into_project(&path, &f, &o);
+        let trio = app.state.project.channels.iter().filter(|c| crate::osc3::is_osc3(c)).count();
+        assert_eq!(trio, 3, "three parts, all 3x Osc channels");
+        for c in app.state.project.channels.iter().filter(|c| crate::osc3::is_osc3(c)) {
+            let vals = lemon_3x_osc::params::values_of(c.plugin_state.as_deref().expect("the patch is the state"));
+            for n in 0..3 {
+                assert_eq!(vals[lemon_3x_osc::params::osc(n) + lemon_3x_osc::params::SHAPE], 2, "osc {} is a square", n + 1);
+            }
+        }
+        // The monk: every part is a Mango Monk channel with no state of its own.
+        let o = Options { instrument: Instrument::Monk, ..Options::default() };
+        app.import_into_project(&path, &f, &o);
+        let monks: Vec<&str> = app.state.project.channels.iter().filter_map(|c| c.plugin.as_deref()).collect();
+        assert_eq!(monks.iter().filter(|n| **n == crate::plugins::MANGO_MONK).count(), 3, "three parts chant: {monks:?}");
+        let _ = std::fs::remove_file(&path);
     }
 }

@@ -1,0 +1,13 @@
+OSPRESET 1
+plugin=Mango 12	id=clap:org.openstudio.mango-12	format=clap	body=params
+# A band-limited broadcast: the filter sits low so only the middle of the spectrum reaches the converter.
+Tune = 0
+Fine = 0
+Range = 0
+Gain In = 120
+Gain Out = 120
+Link = 0
+Filter = 55
+Route = 0
+Mix = 100
+Crush = 0

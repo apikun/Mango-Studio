@@ -1,5 +1,9 @@
 // Copyright (C) 2026 ItsAlphaNeon
+<<<<<<< HEAD
 // Copyright (C) 2026 thacer13
+=======
+// Copyright (C) 2026 ravenmarkdev-alt
+>>>>>>> main
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
@@ -56,11 +60,16 @@ pub enum MHit {
     Output,
     /// A strip's disk-record button: arms / disarms the track.
     Arm(u16),
+<<<<<<< HEAD
     /// A strip's track latency clock (selects; right click: the latency menu), and the current track's input clock and
     /// track latency combo in the right panel (spec: audio/track-io.md §2.6).
     Latency(u16),
     InLatency,
     OutLatency,
+=======
+    /// Clear pattern mixer focus badge.
+    ClearPatternFilter,
+>>>>>>> main
 }
 
 /// Menu commands (`Cmd::Mixer`).
@@ -127,12 +136,15 @@ pub enum MCmd {
     Output(u16, i32),
     RecSource(u16, u8),
     Monitor(u16, u8),
+<<<<<<< HEAD
     /// Arm selected track(s) (true) / Disarm selected track(s) for disk recording (spec: audio/track-io.md §2.5).
     Arm(u16, bool),
     /// Disk recording ▸ Auto-create audio clips (a program setting).
     AutoClips,
     /// A track's input (true) or output latency setting: Reset (`None`), or Set in ms / samples / beats (the value box).
     Latency(u16, bool, Option<crate::typein::LatUnit>),
+=======
+>>>>>>> main
 }
 
 /// What the plugin host does next tick for a mixer slot (`App::mixer_tick`).
@@ -194,6 +206,31 @@ pub fn max_insert_of(mixer: &[MixerTrack]) -> u16 {
 /// Inserts shown: stored tracks minus the master and the last (hidden) one (§1).
 pub fn inserts(s: &State) -> u16 {
     s.project.mixer.len().saturating_sub(2) as u16
+}
+
+/// Tracks shown in the inserts area, either all inserts or filtered by pattern focus.
+pub fn visible_tracks(s: &State) -> Vec<u16> {
+    let ins = inserts(s);
+    match s.pattern_mixer_filter {
+        Some(pat) => {
+            let mut tracks = std::collections::BTreeSet::new();
+            if let Some(p) = s.project.patterns.iter().find(|p| p.number == pat) {
+                for note in &p.notes {
+                    if let Some(ch) = s.project.channels.iter().find(|c| c.index == note.channel) {
+                        if ch.mixer_track > 0 && ch.mixer_track <= ins {
+                            tracks.insert(ch.mixer_track);
+                        }
+                    }
+                }
+            }
+            if tracks.is_empty() {
+                (1..=ins).collect()
+            } else {
+                tracks.into_iter().collect()
+            }
+        }
+        None => (1..=ins).collect(),
+    }
 }
 
 pub fn track(s: &State, n: u16) -> Option<&MixerTrack> {
@@ -426,14 +463,22 @@ pub fn hit(app: &mut App, h: MHit) -> Option<String> {
             if slot_name(s, t, i).is_some() {
                 s.mixer.pending.push(FxReq::Toggle { track: t, slot: i });
             } else {
-                s.playlist.popup = Some(effect_menu(s, i, at.0, at.1));
+                pick_effect(s, i);
             }
             None
         }
         MHit::SlotArrow(i) => {
             let t = s.selected_mixer;
+<<<<<<< HEAD
             let m = if slot_name(s, t, i).is_some() { slot_menu(app, i, at.0, at.1) } else { effect_menu(&app.state, i, at.0, at.1) };
             app.state.playlist.popup = Some(m);
+=======
+            if slot_name(s, t, i).is_some() {
+                s.playlist.popup = Some(slot_menu(s, i, at.0, at.1));
+            } else {
+                pick_effect(s, i);
+            }
+>>>>>>> main
             None
         }
         MHit::SlotLed(i) => {
@@ -473,6 +518,29 @@ pub fn hit(app: &mut App, h: MHit) -> Option<String> {
         }
         MHit::OutLatency => {
             s.playlist.popup = Some(latency_menu(s, s.selected_mixer, false, at.0, at.1 + 10.0));
+            None
+        }
+        MHit::ClearPatternFilter => {
+            s.pattern_mixer_filter = None;
+            s.message = Some("Mixer focus cleared (showing all tracks)".into());
+            None
+        }
+        MHit::Input => {
+            s.playlist.popup = input_menu(s, at.0, at.1 + 10.0);
+            None
+        }
+        MHit::Output => {
+            s.playlist.popup = Some(output_menu(s, at.0, at.1 + 10.0));
+            None
+        }
+        MHit::RecSource => {
+            s.playlist.popup = Some(record_menu(s, at.0, at.1 + 10.0));
+            None
+        }
+        MHit::Arm(n) => {
+            let m = track_mut(s, n)?;
+            m.armed = !m.armed;
+            changed(s);
             None
         }
         MHit::Scale | MHit::EqGraph => None,
@@ -599,6 +667,7 @@ fn record_menu(s: &State, x: f32, y: f32) -> Popup {
     Popup { x, y, items, sub: None, scroll: [0; 2] }
 }
 
+<<<<<<< HEAD
 /// A latency setting as the right panel's combo and the hints show it: "(none)", "12 ms", "-3.5 ms".
 pub fn latency_text(ms: f32) -> String {
     if ms == 0.0 {
@@ -660,6 +729,8 @@ pub(crate) fn set_latency(s: &mut State, t: u16, input: bool, ms: f32) {
 /// The undo step of a latency setting.
 pub const LATENCY: &str = "Track latency";
 
+=======
+>>>>>>> main
 /// Track `t` takes its input alone (the External input question's Yes).
 pub(crate) fn external_only(s: &mut State, t: u16) {
     if let Some(m) = track_mut(s, t) {
@@ -743,15 +814,23 @@ pub fn right(app: &mut App, h: MHit) -> bool {
         // The slot's plugin menu, like a left click (spec: ui/plugin-menu.md §1).
         MHit::SlotArrow(i) => {
             let t = s.selected_mixer;
+<<<<<<< HEAD
             let m = if slot_name(s, t, i).is_some() { slot_menu(app, i, at.0, at.1) } else { effect_menu(&app.state, i, at.0, at.1) };
             app.state.playlist.popup = Some(m);
+=======
+            if slot_name(s, t, i).is_some() {
+                s.playlist.popup = Some(slot_menu(s, i, at.0, at.1));
+            } else {
+                pick_effect(s, i);
+            }
+>>>>>>> main
         }
         MHit::SlotName(i) => {
             let t = s.selected_mixer;
             if slot_name(s, t, i).is_some() {
                 s.mixer.pending.push(FxReq::Show { track: t, slot: i });
             } else {
-                s.playlist.popup = Some(effect_menu(s, i, at.0, at.1));
+                pick_effect(s, i);
             }
         }
         MHit::SlotLed(i) => {
@@ -781,13 +860,21 @@ pub fn right(app: &mut App, h: MHit) -> bool {
 
 /// Middle click: rename a filled slot (§7).
 pub fn middle(app: &mut App, h: MHit) -> bool {
-    if let MHit::SlotName(i) = h {
-        let t = app.state.selected_mixer;
-        if slot_name(&app.state, t, i).is_some() {
-            let at = app.mouse;
-            crate::playlist::start_edit(&mut app.state, EditTarget::SlotName(t, i), at);
+    let at = app.mouse;
+    match h {
+        MHit::SlotName(i) => {
+            let t = app.state.selected_mixer;
+            if slot_name(&app.state, t, i).is_some() {
+                crate::playlist::start_edit(&mut app.state, EditTarget::SlotName(t, i), at);
+                return true;
+            }
+        }
+        // A strip: rename its track (from battlemountain2's fork).
+        MHit::Strip(n) => {
+            crate::playlist::start_edit(&mut app.state, EditTarget::MixerName(n), at);
             return true;
         }
+        _ => {}
     }
     false
 }
@@ -1401,11 +1488,25 @@ pub fn layout_menu(s: &State, x: f32, y: f32) -> Popup {
     Popup { x, y, items, sub: None, scroll: [0; 2] }
 }
 
+<<<<<<< HEAD
 /// Empty slot: the effect list (§7.1), the plugin menu for this slot (spec: ui/plugin-menu.md).
 pub fn effect_menu(s: &State, slot: u8, x: f32, y: f32) -> Popup {
     let mut items = vec![PItem::new("Plugin library", Cmd::Browser(crate::browser::BCmd::Jump(crate::browser::Jump::DbEffects))).key(crate::shortcuts::menu_key("Plugin library", "Shift+F8")), PItem::sep()];
     items.extend(crate::plugin_menu::items(s, crate::plugin_menu::Target::Fx(Some(slot)), false));
     Popup { x, y, items, sub: None, scroll: [0; 2] }
+=======
+/// Empty slot: the large effect list, positioned like ADD > Effect rather than at the clicked slot (§7.1).
+fn pick_effect(s: &mut State, slot: u8) {
+    let target = crate::plugin_menu::Target::Fx(Some(slot));
+    s.picker = None;
+    s.playlist.popup = Some(Popup {
+        x: s.screen.0,
+        y: crate::views::band_h(s),
+        items: crate::plugin_menu::items(s, target, true),
+        sub: None,
+        scroll: [0; 2],
+    });
+>>>>>>> main
 }
 
 /// Filled slot ▸ (§7.2). Its Presets section works as in the plugin's window menu.
@@ -2035,7 +2136,7 @@ impl App {
     pub(crate) fn open_fx(&mut self, track: u16, slot: u8) {
         let key = crate::plugins::fx_key(track, slot);
         if !self.plugins.hosted.contains_key(&key) {
-            self.state.message = Some("This slot's plugin is not hosted (no Lemon Studio version of it yet)".into());
+            self.state.message = Some("This slot's plugin is not hosted (no Mango Studio version of it yet)".into());
             return;
         }
         #[cfg(not(plugin_windows))]
@@ -2169,6 +2270,7 @@ mod tests {
         assert_eq!(choice_label(4, &monos), "(not available)");
     }
 
+<<<<<<< HEAD
     /// spec: audio/track-io.md §2.6: the latency menus; values typed in ms, samples or beats; one undo step each.
     #[test]
     fn latency_settings_are_typed_in_and_undo() {
@@ -2212,6 +2314,8 @@ mod tests {
         assert_eq!(track(&a.state, 2).unwrap().latency_out, 12.5);
     }
 
+=======
+>>>>>>> main
     /// spec: audio/track-io.md §1.3, §1.4, §2.3: the record menu; choosing an input asks once; the edits undo, arming
     /// is no edit.
     #[test]
@@ -2384,6 +2488,28 @@ mod tests {
         run(&mut a, MCmd::SlotDelete(1));
         assert_eq!(slot_name(&a.state, 2, 1), None);
         assert!(a.state.mixer.pending.iter().any(|r| matches!(r, FxReq::Create { track: 2, slot: 0, index: 0, .. })));
+    }
+
+    #[test]
+    fn empty_effect_slot_opens_the_large_menu_in_its_usual_position() {
+        let mut a = app();
+        a.mouse = (240.0, 360.0);
+        let screen = a.state.screen;
+        let menu_y = crate::views::band_h(&a.state);
+
+        hit(&mut a, MHit::SlotName(2));
+
+        assert!(a.state.picker.is_none());
+        let Some(popup) = a.state.playlist.popup.as_ref() else { panic!("empty slot should open the effect menu") };
+        assert_eq!((popup.x, popup.y), (screen.0, menu_y));
+        assert_eq!(popup.items[0].label.as_ref(), "(no effect plugins found)");
+
+        a.state.playlist.popup = None;
+        right(&mut a, MHit::SlotArrow(3));
+
+        assert!(a.state.picker.is_none());
+        let Some(popup) = a.state.playlist.popup.as_ref() else { panic!("right-clicking an empty slot should open the effect menu") };
+        assert_eq!((popup.x, popup.y), (screen.0, menu_y));
     }
 
     /// spec: audio/sidechain.md "Hosted plugins' input buses": Sidechain input ▸ lists None and the tracks routed into
@@ -2672,6 +2798,7 @@ mod tests {
         assert_eq!(a.state.message.as_deref(), Some("No audio editors in the mixer"));
     }
 
+<<<<<<< HEAD
     /// Insert multiple... asks how many (a box opening on 2, selected) and inserts that many fresh tracks in front of
     /// the track, one undo step; text that is not a number inserts none.
     #[test]
@@ -2811,5 +2938,31 @@ mod tests {
         run(&mut a, MCmd::SlotDelete(1));
         assert_eq!(slot_color(&a.state, 3, 1), None, "goes with the plugin");
         assert!(a.state.mixer.slot_colors.is_empty());
+=======
+    #[test]
+    fn pattern_mixer_filter_and_visible_tracks() {
+        let mut a = app();
+        assert!(a.state.pattern_mixer_filter.is_none());
+        let all = visible_tracks(&a.state);
+        assert_eq!(all, (1..=inserts(&a.state)).collect::<Vec<_>>());
+
+        a.state.project.channels[0].mixer_track = 2;
+        a.state.project.channels[1].mixer_track = 5;
+
+        let p1 = &mut a.state.project.patterns[0];
+        p1.number = 1;
+        p1.notes = vec![
+            os_model::Note::step(a.state.project.channels[0].index, 0),
+            os_model::Note::step(a.state.project.channels[1].index, 24),
+        ];
+
+        a.state.pattern_mixer_filter = Some(1);
+        let filtered = visible_tracks(&a.state);
+        assert_eq!(filtered, vec![2, 5]);
+
+        assert!(hit(&mut a, MHit::ClearPatternFilter).is_none());
+        assert!(a.state.pattern_mixer_filter.is_none());
+        assert_eq!(visible_tracks(&a.state), all);
+>>>>>>> main
     }
 }

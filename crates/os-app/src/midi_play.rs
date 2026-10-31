@@ -295,6 +295,7 @@ impl App {
             self.midi_end(h, h.up.unwrap_or(64));
         }
         self.sync_live();
+        self.live_note_guidance(row);
         self.transport.note_on(row, play, vel);
         self.midi_play.held.push(Held { key, src, row, play, up: None });
         self.step_edit_down_with(src, play, vel, extra);
@@ -660,7 +661,7 @@ impl App {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "android")))]
 mod tests {
     use super::*;
 
@@ -802,11 +803,11 @@ mod tests {
         app.midi = crate::midi_in::MidiIn::open(|| {});
         app.midi_out = crate::midi_out::MidiOut::start(app.transport.watch());
         let name = app.midi.outputs.iter().find(|n| n.contains("LemonKeys")).cloned().expect("a LemonKeys output");
-        let input = midir::MidiInput::new("Lemon Studio clock test").unwrap();
+        let input = midir::MidiInput::new("Mango Studio clock test").unwrap();
         let port = input.ports().into_iter().find(|p| input.port_name(p).is_ok_and(|n| n.contains("LemonKeys")));
         let got: Arc<Mutex<Vec<u8>>> = Arc::default();
         let sink = got.clone();
-        let mut input = midir::MidiInput::new("Lemon Studio clock test").unwrap();
+        let mut input = midir::MidiInput::new("Mango Studio clock test").unwrap();
         input.ignore(midir::Ignore::None);
         let _conn = input
             .connect(&port.expect("a LemonKeys input"), "clock", move |_, b, _| sink.lock().unwrap().push(b[0]), ())

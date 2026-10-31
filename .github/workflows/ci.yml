@@ -60,3 +60,31 @@ jobs:
 
       - name: Test
         run: cargo test --workspace --locked
+
+  # The Android port (crates/os-android + os-app's lib): a check, so the mobile build cannot rot while
+  # desktop work lands. The APK itself is built by release.yml (and tools/android-dist.sh locally).
+  android:
+    name: Android arm64 (check)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # The NDK (r28b) and its licence; the image's SDK provides the rest.
+      - name: Install the NDK
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;28.1.13356709" >/dev/null
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check
+        run: |
+          export TC=$ANDROID_HOME/ndk/28.1.13356709/toolchains/llvm/prebuilt/linux-x86_64
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$TC/bin/aarch64-linux-android26-clang
+          export CC_aarch64_linux_android=$TC/bin/aarch64-linux-android26-clang
+          export CXX_aarch64_linux_android=$TC/bin/aarch64-linux-android26-clang++
+          export AR_aarch64_linux_android=$TC/bin/llvm-ar
+          unset CPATH BINDGEN_EXTRA_CLANG_ARGS C_INCLUDE_PATH CPLUS_INCLUDE_PATH
+          cargo check --workspace --target aarch64-linux-android --locked

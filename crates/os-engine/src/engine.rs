@@ -1,5 +1,9 @@
 // Copyright (C) 2026 ItsAlphaNeon
+<<<<<<< HEAD
 // Copyright (C) 2026 thacer13
+=======
+// Copyright (C) 2026 ravenmarkdev-alt
+>>>>>>> main
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
@@ -727,8 +731,11 @@ struct MixTrack {
     /// none), numbered as stored (spec: audio/track-io.md §2.1, §2.2).
     input: i32,
     output: i32,
+<<<<<<< HEAD
     /// Armed for disk recording: where the take is tapped and the input it records (spec: audio/track-io.md §2.5).
     rec: Option<rec::Arm>,
+=======
+>>>>>>> main
 }
 
 /// The audio device's inputs as they arrive, for the mixer tracks that monitor one (spec: audio/track-io.md §2.2).
@@ -884,7 +891,10 @@ impl MixTrack {
             pad: pdc::Pad::default(),
             input: -1,
             output: -1,
+<<<<<<< HEAD
             rec: None,
+=======
+>>>>>>> main
         }
     }
 
@@ -984,6 +994,9 @@ pub struct EngineReport {
     pub effects_bypassed: usize,
     pub effects_active: usize,
     pub missing_samples: Vec<String>,
+    /// Sampler channels whose missing sample plays the built-in tone instead (Android: a file the
+    /// device does not have is beyond fixing there, and a tone beats silence).
+    pub substituted: usize,
 }
 
 pub struct Engine {
@@ -1236,13 +1249,22 @@ impl Engine {
                 });
                 let sample = if plays_sample && length.is_none() {
                     match ch.sample_path.as_deref() {
-                        Some(p) => {
-                            let s = library.get(p);
-                            if s.is_none() {
+                        Some(p) => match library.get(p) {
+                            Some(s) => Some(s),
+                            None => {
                                 report.missing_samples.push(p.to_string());
+                                // Android: a sample the device does not have has no way there (no FL install
+                                // to point a factory folder at, no file system to copy from mid-playback), so
+                                // a sampler channel plays the built-in tone rather than nothing; the project
+                                // keeps its paths, and `substituted` says how many played the tone.
+                                if cfg!(target_os = "android") && ch.kind == ChannelKind::Sampler {
+                                    report.substituted += 1;
+                                    Some(library.tones.entry(rate).or_insert_with(|| fallback_tone(rate)).clone())
+                                } else {
+                                    None
+                                }
                             }
-                            s
-                        }
+                        },
                         // Lemon Studio choice: an empty sampler channel plays a built-in tone so new
                         // projects make sound (FL's empty sampler is silent).
                         None if ch.kind == ChannelKind::Sampler => {
@@ -1253,6 +1275,10 @@ impl Engine {
                 } else {
                     None
                 };
+                let mut sample = sample;
+                if plays_sample && ch.sound.fx.flags & os_model::SampleFx::REVERSE != 0 {
+                    sample = sample.map(|s| std::sync::Arc::new(s.reversed()));
+                }
                 let env_on = ch.kind == ChannelKind::Sampler;
                 let adjust = Adjust::of(ch);
                 let volume = if ch.enabled { laws::channel_gain(ch.volume) * f64::from(adjust.mult) } else { 0.0 };
@@ -1400,7 +1426,10 @@ impl Engine {
                         latency: (m.latency_out, m.latency_in),
                         input: if m.monitored() { m.audio_in } else { -1 },
                         output: m.audio_out,
+<<<<<<< HEAD
                         rec: rec::Arm::of(m),
+=======
+>>>>>>> main
                         ..MixTrack::unity()
                     };
                     // At the start of the song every gain is at its target.
@@ -1851,12 +1880,15 @@ impl Engine {
         self.io.as_ref().map_or(2, |io| 2 * io.pairs)
     }
 
+<<<<<<< HEAD
     /// Hands the armed tracks' takes to `tap` from now on, tick after tick while the song plays (not in a count-in or
     /// while paused), each taken where its record source says (spec: audio/track-io.md §2.5). `None` stops it.
     pub fn set_record_tap(&mut self, tap: Option<std::sync::Arc<dyn RecordTap>>) {
         self.record = tap;
     }
 
+=======
+>>>>>>> main
     /// Keeps every mixer track's post-fader output (before its sends) from now on: `take_track_audio` hands it over.
     pub fn set_track_capture(&mut self, on: bool) {
         self.capture = on.then(|| vec![Vec::new(); self.tracks.len()]);
@@ -2139,7 +2171,7 @@ impl Engine {
     pub fn finished(&self) -> bool {
         let drained = self.out_pos >= self.out.len();
         if self.live_only {
-            if self.awake {
+            if self.awake || (self.io.as_ref().is_some_and(|io| io.input.is_some()) && self.tracks.iter().any(|t| t.input >= 0)) {
                 return false;
             }
             // Quiet, not exact zeros: an effect's tail may never reach zero.
@@ -3324,6 +3356,10 @@ impl Engine {
     /// on several cores with the same result (`multicore`; spec: audio/multicore.md).
     fn mix(&mut self, frames: usize, song: &TransportInfo) {
         let limit = os_dsp::glide::engine_limit(self.rate);
+<<<<<<< HEAD
+=======
+        let mut moved = false;
+>>>>>>> main
         // The device's inputs over this tick, read whether a track hears them or not (a track that starts to monitor
         // hears what arrives from then on), and the pairs the tracks' direct outputs are added into.
         if let Some(io) = self.io.as_mut() {
@@ -3334,11 +3370,132 @@ impl Engine {
                 i.read(&mut io.inputs);
             }
         }
+<<<<<<< HEAD
         // On the first tick the slot values arrived before delay compensation was worked out.
         if !self.pdc.delivered {
             for &t in &self.order {
                 self.params.deliver_slots(t, &self.tracks[t].effects);
             }
+=======
+        for &t in &self.order {
+            // On the first tick the slot values arrived before delay compensation was worked out.
+            if !self.pdc.delivered {
+                self.params.deliver_slots(t, &self.tracks[t].effects);
+            }
+            let mut buf = std::mem::take(&mut self.bus[t]);
+            // A monitored input joins what reaches the track, before its slots (spec: audio/track-io.md §2.2).
+            if let Some(io) = &self.io {
+                let ch = io.input.as_ref().map_or(0, |i| i.channels());
+                if let Some((l, r)) = input_channels(self.tracks[t].input, ch) {
+                    for (f, x) in buf.chunks_exact_mut(2).zip(io.inputs.chunks_exact(ch)) {
+                        f[0] += x[l];
+                        f[1] += x[r];
+                    }
+                }
+            }
+            let rate = self.rate;
+            let (dry, l, r) = (&mut self.fx_dry, &mut self.scratch.0, &mut self.scratch.1);
+            let busy = (&mut self.busy_until, self.busy_wait, self.exporting, &mut self.missed);
+            let bus = &mut self.bus;
+            let track = &mut self.tracks[t];
+            let (keys, key_buf, main_buf) = (&self.key_out, &mut self.key_buf, &mut self.main_buf);
+            // A slot runs when its own switch is on and the track's slots are enabled (spec: audio/mixer.md).
+            if track.slots_enabled && if t == 0 { self.master_fx } else { self.insert_fx } {
+                for fx in &mut track.effects {
+                    let feed = |s: Option<usize>| s.and_then(|s| keys.get(s)?.as_deref()).filter(|k| k.len() == buf.len());
+                    let key = feed(fx.key).map(|k| (k, &mut *key_buf));
+                    let main = feed(fx.main).map(|k| (k, &mut *main_buf));
+                    let extra = (t, &track.routes[..], &mut bus[..]);
+                    run_slot(fx, &mut buf, rate, limit, song, dry, l, r, (&mut *busy.0, busy.1, busy.2, &mut *busy.3), &mut moved, extra, (key, main));
+                }
+            }
+            track.eq.process(&mut buf);
+            // The four gains glide to their targets: a per-sample step for this tick, at most `limit`, applied as a
+            // running sum (spec: audio/mixer.md "Gains ramp").
+            let to = track.matrix;
+            let mut ramps = [[track.gains[0][0].block(to[0][0], frames, limit), track.gains[0][1].block(to[0][1], frames, limit)], [
+                track.gains[1][0].block(to[1][0], frames, limit),
+                track.gains[1][1].block(to[1][1], frames, limit),
+            ]];
+            if ramps.iter().flatten().all(|r| r.is_flat()) {
+                let [[ll, lr], [rl, rr]] = ramps.map(|r| r.map(|g| g.first()));
+                for f in buf.chunks_exact_mut(2) {
+                    let (l, r) = (f[0], f[1]);
+                    f[0] = ll * l + lr * r;
+                    f[1] = rr * r + rl * l;
+                }
+            } else {
+                for f in buf.chunks_exact_mut(2) {
+                    let [[ll, lr], [rl, rr]] = [[ramps[0][0].next(), ramps[0][1].next()], [ramps[1][0].next(), ramps[1][1].next()]];
+                    let (l, r) = (f[0], f[1]);
+                    f[0] = ll * l + lr * r;
+                    f[1] = rr * r + rl * l;
+                }
+            }
+            // What the track puts out, for the slots that listen to it (spec: audio/sidechain.md "Sidechain input").
+            if let Some(k) = self.key_out.get_mut(t).and_then(Option::as_mut) {
+                k.clear();
+                k.extend_from_slice(&buf);
+            }
+            let pk = &mut self.tracks[t].peak;
+            for f in buf.chunks_exact(2) {
+                pk[0] = pk[0].max(f[0].abs());
+                pk[1] = pk[1].max(f[1].abs());
+            }
+            // The direct output, after the fader matrix, besides the sends (the master's goes out in `route_out`).
+            if let (Some(io), true) = (self.io.as_mut(), t != 0) {
+                if let Some(p) = usize::try_from(self.tracks[t].output).ok().filter(|&p| p < io.pairs) {
+                    for (d, s) in io.direct.chunks_exact_mut(2 * io.pairs).zip(buf.chunks_exact(2)) {
+                        d[2 * p] += s[0];
+                        d[2 * p + 1] += s[1];
+                    }
+                }
+            }
+            if let Some(c) = self.capture.as_mut().and_then(|c| c.get_mut(t)) {
+                // Each track's own lateness is skipped at the start (`take_track_audio`).
+                let skip = self.pdc.cap_skip.get_mut(t).map_or(0, |s| {
+                    let k = (*s).min(frames as u64);
+                    *s -= k;
+                    k as usize
+                });
+                c.extend_from_slice(&buf[skip * 2..frames * 2]);
+            }
+            // Sends glide like the matrix gains; a route at 0 passes nothing.
+            let (tracks, bus, padded) = (&mut self.tracks, &mut self.bus, &mut self.pad_buf);
+            for route in &mut tracks[t].routes {
+                let mut ramp = route.glide.block(route.gain, frames, limit);
+                let out = &mut bus[route.dest];
+                if route.pad.len() > 0 {
+                    // Delay compensation: the send's level, then its pad, which runs every tick (also at level 0).
+                    padded.clear();
+                    if ramp.is_flat() {
+                        let g = ramp.first();
+                        padded.extend(buf.iter().map(|s| *s * g));
+                    } else {
+                        for s in buf.chunks_exact(2) {
+                            let g = ramp.next();
+                            padded.extend([s[0] * g, s[1] * g]);
+                        }
+                    }
+                    route.pad.run(padded);
+                    for (d, s) in out.iter_mut().zip(padded.iter()) {
+                        *d += *s;
+                    }
+                } else if !ramp.is_flat() {
+                    for (d, s) in out.chunks_exact_mut(2).zip(buf.chunks_exact(2)) {
+                        let g = ramp.next();
+                        d[0] += s[0] * g;
+                        d[1] += s[1] * g;
+                    }
+                } else if ramp.first() != 0.0 {
+                    let g = ramp.first();
+                    for (d, s) in out.iter_mut().zip(&buf) {
+                        *d += *s * g;
+                    }
+                }
+            }
+            self.bus[t] = buf;
+>>>>>>> main
         }
         let (io, direct) = match self.io.as_mut() {
             Some(DeviceIo { input, pairs, inputs, direct }) => (Some((&inputs[..], input.as_ref().map_or(0, |i| i.channels()), *pairs)), Some(direct)),
@@ -8152,6 +8309,7 @@ mod tests {
         out[out.len() - 2 * pairs..].to_vec()
     }
 
+<<<<<<< HEAD
     /// What the armed tracks hand to the recorder: every push, in order.
     #[derive(Default)]
     struct Takes(std::sync::Mutex<Vec<(usize, Vec<f32>)>>);
@@ -8228,6 +8386,8 @@ mod tests {
         assert!(frames.is_empty(), "a bar at 60 BPM outlasts the second: {frames:?}");
     }
 
+=======
+>>>>>>> main
     fn io_project(input: i32, monitor: u8, armed: bool) -> Project {
         let mut p = project(vec![], vec![]);
         p.mixer = (0..3).map(os_model::MixerTrack::new).collect();

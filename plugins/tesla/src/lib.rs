@@ -421,7 +421,7 @@ impl Tesla {
 
 impl Plugin for Tesla {
     const NAME: &'static str = "Tesla";
-    const VENDOR: &'static str = "Lemon Studio";
+    const VENDOR: &'static str = "Mango Studio";
     const URL: &'static str = "";
     const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
@@ -588,7 +588,7 @@ impl Plugin for Tesla {
 
 impl ClapPlugin for Tesla {
     const CLAP_ID: &'static str = "org.openstudio.tesla";
-    const CLAP_DESCRIPTION: Option<&'static str> = Some("Lemon Studio's audio editor and recorder");
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("Mango Studio's audio editor and recorder");
     const CLAP_MANUAL_URL: Option<&'static str> = None;
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Utility, ClapFeature::Stereo];

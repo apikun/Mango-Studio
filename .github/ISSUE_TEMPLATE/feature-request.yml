@@ -1,0 +1,46 @@
+name: Feature request
+description: Propose a new idea, improvement, or workflow for Mango Studio.
+title: "[FR]: "
+labels: ["Feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to share your ideas! 
+        Before submitting, please search existing issues or discussions to see if this feature has already been suggested.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Is your feature request related to a problem?
+      description: A clear and concise description of what the problem or limitation is. (e.g., "I'm always frustrated when...")
+      placeholder: It's hard to organize patterns when I have dozens of tracks...
+    validations:
+      required: false
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Describe the solution you'd like
+      description: Explain the feature or tool you want to see, how it should work, and where it should fit in the UI.
+      placeholder: I would like a feature where you can group tracks into expandable folders in the playlist...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Describe alternatives you've considered
+      description: Have you found any workarounds, third-party plugins, or alternative ways to accomplish this right now?
+      placeholder: Right now I am trying to use color-coding, but it doesn't solve the clutter...
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Attach mockups, wireframes, UI examples from other DAWs, or anything else that visualizes your idea.
+      placeholder: Drag images or screenshots directly here.
+    validations:
+      required: false

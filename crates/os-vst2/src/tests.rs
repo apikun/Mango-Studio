@@ -404,7 +404,7 @@ fn the_host_answers_what_plugins_ask() {
     assert_eq!(ask(abi::host_op::SUPPORTS, c"offline"), 0);
     let mut buf = [0u8; 64];
     unsafe { mock::ask(e, abi::host_op::VENDOR_NAME, buf.as_mut_ptr().cast()) };
-    assert_eq!(text(&buf), "Lemon Studio");
+    assert_eq!(text(&buf), "Mango Studio");
     assert_eq!(unsafe { mock::ask(e, abi::host_op::VERSION, std::ptr::null_mut()) }, 2400);
     assert_eq!(unsafe { mock::ask(e, abi::host_op::GET_BLOCK_SIZE, std::ptr::null_mut()) }, 1024, "the usual default before activation");
     if !cfg!(target_os = "macos") {

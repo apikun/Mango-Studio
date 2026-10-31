@@ -155,6 +155,7 @@ impl App {
             let i = crate::piano::add_note(s, ch, at, i32::from(key));
             let n = &mut crate::piano::pattern_mut(s).notes[i];
             (n.length, n.velocity) = (len, velocity);
+            crate::piano::make_plain(n);
             new.push(i);
         }
         s.piano.select(s.pattern, ch, new);

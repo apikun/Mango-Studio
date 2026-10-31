@@ -1,4 +1,5 @@
 // Copyright (C) 2026 ItsAlphaNeon
+// Copyright (C) 2026 Artig3nce
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
@@ -264,16 +265,21 @@ pub fn paint(ui: &mut Ui, s: &State, f: &FrameInfo) {
     let c = cols(s);
     let lemon = super::lemon(ui);
     let hv = crate::high_visibility::on();
-    // Frame (§1). Lemon (spec: ui/lemon-design.md §5): one rounded outlined panel.
+    // Frame (§1). Lemon (spec: ui/lemon-design.md §5): one rounded outlined panel. The rack is one flat colour
+    // throughout (title bar, rows panel and insert strip share the theme's dark `rack_inset`); the `display_edge`
+    // rim is the only line drawn over it.
     if lemon {
-        lk::outlined(ui.c, win, lk::r_panel(t), t.window_border, t.window_body);
+        lk::outlined(ui.c, win, lk::r_panel(t), t.rack_inset, t.rack_inset);
     } else {
-        ui.c.fill_rect(win, t.window_border);
-        let body = win.inset(1.0);
-        ui.c.fill_rect(body, t.window_body);
-        ui.c.fill_rect(Rect::new(body.x, body.y, body.w, 1.0), t.window_title_hi);
+        ui.c.fill_rect(win, t.rack_inset);
+        ui.c.fill_rect(win.inset(1.0), t.rack_inset);
     }
+<<<<<<< HEAD
     ui.hit(win, Action::RackArea, "Instrument rack");
+=======
+    super::display_edge(ui.c, t, win, if lemon { lk::r_panel(t) } else { 0.0 });
+    ui.hit(win, Action::RackArea, "Channel rack");
+>>>>>>> main
     let bar = Rect::span(x + 1.0, x + w - 1.0, y + 1.0, y + 29.0);
     ui.hit(bar, Action::WinDrag(Win::ChannelRack), "Instrument rack - drag to move");
     title_bar(ui, s, win, c, f);
@@ -281,9 +287,9 @@ pub fn paint(ui: &mut Ui, s: &State, f: &FrameInfo) {
     // Rows panel (§1, §3).
     let inner = panel(win);
     if lemon {
-        lk::outlined(ui.c, inner.outset(1.0), lk::r_btn(t), t.rack_inset_border, t.rack_inset);
+        lk::outlined(ui.c, inner.outset(1.0), lk::r_btn(t), t.rack_inset, t.rack_inset);
     } else {
-        ui.c.fill_rect(inner.outset(1.0), t.rack_inset_border);
+        ui.c.fill_rect(inner.outset(1.0), t.rack_inset);
         ui.c.fill_rect(inner, t.rack_inset);
     }
     let view_h = inner.h;
@@ -805,10 +811,9 @@ fn row_knob(ui: &mut Ui, cx: f32, cy: f32, value: f32) {
     os_ui::kit::knob(ui.c, ui.t, cx, cy, 7.5, value, false, os_ui::kit::KnobLook::Row, os_ui::kit::State::hover(hov));
 }
 
-/// Enable LED (§3: ring r 5, green ball).
+/// Enable LED: the small round LED of the mixer and the playlist (after FL's).
 fn rack_led(ui: &mut Ui, cx: f32, cy: f32, on: bool) {
-    let hov = ui.hovering(Rect::new(cx - 6.0, cy - 6.0, 12.0, 12.0));
-    os_ui::kit::led(ui.c, ui.t, cx, cy, 5.0, os_ui::kit::State::hover(hov).with_on(on));
+    super::led_small(ui, cx, cy, on);
 }
 
 /// The small green padlock of a locked channel (§10); dimmed when the channel is muted.

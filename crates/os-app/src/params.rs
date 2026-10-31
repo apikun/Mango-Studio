@@ -95,9 +95,26 @@ pub struct ParamUi {
     pub lists: BTreeMap<usize, List>,
     /// Newest first: "Most recent", "Second most recent".
     pub last: Vec<Tweak>,
+    /// Each parameter's value as the app last knew it, by (hosted key, index): what an undo step of a gesture in the
+    /// plugin's own window goes back to. Read when a list is made, moved by the editor's own values and by every value
+    /// the app sets itself (`set_param_value`).
+    known: Mutex<std::collections::HashMap<(usize, usize), f64>>,
+    /// Gestures in a plugin's own window that are under way: (hosted key, index) to the value before the gesture and
+    /// the undo step it recorded.
+    open: std::collections::HashMap<(usize, usize), (f64, usize)>,
 }
 
 impl ParamUi {
+    fn know(&self, key: usize, index: usize, v: f64) {
+        if let Ok(mut m) = self.known.lock() {
+            m.insert((key, index), v);
+        }
+    }
+
+    fn knew(&self, key: usize, index: usize) -> Option<f64> {
+        self.known.lock().ok()?.get(&(key, index)).copied()
+    }
+
     /// Visible parameters of hosted instance `key`: (index, entry).
     pub fn visible(&self, key: usize) -> impl Iterator<Item = (usize, &Entry)> {
         self.lists.get(&key).into_iter().flat_map(|l| l.params.iter().enumerate().filter(|(_, e)| !e.hidden))
@@ -194,11 +211,48 @@ pub(crate) fn param_value(s: &State, key: usize, index: usize) -> Option<f64> {
 
 pub(crate) fn set_param_value(s: &mut State, key: usize, index: usize, v: f64) -> bool {
     let Some(id) = s.params.lists.get(&key).and_then(|l| l.params.get(index)).map(|e| e.id) else { return false };
+<<<<<<< HEAD
     let set = s.params.plugin(key).is_some_and(|p| p.lock().is_ok_and(|mut p| p.set_param(id, v)));
     if set {
         s.params.set_by_host(key, id, v);
     }
     set
+=======
+    let ok = s.params.plugin(key).is_some_and(|p| p.lock().is_ok_and(|mut p| p.set_param(id, v)));
+    if ok {
+        s.params.know(key, index, v);
+    }
+    ok
+}
+
+/// What one of a plugin's own editor's events does to the undo history (`App::params_tick`): a gesture is one step
+/// ("Plugin parameter"), taken at its start with the value before it and dropped at its end when the value came back; a
+/// value sent without a gesture is one step for a run of values. Unless Undo knob tweaks is off.
+fn editor_edit(s: &mut State, key: usize, index: usize, e: os_host::ParamEvent) {
+    match e {
+        os_host::ParamEvent::Begin(_) => {
+            let Some(before) = s.params.knew(key, index) else { return };
+            if let Some(step) = crate::history::plugin_begin(s, key, index, before) {
+                s.params.open.insert((key, index), (before, step));
+            }
+        }
+        os_host::ParamEvent::Value(_, v) => {
+            // A hidden parameter is no knob the user turns (a meter the plugin keeps moving): no step for its values.
+            let hidden = s.params.lists.get(&key).and_then(|l| l.params.get(index)).is_some_and(|e| e.hidden);
+            if !hidden && !s.params.open.contains_key(&(key, index)) {
+                if let Some(before) = s.params.knew(key, index).filter(|&b| b != v) {
+                    crate::history::plugin_run(s, key, index, before);
+                }
+            }
+            s.params.know(key, index, v);
+        }
+        os_host::ParamEvent::End(_) => {
+            if let Some((before, step)) = s.params.open.remove(&(key, index)) {
+                crate::history::plugin_end(s, step, s.params.knew(key, index) == Some(before));
+            }
+        }
+    }
+>>>>>>> main
 }
 
 /// "Create automation clip" for parameter `index` of instance `key`: target, clip name, current value.
@@ -358,6 +412,7 @@ impl App {
         ui.lists.retain(|k, _| self.plugins.hosted.contains_key(k));
         let mut moved = None;
         let mut edited = Vec::new();
+        let mut gestures = Vec::new();
         let mut automate = Vec::new();
         let mut recorded = Vec::new();
         let mut stretch = Vec::new();
@@ -377,9 +432,18 @@ impl App {
                         None => Entry { id: u32::MAX, name: String::new(), hidden: true, default: 0.0, steps: 0 },
                     })
                     .collect();
+<<<<<<< HEAD
                 let values = read_values(&*p, &params);
                 let now = std::time::Instant::now();
                 ui.lists.insert(key, List { plugin: weak, params, seen: look, values, open: BTreeMap::new(), read_at: now, reread: false });
+=======
+                for (index, e) in params.iter().enumerate() {
+                    if let Some(v) = p.param_value(e.id) {
+                        ui.know(key, index, v);
+                    }
+                }
+                ui.lists.insert(key, List { plugin: weak, params, seen: look });
+>>>>>>> main
             }
             let events = p.take_param_events();
             if let Some(l) = ui.lists.get_mut(&key) {
@@ -434,9 +498,16 @@ impl App {
                         stretch.push((key, x.name.clone(), *v));
                     }
                 }
-                let (os_host::ParamEvent::Begin(id) | os_host::ParamEvent::Value(id, _)) = e else { continue };
+                let (os_host::ParamEvent::Begin(id) | os_host::ParamEvent::Value(id, _) | os_host::ParamEvent::End(id)) = e;
+                let index = ui.lists.get(&key).and_then(|l| l.params.iter().position(|x| x.id == id));
+                if let Some(index) = index {
+                    gestures.push((key, index, e));
+                }
+                if matches!(e, os_host::ParamEvent::End(_)) {
+                    continue;
+                }
                 edited.push(key);
-                if let Some(index) = ui.lists.get(&key).and_then(|l| l.params.iter().position(|x| x.id == id)) {
+                if let Some(index) = index {
                     moved = Some(Tweak::Plugin { key, index });
                     // What automation recording takes: the value with the parameter's stated range.
                     if let (os_host::ParamEvent::Value(_, v), Some(info)) = (e, p.param_info(index)) {
@@ -451,6 +522,7 @@ impl App {
                 }
             }
         }
+<<<<<<< HEAD
         // An edit in a plugin's window is an undo step (by the owner's id, so it follows moves): a gesture's from its
         // begin to its end, values sent without one joined while they come in a row.
         for (owner, id, v) in seen {
@@ -461,6 +533,21 @@ impl App {
         for (owner, changed, run) in steps {
             crate::control::param_edit(&mut self.state, owner, &changed, run);
         }
+=======
+        // What the plugins' own editors did becomes undo steps (`editor_edit`).
+        for (key, index, e) in gestures {
+            editor_edit(&mut self.state, key, index, e);
+            // While recording automation, a knob turned in the plugin's own window goes into a clip for that parameter.
+            if let os_host::ParamEvent::Value(_, v) = e {
+                let hidden = self.state.params.lists.get(&key).and_then(|l| l.params.get(index)).is_some_and(|x| x.hidden);
+                if !hidden {
+                    if let Some((target, _, _)) = automation(&self.state, key, index) {
+                        self.record_automation(target, &clip_name(&self.state, key, index), v);
+                    }
+                }
+            }
+        }
+>>>>>>> main
         // A knob moved in a plugin's own window is the user's edit (`Plugins::mark_edited`).
         for key in edited {
             self.plugins.mark_edited(key);
@@ -688,7 +775,11 @@ mod tests {
         let key = fx_key(2, 1);
         assert_eq!(a.browse_params(key), None);
         assert_eq!(a.state.params.visible(key).count(), 36);
+<<<<<<< HEAD
         let node = "1:Current project/Effects/Lemon Parametric EQ (Bus 2)";
+=======
+        let node = "1:Current project/Effects/Mango Parametric EQ (Insert 2)";
+>>>>>>> main
         assert_eq!((a.state.show_browser, a.state.browser_tab, a.state.browser_sel.as_deref()), (true, PROJECT_TAB, Some(node)));
         let list = rows(&a.state);
         let names: Vec<&str> = list.iter().filter(|r| matches!(r.item, Item::Param(k, _) if k == key)).map(|r| r.label.as_str()).collect();
@@ -701,7 +792,11 @@ mod tests {
         let menu = a.state.playlist.popup.take().unwrap();
         let tgt = target::slot_param(2, 1, 35);
         let create = menu.items.iter().find(|i| i.label == "Create automation clip").unwrap();
+<<<<<<< HEAD
         assert_eq!(create.cmd, Cmd::CreateAutomation(tgt, "Lemon Parametric EQ - Bus 2 - Main level".into(), 0.5));
+=======
+        assert_eq!(create.cmd, Cmd::CreateAutomation(tgt, "Mango Parametric EQ - Insert 2 - Main level".into(), 0.5));
+>>>>>>> main
         // A plugin parameter's stored units aren't known: no initial value (spec: ui/settings-choices.md "Advanced:
         // Initialize controls automatically").
         let init = menu.items.iter().find(|i| i.label == crate::init::INIT_LABEL).unwrap();
@@ -716,7 +811,11 @@ mod tests {
 
         // Dropped on the playlist: a clip there, aimed at the parameter.
         let msg = a.params_drop(key, 35, 3, 384);
+<<<<<<< HEAD
         assert_eq!(msg.as_deref(), Some("Created automation clip \"Lemon Parametric EQ - Bus 2 - Main level\""));
+=======
+        assert_eq!(msg.as_deref(), Some("Created automation clip \"Mango Parametric EQ - Insert 2 - Main level\""));
+>>>>>>> main
         let ch = a.state.project.channels.last().unwrap().index;
         assert_eq!(a.state.project.automations.last().map(|x| (x.channel, x.target())), Some((ch, Some(tgt))));
         let clip = crate::playlist::arr_mut(&mut a.state).clips.last().cloned().unwrap();
@@ -733,11 +832,19 @@ mod tests {
         a.state.params.note(Tweak::Plugin { key, index: 35 });
         a.params_menu(MenuEntry::Automation);
         let last = a.state.project.channels.last().unwrap();
+<<<<<<< HEAD
         assert_eq!(last.name.as_deref(), Some("Lemon Parametric EQ - Bus 2 - Main level #2"));
         // A plugin's own knob menu (host link): a clip on band 1 frequency.
         a.params_automate(key, 7);
         let last = a.state.project.channels.last().unwrap();
         assert_eq!(last.name.as_deref(), Some("Lemon Parametric EQ - Bus 2 - Band 1 freq"));
+=======
+        assert_eq!(last.name.as_deref(), Some("Mango Parametric EQ - Insert 2 - Main level #2"));
+        // A plugin's own knob menu (host link): a clip on band 1 frequency.
+        a.params_automate(key, 7);
+        let last = a.state.project.channels.last().unwrap();
+        assert_eq!(last.name.as_deref(), Some("Mango Parametric EQ - Insert 2 - Band 1 freq"));
+>>>>>>> main
         assert_eq!(a.state.project.automations.last().and_then(|x| x.target()), Some(target::slot_param(2, 1, 7)));
         a.note_host_tweak(&Action::Tempo);
         assert_eq!(a.params_menu(MenuEntry::NextToLast), None);
@@ -964,6 +1071,133 @@ mod tests {
         auto.points = vec![os_model::AutoPoint::new(0.0, 0.0), os_model::AutoPoint::new(end, 1.0)];
         a.save_to(out.into());
         println!("{:?}", a.state.message);
+    }
+
+    /// A plugin whose "editor" is the test: its parameters, and the events its editor reports.
+    struct Knobby {
+        desc: os_host::Descriptor,
+        values: Vec<f64>,
+        events: Vec<os_host::ParamEvent>,
+    }
+    impl os_engine::Instrument for Knobby {
+        fn note_on(&mut self, _: u32, _: u8, _: f32) {}
+        fn note_off(&mut self, _: u32, _: u8) {}
+        fn process(&mut self, _: u32, _: &mut [f32], _: &mut [f32]) {}
+    }
+    impl os_engine::HostedEffect for Knobby {
+        fn process_fx(&mut self, _: u32, _: &mut [f32], _: &mut [f32]) {}
+    }
+    impl os_host::Plugin for Knobby {
+        fn desc(&self) -> &os_host::Descriptor {
+            &self.desc
+        }
+        fn activate(&mut self, _: u32) -> bool {
+            true
+        }
+        fn idle(&mut self) {}
+        fn has_editor(&self) -> bool {
+            false
+        }
+        fn editor_open(&self) -> bool {
+            false
+        }
+        fn open_editor(&mut self, _: *mut std::ffi::c_void, _: f32) -> Result<(u32, u32), String> {
+            Err(String::new())
+        }
+        fn editor_size(&self) -> Option<(u32, u32)> {
+            None
+        }
+        fn close_editor(&mut self) {}
+        fn save_state(&self) -> Option<Vec<u8>> {
+            None
+        }
+        fn load_state(&mut self, _: &[u8]) -> bool {
+            false
+        }
+        fn param_count(&self) -> usize {
+            self.values.len()
+        }
+        fn param_info(&self, index: usize) -> Option<os_host::ParamInfo> {
+            (index < self.values.len()).then(|| os_host::ParamInfo {
+                id: 10 + index as u32,
+                name: format!("Knob {index}"),
+                unit: String::new(),
+                group: String::new(),
+                min: 0.0,
+                max: 1.0,
+                default: 0.5,
+                steps: 0,
+                automatable: true,
+                read_only: false,
+                hidden: false,
+                bypass: false,
+                enumerated: false,
+            })
+        }
+        fn param_value(&self, id: u32) -> Option<f64> {
+            self.values.get(id.checked_sub(10)? as usize).copied()
+        }
+        fn set_param(&mut self, id: u32, v: f64) -> bool {
+            id.checked_sub(10).and_then(|i| self.values.get_mut(i as usize)).map(|x| *x = v).is_some()
+        }
+        fn take_param_events(&mut self) -> Vec<os_host::ParamEvent> {
+            std::mem::take(&mut self.events)
+        }
+    }
+
+    /// Knobs turned in a plugin's own window (the Mango Parametric EQ's, any plugin's) are undo steps: a gesture is one
+    /// step, "Plugin parameter", back to the value it started from; one that ends where it began leaves none; values
+    /// sent without a gesture are one step for the run; and an undo's own value coming back from the plugin is no step.
+    #[test]
+    fn knobs_in_a_plugins_own_window_are_undo_steps() {
+        use os_host::ParamEvent::{Begin, End, Value};
+        let mut a = App::new(None);
+        let desc = crate::plugins::builtin()[0].desc.clone();
+        let plugin = Arc::new(Mutex::new(Knobby { desc, values: vec![0.2, 0.7], events: Vec::new() }));
+        a.plugins.hosted.insert(0, crate::plugins::Hosted::new(plugin.clone()));
+        a.params_tick();
+        let (steps, name) = (a.state.history.at(), crate::history::PLUGIN_PARAMETER);
+        let turn = |a: &mut App, events: Vec<os_host::ParamEvent>, to: Option<(usize, f64)>| {
+            let mut p = plugin.lock().unwrap();
+            if let Some((i, v)) = to {
+                p.values[i] = v;
+            }
+            p.events = events;
+            drop(p);
+            // The tick looks at an instance when it has something new or after a while: make it look.
+            a.plugins.hosted[&0].attention.as_ref().map(|c| c.raise());
+            a.params_tick();
+        };
+        let value = |i: usize| plugin.lock().unwrap().values[i];
+
+        // A drag on knob 0: one step for the whole gesture.
+        turn(&mut a, vec![Begin(10), Value(10, 0.5), Value(10, 0.9), End(10)], Some((0, 0.9)));
+        assert_eq!((a.state.history.at(), a.state.history.newest_done()), (steps + 1, Some(name)));
+        assert_eq!(crate::history::undo(&mut a.state), Some(name));
+        assert_eq!(value(0), 0.2, "undone to where the drag started");
+        assert_eq!(crate::history::redo(&mut a.state), Some(name));
+        assert_eq!(value(0), 0.9);
+        // The plugin reports the value an undo or redo set: no new step.
+        let at = a.state.history.at();
+        turn(&mut a, vec![Value(10, 0.9)], None);
+        assert_eq!(a.state.history.at(), at, "an echo is no edit");
+
+        // A gesture that ends where it began leaves no step.
+        turn(&mut a, vec![Begin(11), Value(11, 0.4), Value(11, 0.7), End(11)], Some((1, 0.7)));
+        assert_eq!(a.state.history.at(), at, "back to its start: no step");
+
+        // Values with no gesture: one step for the run, however many ticks it takes.
+        turn(&mut a, vec![Value(11, 0.3)], Some((1, 0.3)));
+        turn(&mut a, vec![Value(11, 0.35), Value(11, 0.4)], Some((1, 0.4)));
+        assert_eq!(a.state.history.at(), at + 1);
+        crate::history::undo(&mut a.state);
+        assert_eq!(value(1), 0.7);
+        // The next gesture starts from where the app last put the value.
+        crate::history::redo(&mut a.state);
+        turn(&mut a, vec![Begin(11), Value(11, 0.1), End(11)], Some((1, 0.1)));
+        assert_eq!(a.state.history.at(), at + 2);
+        crate::history::undo(&mut a.state);
+        assert_eq!(value(1), 0.4);
     }
 
     /// A stand-in instance for typing `Weak` (never upgraded).

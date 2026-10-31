@@ -431,8 +431,16 @@ impl State {
                     _ => format!("{band} width: {n:.2}"),
                 }
             }
+<<<<<<< HEAD
             KnobId::Strum(_) | KnobId::Arp(_) | KnobId::PianoDlg(_) | KnobId::AutoLfo(..) => return None,
         })
+=======
+            KnobId::Strum(k) => self.strum.set.text(k, u32::from(self.project.ppq.max(4))),
+            KnobId::Arp(k) => self.arp.set.text(k),
+            KnobId::PianoDlg(k) => self.piano_dlg.text(k, u32::from(self.project.ppq.max(4))),
+            KnobId::AutoLfo(row, k) => k.text(self.clip_lfo(row).unwrap_or(&os_model::clip_lfo::ClipLfo::default())),
+        }
+>>>>>>> main
     }
 }
 

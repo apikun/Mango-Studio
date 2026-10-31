@@ -1,9 +1,16 @@
 // Copyright (C) 2026 ItsAlphaNeon
+// Copyright (C) 2026 ravenmarkdev-alt
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
+<<<<<<< HEAD
 //! Docked browser (left): four tabs, a tree of the project / plugin database / folders / favorites, drag sources.
 // spec: ui/main-window.md §4, ui/browser.md (§4 options menu, §5 search, §6 dropped folders, §10 favorites, §11 index)
+=======
+//! Docked browser (left): five tabs, a tree of the project / folders, the plugin browser (`super::plugin_panel`), drag
+//! sources.
+// spec: ui/main-window.md §4, ui/browser.md (§4 options menu, §5 search, §6 dropped folders)
+>>>>>>> main
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -19,7 +26,9 @@ const INDENT: f32 = 13.0;
 /// Top of the list area.
 pub const LIST_Y: f32 = 142.0;
 /// Footer height below the list.
-pub const FOOTER_H: f32 = 28.0;
+pub const FOOTER_H: f32 = 28.0 + BRAND_H;
+/// The strip over the footer with the logo and "Mango Studio".
+pub const BRAND_H: f32 = 34.0;
 
 /// Category colour indices (`cat_color`); 255 = folder.
 const FOLDER: u8 = 255;
@@ -107,6 +116,17 @@ pub enum Item {
     Preset(String),
 }
 
+/// The browser drag in flight (spec §3): the item and its label following the cursor, and the modifiers at the move
+/// (the playlist's drop-zone ghost previews the drop exactly, so Alt's no-snap travels with it; issue #4).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BrowserDrag {
+    pub item: Item,
+    pub label: String,
+    pub x: f32,
+    pub y: f32,
+    pub alt: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct Row {
     /// Open/closed state key (tab-qualified path).
@@ -160,8 +180,12 @@ fn is_open(s: &State, key: &str) -> bool {
     !s.browser_search.is_empty() || s.browser_open.contains(key)
 }
 
-/// The visible rows of the active tab, top to bottom (filtered while searching, spec §5).
+/// The visible rows of the active tab, top to bottom (filtered while searching, spec §5). The Plugin database tab's are
+/// the plugin browser's plugins.
 pub fn rows(s: &State) -> Vec<Row> {
+    if s.browser_tab == PLUGIN_TAB {
+        return super::plugin_panel::rows(s);
+    }
     let all = tree(s);
     if s.browser_search.is_empty() {
         return all;
@@ -330,7 +354,7 @@ pub fn list_dir(s: &State, dir: &Path) -> Rc<Vec<Entry>> {
 pub fn file_icon(name: &str) -> Icon {
     let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
     match ext.as_str() {
-        "wav" | "mp3" | "ogg" | "flac" | "aif" | "aiff" => Icon::FileAudio,
+        "wav" | "mp3" | "ogg" | "flac" | "aif" | "aiff" | "m4a" | "aac" => Icon::FileAudio,
         "mid" | "midi" => Icon::PianoRoll,
         "flp" => Icon::FileProject,
         "txt" | "url" | "pdf" | "nfo" | "rtf" | "htm" | "html" | "md" => Icon::FileText,
@@ -702,10 +726,12 @@ fn paint_info(ui: &mut Ui, s: &State, path: &Path, r: Rect) {
     ui.c.text(f, vx, y, t.text, &line);
 }
 
-/// Top of the rows: below the search box when "Search box on top" is on (spec §4).
+/// Top of the rows: below the search box when "Search box on top" is on (spec §4), and below the plugin browser's
+/// filter buttons.
 pub fn list_top(s: &State) -> f32 {
     let lift = super::work_y(s) - super::WORK_Y;
-    lift + if opt(s, OPT_TOP) { LIST_Y + SEARCH_ROW } else { LIST_Y }
+    let chips = if s.browser_tab == PLUGIN_TAB { super::plugin_panel::CHIPS_H } else { 0.0 };
+    lift + chips + if opt(s, OPT_TOP) { LIST_Y + SEARCH_ROW } else { LIST_Y }
 }
 
 /// Height of the search row above the list ("Search box on top").
@@ -792,6 +818,47 @@ pub fn paint(ui: &mut Ui, s: &State, r: Rect) {
         ui.c.fill_rect(Rect::new(0.0, LIST_Y + dy, bw, SEARCH_ROW), t.browser_footer);
         search_box(ui, s, Rect::new(13.0, LIST_Y + dy + 4.0, bw - 38.0, 20.0));
     }
+    if s.browser_tab == PLUGIN_TAB {
+        super::plugin_panel::paint(ui, s, Rect::span(0.0, bw - 1.0, top - super::plugin_panel::CHIPS_H, r.bottom() - FOOTER_H));
+    } else {
+        paint_tree(ui, s, r, bw, top);
+    }
+    // Footer: the search field takes the width the splitter adds.
+    let fy = r.bottom() - 27.0;
+    // Over it, in the window's bottom-left corner: the logo and the app's name.
+    let by = fy - BRAND_H;
+    ui.c.fill_rect(Rect::span(13.0, bw - 1.0, by, fy), t.browser_list);
+    let lr = 11.0;
+    icons::logo_colour(ui.c, 13.0 + lr, by + BRAND_H / 2.0, lr);
+    let f = os_ui::Font::new(16);
+    let ty = (by + (BRAND_H - ui.c.line_height(f)) / 2.0).round();
+    ui.c.text(f, 13.0 + 2.0 * lr + 8.0, ty, t.text, "Mango Studio");
+    ui.c.fill_rect(Rect::new(0.0, fy, bw, 27.0), t.browser_footer);
+    // Tags: not available yet, greyed out.
+    let tags = Rect::new(13.0, fy + 4.0, 41.0, 20.0);
+    ui.off(tags, "Tags");
+    ui.c.fill_rrect(tags, 3.0, t.sunken);
+    ui.c.text_center(os_ui::Font::condensed(11, 6).bold(), tags, ui.t.tx(0xc0c8cc), "TAGS");
+    ui.veil(tags, t.browser_footer);
+    let field = Rect::new(57.0, fy + 4.0, bw - 82.0, 20.0);
+    if !search_on_top {
+        search_box(ui, s, field);
+    } else {
+        ui.c.fill_rrect(field, 3.0, t.sunken);
+    }
+    icons::draw(ui.c, Icon::Folder, Rect::new(field.right() - 18.0, fy + 7.0, 14.0, 14.0), t.text_faint);
+    let glass = Rect::new(bw - 23.0, fy + 3.0, 21.0, 21.0);
+    let hov = ui.hit(glass, Action::BrowserSearch, "Search the browser (Enter = find next, Esc = clear)");
+    icons::draw(ui.c, Icon::Search, Rect::new(glass.x + 2.0, fy + 5.0, 17.0, 17.0), if hov { t.browser_search.shade(0.2) } else { t.browser_search });
+    // Splitter: drags the browser's width (§9).
+    ui.c.fill_rect(Rect::new(bw, r.y, 6.0, r.h), t.splitter);
+    ui.c.fill_rect(Rect::new(bw + 6.0, r.y, 2.0, r.h), t.splitter_dark);
+    ui.hit(Rect::new(bw, r.y, SPLITTER, r.h), Action::BrowserSplitter, "Browser: drag to resize, double-click for the default width");
+}
+
+/// The tree's rows from `top` (browser `r`, its panel `bw` wide), and the info panel of a selected disk entry.
+fn paint_tree(ui: &mut Ui, s: &State, r: Rect, bw: f32, top: f32) {
+    let t = ui.t;
     let rows = rows(s);
     let info = info_path(&rows, s);
     let ih = if info.is_some() { INFO_H } else { 0.0 };
@@ -883,6 +950,7 @@ pub fn paint(ui: &mut Ui, s: &State, r: Rect) {
     if let Some(p) = &info {
         paint_info(ui, s, p, Rect::new(0.0, list.bottom(), bw, ih));
     }
+<<<<<<< HEAD
     // Footer: the search field takes the width the splitter adds.
     let fy = r.bottom() - 27.0;
     ui.c.fill_rect(Rect::new(0.0, fy, bw, 27.0), t.browser_footer);
@@ -912,6 +980,9 @@ pub fn paint(ui: &mut Ui, s: &State, r: Rect) {
     ui.c.fill_rect(Rect::new(bw, r.y, 6.0, r.h), t.splitter);
     ui.c.fill_rect(Rect::new(bw + 6.0, r.y, 2.0, r.h), t.splitter_dark);
     ui.hit(Rect::new(bw, r.y, SPLITTER, r.h), Action::BrowserSplitter, "Browser: drag to resize, double-click for the default width");
+=======
+    super::display_edge(ui.c, t, Rect::new(r.x, r.y, bw, r.h), 0.0);
+>>>>>>> main
 }
 
 /// The splitter's width right of the browser panel.
@@ -968,9 +1039,10 @@ pub fn ghost_rect(x: f32, y: f32) -> Rect {
 
 /// The label that follows the cursor during a browser drag (spec §3).
 pub fn paint_ghost(ui: &mut Ui, s: &State) {
-    let Some((label, x, y)) = &s.browser_drag else { return };
+    let Some(d) = &s.browser_drag else { return };
+    let (x, y, label) = (d.x, d.y, &d.label);
     let t = ui.t;
-    let r = ghost_rect(*x, *y);
+    let r = ghost_rect(x, y);
     let f = os_ui::Font::new(15);
     let w = (ui.c.text_width(f, label) + 14.0).min(r.w);
     let r = Rect::new(r.x, r.y, w, r.h);

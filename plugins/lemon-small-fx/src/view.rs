@@ -50,6 +50,66 @@ impl Model for os_plugkit::vals::Vals {
     }
 }
 
+/// The values the editor shows: the parameters, with the spec's shown values over them (Mango 12's out knob shows
+/// the effective output gain while the gains are linked).
+pub struct Shown<'a> {
+    pub spec: &'static Spec,
+    pub vals: &'a os_plugkit::vals::Vals,
+}
+
+impl Model for Shown<'_> {
+    fn norm(&self, id: &str) -> f32 {
+        shown_norm(self.spec, self.vals, id)
+    }
+    fn plain(&self, id: &str) -> f32 {
+        shown_plain(self.spec, self.vals, id)
+    }
+    fn text(&self, id: &str) -> String {
+        shown_text(self.spec, self.vals, id)
+    }
+}
+
+/// A setting's shown offset right now (`None` = it shows its stored value): the spec's mapping over the stored
+/// values.
+pub fn offset(spec: &Spec, vals: &os_plugkit::vals::Vals, k: usize) -> Option<i32> {
+    let f = spec.shown?;
+    let v = values(spec, vals);
+    f(&v[..spec.settings.len()], k)
+}
+
+/// A setting's shown plain value: its stored one less the spec's offset, in its range.
+pub fn shown_plain(spec: &Spec, vals: &os_plugkit::vals::Vals, id: &str) -> f32 {
+    let stored = vals.plain(id);
+    let Some(k) = spec.index(id) else { return stored };
+    let Some(off) = offset(spec, vals, k) else { return stored };
+    let (lo, hi) = spec.settings[k].range;
+    (stored - off as f32).clamp(lo as f32, hi as f32)
+}
+
+/// A setting's shown normalized value.
+pub fn shown_norm(spec: &Spec, vals: &os_plugkit::vals::Vals, id: &str) -> f32 {
+    match spec.index(id).and_then(|k| offset(spec, vals, k)) {
+        None => vals.norm(id),
+        Some(_) => vals.plain_to_norm(id, shown_plain(spec, vals, id)),
+    }
+}
+
+/// The stored plain that shows as `shown`: the shown value plus the spec's offset, in the range.
+pub fn stored_plain(spec: &Spec, vals: &os_plugkit::vals::Vals, id: &str, shown: f32) -> f32 {
+    let Some(k) = spec.index(id) else { return shown };
+    let Some(off) = offset(spec, vals, k) else { return shown };
+    let (lo, hi) = spec.settings[k].range;
+    (shown + off as f32).clamp(lo as f32, hi as f32)
+}
+
+/// A setting's shown value text.
+pub fn shown_text(spec: &Spec, vals: &os_plugkit::vals::Vals, id: &str) -> String {
+    match spec.index(id) {
+        Some(k) if offset(spec, vals, k).is_some() => (spec.text)(k, shown_plain(spec, vals, id).round() as i32),
+        _ => vals.text(id),
+    }
+}
+
 /// What a region of the editor does when clicked or dragged.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Target {
@@ -137,6 +197,10 @@ pub fn paint(spec: &Spec, c: &mut Canvas, t: &Palette, m: &dyn Model, st: &ViewS
             Control::Shape { id, cx, cy } => {
                 let range = spec.index(id).map_or((0, 1), |k| spec.settings[k].range);
                 shape(&mut ui, id, cx, cy, range);
+            }
+            Control::Switch { id, cx, cy } => {
+                let range = spec.index(id).map_or((0, 1), |k| spec.settings[k].range);
+                switch_box(&mut ui, id, cx, cy, range);
             }
             Control::Tile { id, x0, y0, x1, y1, caption } => tile(&mut ui, id, Rect::span(x0, x1, y0, y1), caption),
             Control::Text { id, x0, y0, x1, y1, show, .. } => {
@@ -275,6 +339,21 @@ fn shape(ui: &mut Ui, id: &str, cx: f32, cy: f32, (lo, hi): (i32, i32)) {
     ui.hit(r, target);
 }
 
+/// A small switch box (Mango 12's crush): a raised box lit mango on the range's top with the value's name inside;
+/// a click steps between the two ends.
+fn switch_box(ui: &mut Ui, id: &str, cx: f32, cy: f32, (lo, hi): (i32, i32)) {
+    let v = ui.m.plain(id).round() as i32;
+    let next = if v >= hi || v < lo { lo } else { hi };
+    let target = Target::Choice(id.into(), next);
+    let r = Rect::new(cx - 25.0, cy - 9.0, 50.0, 18.0);
+    let st = State { on: v == hi && hi > lo, ..ui.state(r, &target) };
+    let ink = lemon::plug_button(ui.c, r, 5.0, st);
+    let text = ui.m.text(id).to_uppercase();
+    let lh = ui.c.line_height(LABEL);
+    ui.c.text_center(LABEL, Rect::new(r.x, (r.cy() - lh / 2.0).round(), r.w, lh), ink, &text);
+    ui.hit(r, target);
+}
+
 /// A tile of a grid (Lemon Chorus's, as the original's): a card, a small dial at the left, the caption on a field at
 /// the top right and the value text under it. The whole tile turns the dial.
 fn tile(ui: &mut Ui, id: &str, r: Rect, caption: &str) {
@@ -297,6 +376,7 @@ fn tile(ui: &mut Ui, id: &str, r: Rect, caption: &str) {
     ui.hit(hr, target);
 }
 
+<<<<<<< HEAD
 /// A text field: the text in a field (clipped at its right end), the status under it in the caption's grey. A click
 /// types the text in.
 fn text_field(ui: &mut Ui, id: &str, r: Rect, text: &str, status: &str) {
@@ -311,32 +391,34 @@ fn text_field(ui: &mut Ui, id: &str, r: Rect, text: &str, status: &str) {
 
 /// The wordmark (as Lemon Delay's): the lemon mark and "LEMON" in lemon beside the effect's name in large grey
 /// capitals, or LEMON over the name (`stacked`), placed by the spec's [`Mark`]; returns where it is.
+=======
+/// The wordmark (as Lemon Delay's): "MANGO" in mango beside the effect's name in large grey
+/// capitals, or MANGO over the name (`stacked`), placed by the spec's [`Mark`]; returns where it is.
+>>>>>>> main
 fn logo(ui: &mut Ui, spec: &Spec) -> Rect {
     let Mark { x, y, anchor, stacked } = spec.mark;
-    let ws = lemon::spaced_width(ui.c, MARK_SMALL, "LEMON", 2.5);
+    let ws = lemon::spaced_width(ui.c, MARK_SMALL, "MANGO", 2.5);
     let (lh_b, lh_s) = (ui.c.line_height(MARK_BIG), ui.c.line_height(MARK_SMALL));
     if stacked {
-        // The mark and LEMON centred over the name.
-        let (wn, wl) = (lemon::spaced_width(ui.c, MARK_BIG, spec.word, 2.0), 14.0 + ws);
+        // MANGO centred over the name.
+        let (wn, wl) = (lemon::spaced_width(ui.c, MARK_BIG, spec.word, 2.0), ws);
         let w = wn.max(wl);
         let left = (x - w * anchor).round();
         let lx = (left + (w - wl) / 2.0).round();
-        lemon::lemon_mark(ui.c, lx + 5.0, y + lh_s / 2.0, 4.0, brand::MAIN);
-        lemon::spaced(ui.c, MARK_SMALL, lx + 14.0, y, brand::MAIN, "LEMON", 2.5);
+        lemon::spaced(ui.c, MARK_SMALL, lx, y, brand::MAIN, "MANGO", 2.5);
         lemon::spaced(ui.c, MARK_BIG, (left + (w - wn) / 2.0).round(), y + lh_s - 2.0, plug::WORDMARK, spec.word, 2.0);
         let r = Rect::span(left - 2.0, left + w + 2.0, y - 2.0, y + lh_s + lh_b - 2.0);
         ui.hit(r, Target::Logo);
         return r;
     }
     let wb = lemon::spaced_width(ui.c, MARK_BIG, spec.word, 2.0);
-    let total = 14.0 + ws + 8.0 + wb;
+    let total = ws + 8.0 + wb;
     let left = (x - total * anchor).round();
     let right = left + total;
     let bx = (right - wb).round();
     lemon::spaced(ui.c, MARK_BIG, bx, (y - lh_b / 2.0).round(), plug::WORDMARK, spec.word, 2.0);
     let sx = (bx - 8.0 - ws).round();
-    lemon::spaced(ui.c, MARK_SMALL, sx, (y - lh_s / 2.0).round() + 1.0, brand::MAIN, "LEMON", 2.5);
-    lemon::lemon_mark(ui.c, left + 5.0, y, 4.0, brand::MAIN);
+    lemon::spaced(ui.c, MARK_SMALL, sx, (y - lh_s / 2.0).round() + 1.0, brand::MAIN, "MANGO", 2.5);
     let r = Rect::span(left - 2.0, right, y - 12.0, y + 12.0);
     ui.hit(r, Target::Logo);
     r

@@ -330,9 +330,12 @@ impl App {
     }
 
     /// Lemon Studio's main window came to the foreground (`on`) or left it: the working time counts only while it is in
-    /// front (`WorkClock`).
+    /// front (`WorkClock`), and a tooltip goes with the focus (the cursor may be over another program's window).
     pub fn main_focused(&mut self, on: bool) {
         self.state.credits.clock.focus(on, Instant::now());
+        if !on {
+            self.tooltip_pause();
+        }
     }
 
     /// Periodic (`App::tick`): the Info page shows the time spent by the minute; it repaints when that changes.
@@ -640,7 +643,7 @@ mod tests {
         };
         edit(&mut app, InfoField::Title, "Saved song");
         edit(&mut app, InfoField::Comments, "one");
-        let path = std::env::temp_dir().join(format!("lemonstudio-info-{}.flp", std::process::id()));
+        let path = std::env::temp_dir().join(format!("mangostudio-info-{}.flp", std::process::id()));
         app.save_to(path.clone());
         assert!(!app.unsaved(), "{:?}", app.state.message);
         app.open(path.clone());
@@ -742,7 +745,7 @@ mod tests {
         pick(&mut app, "Jazz");
         assert_eq!(app.state.project.info.genre.as_deref(), Some("Jazz"));
         assert!(app.unsaved());
-        let path = std::env::temp_dir().join(format!("lemonstudio-genre-{}.flp", std::process::id()));
+        let path = std::env::temp_dir().join(format!("mangostudio-genre-{}.flp", std::process::id()));
         app.save_to(path.clone());
         app.open(path.clone());
         let _ = std::fs::remove_file(&path);
@@ -790,7 +793,7 @@ mod tests {
         let mut p = crate::app::default_project();
         let ch = p.channels[0].clone();
         p.channels = vec![ch.clone(), ch.clone(), ch];
-        p.channels[0].plugin = Some("Lemon Sampler".into());
+        p.channels[0].plugin = Some("Mango Sampler".into());
         p.channels[1].plugin = Some(String::new());
         p.channels[2].plugin = None;
         (p.channels[0].mixer_track, p.channels[1].mixer_track, p.channels[2].mixer_track) = (1, 1, 0);
@@ -913,7 +916,7 @@ mod tests {
         app.state.credits.clock = WorkClock::default();
         app.state.credits.clock.focus(true, Instant::now() - Duration::from_secs(600));
         assert!(!app.unsaved(), "counting is no change");
-        let path = std::env::temp_dir().join(format!("lemonstudio-worktime-{}.flp", std::process::id()));
+        let path = std::env::temp_dir().join(format!("mangostudio-worktime-{}.flp", std::process::id()));
         app.save_to(path.clone());
         assert!(!app.unsaved(), "{:?}", app.state.message);
         let bytes = std::fs::read(&path).expect("saved");
@@ -975,7 +978,7 @@ mod tests {
         app.state.project.info.title = Some("Bien Duro".into());
         app.state.project.info.author = Some("Astes".into());
         app.state.project.info.comments = Some("line one\nline two".into());
-        let path = std::env::temp_dir().join(format!("lemonstudio-showinfo-{}.flp", std::process::id()));
+        let path = std::env::temp_dir().join(format!("mangostudio-showinfo-{}.flp", std::process::id()));
         app.save_to(path.clone());
         let bytes = std::fs::read(&path).expect("saved");
         assert_eq!(os_flp::project::load(&os_flp::FlpFile::parse(&bytes).expect("parse")).expect("load").show_info, Some(true));

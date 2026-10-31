@@ -91,7 +91,7 @@ impl App {
         let Some(path) = list().into_iter().nth(n) else { return };
         if !path.is_file() {
             remove(&path);
-            let text = crate::dialog::spans(&["Lemon Studio cannot find ", &path.to_string_lossy(), ".\n\nIt was taken off the recent projects."]);
+            let text = crate::dialog::spans(&["Mango Studio cannot find ", &path.to_string_lossy(), ".\n\nIt was taken off the recent projects."]);
             return self.tell(crate::dialog::Kind::Error, "Project not found", text);
         }
         self.ask_discard("opening another project", crate::dialog::Next::Open(path));

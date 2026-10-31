@@ -43,8 +43,19 @@ pub struct AudioCfg {
 pub const SMALLEST: u32 = 0;
 
 /// The buffer length until one is chosen. Linux: 512 frames, since devices' own lengths there are often short enough
-/// to pop; elsewhere the device's own.
-pub const DEFAULT_BUFFER: Option<u32> = if cfg!(target_os = "linux") { Some(512) } else { None };
+/// to pop. Android: 1024 frames, because AAudio's own (about two bursts, under ten milliseconds) is a budget the
+/// engine's synthesis does not fit in on a phone's CPU, and without a length the stream's capacity stays at those two
+/// bursts (the dynamic tuning grows one burst per underrun, never beyond it) — so every block was an underrun and
+/// playback crackled like an emulator's; at 1024 the stream opens with twice the length as capacity (42 ms), and the
+/// feeder's render-ahead (transport's `MARGIN_MIN`, a quarter second there) covers the rest. Elsewhere the device's
+/// own.
+pub const DEFAULT_BUFFER: Option<u32> = if cfg!(target_os = "linux") {
+    Some(512)
+} else if cfg!(target_os = "android") {
+    Some(1024)
+} else {
+    None
+};
 
 impl Default for AudioCfg {
     fn default() -> AudioCfg {
@@ -157,7 +168,7 @@ impl AudioCfg {
         match self.buffer {
             Some(SMALLEST) => s += "buffer=smallest\n",
             Some(b) => s += &format!("buffer={b}\n"),
-            // The device's own length, where the default is another (Linux).
+            // The device's own length, where the default is another (Linux, Android).
             None if DEFAULT_BUFFER.is_some() => s += "buffer=device\n",
             None => {}
         }
@@ -322,7 +333,13 @@ pub fn output(cfg: &AudioCfg) -> Result<Output, String> {
     let mut config: StreamConfig = supported.into();
     #[cfg(target_os = "linux")]
     let through_server = server(cfg);
-    #[cfg(not(target_os = "linux"))]
+    // Android asks for a length the way a stream through a sound server does. The gate below kept it off — a
+    // desktop-only read — so the 512 (now 1024) `DEFAULT_BUFFER` above never reached the stream and AAudio opened
+    // with its own two-burst budget still. (`through_server` reads oddly here, but what it drives — "always ask for
+    // a length" — is exactly what Android needs.)
+    #[cfg(target_os = "android")]
+    let through_server = true;
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     let through_server = false;
     if let Some(b) = wanted_buffer(cfg.buffer, through_server) {
         let fits = match range {

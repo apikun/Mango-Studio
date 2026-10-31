@@ -1,4 +1,5 @@
 // Copyright (C) 2026 ItsAlphaNeon
+// Copyright (C) 2026 Artig3nce
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
@@ -180,6 +181,20 @@ pub fn led(c: &mut Canvas, t: &Palette, cx: f32, cy: f32, radius: f32, st: State
     }
 }
 
+/// A round LED (the mixer's switches, after FL's): `led`'s rim and colours in a circle.
+pub fn led_round(c: &mut Canvas, t: &Palette, cx: f32, cy: f32, radius: f32, st: State) {
+    let h = radius - 0.5;
+    let r = Rect::new(cx - h, cy - h, 2.0 * h, 2.0 * h);
+    let rim = if st.hover { t.brand_grey(brand::DARK_HIGHLIGHT).shade(0.15) } else { t.toolbar_line.shade(-0.2) };
+    c.fill_rrect(r, h, rim);
+    let inner = r.inset(1.0);
+    if st.on {
+        c.fill_rect_gradient(inner, t.brand_led(brand::HIGHLIGHT), t.brand_led(brand::MAIN), h - 1.0);
+    } else {
+        c.fill_rrect(inner, h - 1.0, t.brand_led(brand::COLORED_DARK).mix(t.toolbar_line, 0.35));
+    }
+}
+
 /// Selection frame: a rounded lemon outline.
 pub fn focus_frame(c: &mut Canvas, t: &Palette, r: Rect, width: f32) {
     c.stroke_rrect(r, r_small(t), width.min(2.0), t.accent);
@@ -216,11 +231,16 @@ pub fn knob(c: &mut Canvas, t: &Palette, cx: f32, cy: f32, r: f32, value: f32, b
     if show_arc && span > 0.01 {
         c.arc(cx, cy, ring, a0.min(a1), span, w, value_col);
     }
-    let base = if st.hover && !off { Color::rgb(0x505050) } else { Color::rgb(0x454545) };
+    let base = if st.hover && !off { Color::rgb(0x383838) } else { Color::rgb(0x2c2c2c) };
     c.fill_rect_gradient(Rect::new(cx - disc, cy - disc, 2.0 * disc, 2.0 * disc), base.shade(0.06), base.shade(-0.18), disc);
-    let pc = if off { t.text_faint } else if st.hover { Color::rgb(0xffffff) } else { t.glyph };
-    let (p0, p1) = (disc * 0.25, (disc - 1.5).max(1.0));
-    c.line(cx + p0 * a.cos(), cy + p0 * a.sin(), cx + p1 * a.cos(), cy + p1 * a.sin(), (disc * 0.22).clamp(1.4, 2.2), pc);
+    // Knobs point with a rounded mango bar, as the mixer's faders and the logo's bars.
+    let pc = if off { t.text_faint } else if st.hover { t.brand_lit(brand::HIGHLIGHT) } else { t.brand_lit(brand::MAIN) };
+    let w = (disc * 0.36).clamp(1.8, 4.0);
+    let (p0, p1) = (disc * 0.2 + w / 2.0, (disc - 1.0 - w / 2.0).max(w / 2.0));
+    let (x0, y0, x1, y1) = (cx + p0 * a.cos(), cy + p0 * a.sin(), cx + p1 * a.cos(), cy + p1 * a.sin());
+    c.line(x0, y0, x1, y1, w, pc);
+    c.fill_circle(x0, y0, w / 2.0, pc);
+    c.fill_circle(x1, y1, w / 2.0, pc);
 }
 
 /// Fader cap centred at (cx, cy) (same 14 x 23 footprint as Classic): rounded, with a centre line that turns
@@ -280,23 +300,32 @@ pub fn window_button_hover(c: &mut Canvas, t: &Palette, b: Rect, close: bool) {
 
 // ---------------------------------------------------------------- DAW parts
 
-/// Step button of the channel rack. `odd` = odd group of four, `dim` = past the pattern end, `playing` = the
-/// step playing now.
+/// Step button of the channel rack, built as FL's in Lemon's colours: a dark border, a face lighter at the top with a
+/// highlight along its cap, a dash below the top edge (lemon at the play position) and a shade along the bottom.
+/// `odd` = odd group of four, `dim` = past the pattern end, `playing` = the step playing now.
 #[allow(clippy::too_many_arguments)]
 pub fn step(c: &mut Canvas, t: &Palette, r: Rect, on: bool, odd: bool, dim: bool, hover: bool, playing: bool) {
-    let rad = r_small(t);
+    let rad = r_small(t).min(3.0);
     let (a, b) = if dim { (t.step_dim_a, t.step_dim_b) } else { (t.step_a, t.step_b) };
     let off = if odd { b } else { a };
     let (main, high) = (t.brand_sel(brand::MAIN), t.brand_sel(brand::HIGHLIGHT));
-    if on {
-        let (top, bottom) = if dim { (main.mix(off, 0.45), main.mix(off, 0.55)) } else { (high.mix(main, 0.5), main) };
-        c.fill_rect_gradient(r, if hover { high } else { top }, bottom, rad);
-        if playing {
-            c.fill_rrect(Rect::new(r.x + 2.0, r.bottom() - 4.0, r.w - 4.0, 2.0), 1.0, t.brand_sel(brand::COLORED_DARK));
-        }
-    } else {
-        c.fill_rrect(r, rad, if hover { off.mix(t.brand_grey(brand::DARK_HIGHLIGHT), 0.4) } else { off });
-    }
+    let face = match (on, dim) {
+        (true, false) => high.mix(main, 0.6),
+        (true, true) => main.mix(off, 0.5),
+        (false, _) => off.shade(0.08),
+    };
+    let face = if hover { face.mix(t.brand_grey(brand::DARK_HIGHLIGHT), 0.3) } else { face };
+    c.fill_rrect(r, rad, face.shade(-0.5));
+    let f = r.inset(1.0);
+    c.fill_rect_gradient(f, face.shade(0.16), face.shade(-0.1), (rad - 1.0).max(1.0));
+    c.fill_rect(Rect::new(f.x + 1.0, f.y, f.w - 2.0, 1.0), face.shade(0.28));
+    let dash = match (playing, on) {
+        (true, true) => t.brand_sel(brand::COLORED_DARK),
+        (true, false) => main,
+        (false, _) => face.shade(-0.5),
+    };
+    c.fill_rrect(Rect::new(f.x + 2.0, f.y + 2.5, f.w - 4.0, 2.0), 1.0, dash);
+    c.fill_rect(Rect::new(f.x + 1.0, f.bottom() - 2.0, f.w - 2.0, 2.0), face.shade(-0.3));
 }
 
 /// Channel name button (rack): `col` = the channel colour. Returns the label colour.
@@ -355,24 +384,24 @@ pub mod plug {
     use os_theme::Color;
 
     /// Editor background.
-    pub const BG: Color = Color::rgb(0x2b2b2b);
+    pub const BG: Color = Color::rgb(0x121212);
     /// Panels and cards: outline and fill.
-    pub const PANEL_LINE: Color = Color::rgb(0x232323);
-    pub const PANEL: Color = Color::rgb(0x333333);
+    pub const PANEL_LINE: Color = Color::rgb(0x0e0e0e);
+    pub const PANEL: Color = Color::rgb(0x1a1a1a);
     /// Display wells (graphs, the waveform, fader slots): outline and fill.
-    pub const WELL_LINE: Color = Color::rgb(0x181818);
-    pub const WELL: Color = Color::rgb(0x1f1f1f);
+    pub const WELL_LINE: Color = Color::rgb(0x060606);
+    pub const WELL: Color = Color::rgb(0x0b0b0b);
     /// Fields (lists, button groups): outline and fill.
-    pub const FIELD_LINE: Color = Color::rgb(0x1c1c1c);
-    pub const FIELD: Color = Color::rgb(0x262626);
+    pub const FIELD_LINE: Color = Color::rgb(0x090909);
+    pub const FIELD: Color = Color::rgb(0x141414);
     /// Raised button face and its outline.
-    pub const FACE: Color = Color::rgb(0x464646);
-    pub const FACE_LINE: Color = Color::rgb(0x232323);
+    pub const FACE: Color = Color::rgb(0x2c2c2c);
+    pub const FACE_LINE: Color = Color::rgb(0x0e0e0e);
     /// Knob track ring.
-    pub const TRACK: Color = Color::rgb(0x1d1d1d);
+    pub const TRACK: Color = Color::rgb(0x0c0c0c);
     /// Grid lines in wells, marks and ticks.
-    pub const GRID: Color = Color::rgb(0x262626);
-    pub const TICK: Color = Color::rgb(0x4a4a4a);
+    pub const GRID: Color = Color::rgb(0x161616);
+    pub const TICK: Color = Color::rgb(0x383838);
     /// Secondary text (captions, glyphs) and disabled text.
     pub const DIM: Color = Color::rgb(0xa3a3a3);
     pub const FAINT: Color = Color::rgb(0x7f7f7f);
@@ -381,8 +410,8 @@ pub mod plug {
     /// The large plugin name in wordmarks.
     pub const WORDMARK: Color = Color::rgb(0x6b6b6b);
     /// Page strip (standalone editors): background and its bottom line.
-    pub const STRIP: Color = Color::rgb(0x252525);
-    pub const STRIP_LINE: Color = Color::rgb(0x1c1c1c);
+    pub const STRIP: Color = Color::rgb(0x121212);
+    pub const STRIP_LINE: Color = Color::rgb(0x090909);
 }
 
 /// Plugin knob: a full track ring, the value as an arc in `arc` over 270° (from the centre when `bipolar`), a dark disc
@@ -417,9 +446,9 @@ pub fn dial_disc(c: &mut Canvas, cx: f32, cy: f32, disc: f32, st: State) {
 pub fn toggle(c: &mut Canvas, cx: f32, cy: f32, on: bool, st: State) {
     let r = Rect::new(cx - 6.0, cy - 6.0, 12.0, 12.0);
     if st.disabled {
-        c.stroke_rrect(r.inset(0.5), 3.5, 1.0, if st.hover { Color::rgb(0x5f5f5f) } else { Color::rgb(0x4f4f4f) });
+        c.stroke_rrect(r.inset(0.5), 3.5, 1.0, if st.hover { Color::rgb(0x444444) } else { Color::rgb(0x333333) });
         if on {
-            c.fill_rrect(r.inset(3.0), 2.0, Color::rgb(0x6e6436));
+            c.fill_rrect(r.inset(3.0), 2.0, Color::rgb(0x6e4422));
         }
         return;
     }
@@ -428,8 +457,8 @@ pub fn toggle(c: &mut Canvas, cx: f32, cy: f32, on: bool, st: State) {
         let (top, bottom) = if st.hover { (Color::rgb(0xffffff).mix(brand::HIGHLIGHT, 0.5), brand::HIGHLIGHT.mix(brand::MAIN, 0.5)) } else { (brand::HIGHLIGHT, brand::MAIN) };
         c.fill_rect_gradient(r.inset(1.0), top, bottom, 3.0);
     } else {
-        c.fill_rrect(r, 4.0, if st.hover { Color::rgb(0x111111) } else { plug::FIELD_LINE });
-        c.fill_rrect(r.inset(1.0), 3.0, if st.hover { Color::rgb(0x363636) } else { Color::rgb(0x2a2a2a) });
+        c.fill_rrect(r, 4.0, if st.hover { Color::rgb(0x040404) } else { plug::FIELD_LINE });
+        c.fill_rrect(r.inset(1.0), 3.0, if st.hover { Color::rgb(0x242424) } else { Color::rgb(0x181818) });
     }
 }
 
@@ -451,7 +480,7 @@ pub fn plug_well(c: &mut Canvas, r: Rect, radius: f32) {
 
 /// Field (list box, button group): outlined dark rounded box; hover lifts it, pressed darkens it.
 pub fn field(c: &mut Canvas, r: Rect, st: State) {
-    let fill = if st.pressed { Color::rgb(0x1f1f1f) } else if st.hover { Color::rgb(0x2f2f2f) } else { plug::FIELD };
+    let fill = if st.pressed { Color::rgb(0x0e0e0e) } else if st.hover { Color::rgb(0x1e1e1e) } else { plug::FIELD };
     outlined(c, r, 6.0_f32.min(r.h / 2.0), plug::FIELD_LINE, fill);
 }
 
@@ -459,7 +488,7 @@ pub fn field(c: &mut Canvas, r: Rect, st: State) {
 /// only an outline (olive when on, as a disabled `toggle`). Returns the colour for its label or glyph.
 pub fn plug_button(c: &mut Canvas, r: Rect, radius: f32, st: State) -> Color {
     if st.disabled {
-        c.stroke_rrect(r.inset(0.5), (radius - 0.5).max(0.0), 1.0, if st.on { Color::rgb(0x6e6436) } else { plug::FACE });
+        c.stroke_rrect(r.inset(0.5), (radius - 0.5).max(0.0), 1.0, if st.on { Color::rgb(0x6e4422) } else { plug::FACE });
         return plug::OFF;
     }
     if st.on {
@@ -467,7 +496,7 @@ pub fn plug_button(c: &mut Canvas, r: Rect, radius: f32, st: State) -> Color {
         lit(c, r.inset(1.0), (radius - 1.0).max(0.0), st.hover);
         return brand::COLORED_DARK;
     }
-    let fill = if st.pressed { Color::rgb(0x3a3a3a) } else if st.hover { Color::rgb(0x525252) } else { plug::FACE };
+    let fill = if st.pressed { Color::rgb(0x222222) } else if st.hover { Color::rgb(0x3a3a3a) } else { plug::FACE };
     outlined(c, r, radius, plug::FACE_LINE, fill);
     if st.hover { Color::rgb(0xffffff) } else { brand::TEXT }
 }
@@ -510,15 +539,14 @@ pub fn lemon_mark(c: &mut Canvas, cx: f32, cy: f32, s: f32, col: Color) {
     c.fill_polygon(&oval(-s * 1.02, s * 0.18, s * 0.14), col);
 }
 
-/// A plugin wordmark: the lemon mark and "LEMON" small in lemon above `name` large and grey, right-aligned at
+/// A plugin wordmark: "MANGO" small in mango above `name` large and grey, right-aligned at
 /// `right` (or left-aligned at `right` when `left`). `top` = top of the small line.
 pub fn wordmark(c: &mut Canvas, x: f32, top: f32, left: bool, name: &str, big: Font, small: Font) {
-    let (wn, ws) = (spaced_width(c, big, name, 3.0), spaced_width(c, small, "LEMON", 3.0));
+    let (wn, ws) = (spaced_width(c, big, name, 3.0), spaced_width(c, small, "MANGO", 3.0));
     let lh_s = c.line_height(small);
     let x0 = if left { x } else { x - wn };
-    let sx = if left { x0 + 12.0 } else { (x - ws).max(x0 + 12.0) };
-    lemon_mark(c, sx - 8.0, top + lh_s / 2.0, 4.5, brand::MAIN);
-    spaced(c, small, sx, top, brand::MAIN, "LEMON", 3.0);
+    let sx = if left { x0 } else { (x - ws).max(x0) };
+    spaced(c, small, sx, top, brand::MAIN, "MANGO", 3.0);
     spaced(c, big, x0, top + lh_s - 2.0, plug::WORDMARK, name, 3.0);
 }
 
@@ -530,7 +558,7 @@ pub fn text_tab(c: &mut Canvas, cell: Rect, x: f32, name: &str, font: Font, col:
     if active {
         outlined(c, pill, 7.0, plug::FIELD_LINE, plug::FIELD);
     } else if st.hover {
-        c.fill_rrect(pill, 7.0, Color::rgb(0x333333));
+        c.fill_rrect(pill, 7.0, Color::rgb(0x1e1e1e));
     }
     let ink = if active { col } else if st.hover { brand::TEXT } else { plug::DIM };
     let lh = c.line_height(font);
@@ -549,7 +577,7 @@ pub fn choice_button(c: &mut Canvas, r: Rect, on: bool, col: Color, st: State) -
     if on {
         outlined(c, r, 5.0, plug::FIELD_LINE, plug::FIELD);
     } else if st.hover {
-        c.fill_rrect(r, 5.0, Color::rgb(0x3d3d3d));
+        c.fill_rrect(r, 5.0, Color::rgb(0x242424));
     }
     if on { col } else if st.hover { brand::TEXT } else { plug::DIM }
 }
@@ -567,7 +595,7 @@ pub fn page_strip(c: &mut Canvas, r: Rect, pages: u8, active: u8, hover: Option<
         if on {
             lit(c, cell, 8.0, false);
         } else if hover == Some(i) {
-            c.fill_rrect(cell, 8.0, Color::rgb(0x333333));
+            c.fill_rrect(cell, 8.0, Color::rgb(0x1e1e1e));
         }
         let col = if on { brand::COLORED_DARK } else if hover == Some(i) { brand::TEXT } else { plug::DIM };
         icon(c, i, cell.cx(), cell.cy(), col);

@@ -1,13 +1,14 @@
 // Copyright (C) 2026 ItsAlphaNeon
+// Copyright (C) 2026 ravenmarkdev-alt
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
 //! The plugin database: the user's plugin choices (search folders, favourites, hidden plugins, combining formats), the
-//! scan cache, finding plugin files, the sweep that scans the files that changed, and the lists the plugin menus and
-//! the plugin manager show.
+//! scan cache, finding plugin files, the sweep that scans the files that changed, and the lists the plugin menus, the
+//! plugin browser and the plugin manager show.
 // spec: ui/plugin-manager.md, ui/plugin-menu.md
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -75,6 +76,8 @@ pub struct Prefs {
     /// Plugin uids (`format:id`).
     pub favorites: Vec<String>,
     pub hidden: Vec<String>,
+    /// The plugins added last, newest first (the plugin browser's Recent).
+    pub recent: Vec<String>,
 }
 
 impl Default for Prefs {
@@ -90,9 +93,13 @@ impl Default for Prefs {
             standard_off: Vec::new(),
             favorites: Vec::new(),
             hidden: Vec::new(),
+            recent: Vec::new(),
         }
     }
 }
+
+/// How many plugins Recent keeps.
+const RECENT_MAX: usize = 12;
 
 const PREFS_FILE: &str = "plugins.json";
 const CACHE_FILE: &str = "plugin_cache.json";
@@ -103,7 +110,7 @@ fn read_json<T: for<'de> Deserialize<'de>>(name: &str) -> Option<T> {
         return None;
     }
     let bytes = std::fs::read(os_paths::user_file(name)?).ok()?;
-    serde_json::from_slice(&bytes).map_err(|e| eprintln!("lemonstudio: {name}: {e}")).ok()
+    serde_json::from_slice(&bytes).map_err(|e| eprintln!("mangostudio: {name}: {e}")).ok()
 }
 
 /// Writes a JSON file into the user folder through a temporary file, so a failed write keeps the old one.
@@ -119,10 +126,10 @@ fn write_json<T: Serialize>(name: &str, v: &T) {
     match serde_json::to_vec_pretty(v) {
         Ok(text) if std::fs::write(&tmp, &text).is_ok() => {
             if let Err(e) = std::fs::rename(&tmp, &p) {
-                eprintln!("lemonstudio: {name}: {e}");
+                eprintln!("mangostudio: {name}: {e}");
             }
         }
-        _ => eprintln!("lemonstudio: could not write {name}"),
+        _ => eprintln!("mangostudio: could not write {name}"),
     }
 }
 
@@ -151,6 +158,13 @@ impl Prefs {
     /// Shows or hides plugin `uid` in the plugin menus.
     pub fn toggle_hidden(&mut self, uid: &str) {
         toggle(&mut self.hidden, uid);
+    }
+
+    /// Plugin `uid` was just added to the project: first in Recent, which keeps `RECENT_MAX`.
+    pub fn note_recent(&mut self, uid: &str) {
+        self.recent.retain(|u| u != uid);
+        self.recent.insert(0, uid.to_string());
+        self.recent.truncate(RECENT_MAX);
     }
 
     /// Adds search folder `path` (on); false when it is listed already (added or standard).
@@ -350,6 +364,9 @@ pub enum DirKind {
     Standard(Format),
     /// Added by the user: searched for every format.
     Added,
+    /// A Windows plugin folder bridged by yabridge (`crate::yabridge`): searched for its VST 2 bridges only, the
+    /// Windows plugins themselves left alone.
+    Windows,
 }
 
 /// A folder the scan searches (§2).
@@ -369,6 +386,7 @@ impl SearchDir {
             DirKind::Standard(Format::Vst2) => "VST2",
             DirKind::Standard(Format::Native) => "native",
             DirKind::Added => "All formats",
+            DirKind::Windows => "Windows",
         }
     }
 }
@@ -431,6 +449,7 @@ pub fn discover(dirs: &[SearchDir], native: Vec<PathBuf>) -> Vec<Found> {
             DirKind::Standard(Format::Vst2) => Formats { vst2: true, ..Formats::NONE },
             DirKind::Standard(Format::Native) => Formats::NONE,
             DirKind::Added => Formats { clap: true, vst3: true, vst2: true },
+            DirKind::Windows => Formats { vst2: true, ..Formats::NONE },
         };
         walk(&d.path, 0, formats, &mut walked, &mut seen, &mut out);
     }
@@ -487,7 +506,11 @@ fn walk(dir: &Path, depth: u32, formats: Formats, walked: &mut HashSet<(PathBuf,
 /// A file named like a built-in Lemon plugin, or like one by an earlier name (same plugin id): the built-in copy
 /// is used (a second copy in the process would share the built-in one's editor window class).
 fn builtin_file(p: &Path) -> bool {
+<<<<<<< HEAD
     let builtin = [crate::plugins::LEMON_SAMPLER, crate::plugins::LEMON_EQ, crate::plugins::PULP_FILTER, crate::plugins::PRESS, crate::osc3::LEMON_TRIO, crate::citrus::CITRUS, crate::slicer::LEMON_SLICER, crate::drums::LEMON_DRUMS];
+=======
+    let builtin = [crate::plugins::LEMON_SAMPLER, crate::plugins::LEMON_EQ, crate::plugins::PULP_FILTER, crate::plugins::PRESS, crate::osc3::LEMON_TRIO, crate::citrus::CITRUS, crate::plugins::MANGO_WAVETABLE, crate::plugins::MANGO_SOUNDFONT];
+>>>>>>> main
     let old = crate::plugins::OLD_NAMES.map(|(old, _)| old);
     p.file_stem().is_some_and(|s| builtin.iter().chain(&crate::plugins::LINKED_EFFECTS).chain(&old).any(|b| s.eq_ignore_ascii_case(b)))
 }
@@ -702,6 +725,16 @@ pub fn format_label(f: Format) -> &'static str {
     crate::plugins::format_name(f)
 }
 
+/// The format of a Windows plugin bridged by yabridge, as the plugin table shows it.
+pub fn windows_label(f: Format) -> &'static str {
+    match f {
+        Format::Clap => "CLAP · Windows",
+        Format::Vst3 => "VST3 · Windows",
+        Format::Vst2 => "VST2 · Windows",
+        Format::Native => "native",
+    }
+}
+
 /// Generator categories, then effect categories, in table order (spec: ui/plugin-menu.md §4); "Other" last.
 const GEN_CATS: &[(&str, &[&str])] = &[("Drum", &["drum", "drum-machine"]), ("Sampler", &["sampler", "granular"]), ("Keys", &["piano"]), ("Synth", &["synthesizer", "synth"])];
 const FX_CATS: &[(&str, &[&str])] = &[
@@ -727,7 +760,11 @@ pub fn categories(effects: bool) -> impl Iterator<Item = &'static str> {
 /// A plugin's category (§4): the first category in table order with a matching feature string.
 pub fn category(d: &Descriptor) -> &'static str {
     match d.name.as_str() {
+<<<<<<< HEAD
         n if n == crate::plugins::LEMON_SAMPLER || n == crate::slicer::LEMON_SLICER || n == crate::drums::LEMON_DRUMS => return "Sampler",
+=======
+        n if n == crate::plugins::LEMON_SAMPLER || n == crate::plugins::MANGO_SOUNDFONT => return "Sampler",
+>>>>>>> main
         n if n == crate::osc3::LEMON_TRIO || n == crate::citrus::CITRUS => return "Synth",
         n if n == crate::plugins::LEMON_EQ => return "EQ",
         _ => {}
@@ -738,7 +775,7 @@ pub fn category(d: &Descriptor) -> &'static str {
 }
 
 /// The built-in plugins' vendor in the menus.
-pub const BUILTIN_VENDOR: &str = "Lemon Studio";
+pub const BUILTIN_VENDOR: &str = "Mango Studio";
 pub const NO_VENDOR: &str = "(unknown vendor)";
 
 /// A plugin as the menus list it.
@@ -755,8 +792,13 @@ pub struct Entry {
     pub format: Format,
     pub category: &'static str,
     pub favorite: bool,
+<<<<<<< HEAD
     /// Built into Lemon Studio (the browser's Installed ▸ Built-in, spec: ui/browser.md §2).
     pub builtin: bool,
+=======
+    /// A Windows plugin bridged by yabridge (`crate::yabridge::is_bridged`): the lists say so.
+    pub windows: bool,
+>>>>>>> main
 }
 
 /// What the plugin menus list: shown plugins only, alphabetical by label.
@@ -778,9 +820,20 @@ fn entries(list: &[Available], prefs: &Prefs, missing: &HashSet<String>) -> Vec<
         .map(|&i| {
             let d = &list[i].desc;
             let twin = shown.iter().any(|&k| k != i && list[k].desc.format != d.format && base_name(&list[k].desc.name) == base_name(&d.name));
+<<<<<<< HEAD
             let label = if twin { format!("{} ({})", strip_marker(&d.name), format_label(d.format)) } else { d.name.clone() };
             let builtin = crate::project_plugins::is_builtin(d);
             let vendor = if builtin {
+=======
+            let windows = crate::yabridge::is_bridged(&d.path);
+            let label = match (twin, windows) {
+                (true, true) => format!("{} ({}, Windows)", strip_marker(&d.name), format_label(d.format)),
+                (true, false) => format!("{} ({})", strip_marker(&d.name), format_label(d.format)),
+                (false, true) => format!("{} (Windows)", d.name),
+                (false, false) => d.name.clone(),
+            };
+            let vendor = if crate::project_plugins::is_builtin(d) {
+>>>>>>> main
                 BUILTIN_VENDOR.to_string()
             } else if d.vendor.trim().is_empty() {
                 NO_VENDOR.to_string()
@@ -788,11 +841,101 @@ fn entries(list: &[Available], prefs: &Prefs, missing: &HashSet<String>) -> Vec<
                 d.vendor.trim().to_string()
             };
             let uid = d.uid();
+<<<<<<< HEAD
             Entry { index: i, name: d.name.clone(), label, favorite: prefs.is_favorite(&uid), uid, vendor, format: d.format, category: category(d), builtin }
+=======
+            Entry { index: i, name: d.name.clone(), label, favorite: prefs.is_favorite(&uid), uid, vendor, format: d.format, category: category(d), windows }
+>>>>>>> main
         })
         .collect();
     v.sort_by_key(|e| e.label.to_lowercase());
     v
+}
+
+/// Channel layouts and versions that plugin families add to their names ("CLA-76 Mono", "H-Reverb Stereo/5.1",
+/// "Abbey Road Plates Live Mono").
+const VARIANT_WORDS: [&str; 11] = ["mono", "stereo", "live", "quad", "lcr", "5.0", "5.1", "6.0", "6.1", "7.0", "7.1"];
+
+/// `name` without its trailing variant words (`VARIANT_WORDS`, alone or joined by '/'); a name that is nothing but
+/// variant words keeps its first.
+pub fn variant_base(name: &str) -> &str {
+    let name = name.trim();
+    let mut end = name.len();
+    while let Some(i) = name[..end].rfind(' ') {
+        let word = &name[i + 1..end];
+        if !word.split('/').all(|w| VARIANT_WORDS.iter().any(|v| w.eq_ignore_ascii_case(v))) {
+            break;
+        }
+        end = name[..i].trim_end().len();
+    }
+    &name[..end]
+}
+
+/// A plugin family as the plugin browser lists it: the plugins of one kind and vendor whose names differ only in
+/// variant words, under one name.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Family {
+    pub name: String,
+    pub vendor: String,
+    pub category: &'static str,
+    pub effect: bool,
+    /// The variants, alphabetical; `pick` is the one a click or drag adds.
+    pub variants: Vec<Entry>,
+    pub pick: usize,
+}
+
+impl Family {
+    /// The variant a click or drag adds.
+    pub fn entry(&self) -> &Entry {
+        &self.variants[self.pick]
+    }
+
+    /// A Windows plugin bridged by yabridge (the variant a click adds).
+    pub fn windows(&self) -> bool {
+        self.entry().windows
+    }
+
+    /// Whether any variant is starred.
+    pub fn favorite(&self) -> bool {
+        self.variants.iter().any(|e| e.favorite)
+    }
+
+    /// What variant `e` adds to the family's name ("Live Mono"); its whole label when it adds nothing.
+    pub fn variant_label<'a>(&self, e: &'a Entry) -> &'a str {
+        e.label.strip_prefix(self.name.as_str()).map(str::trim).filter(|v| !v.is_empty()).unwrap_or(&e.label)
+    }
+}
+
+/// Which variant of a family a click adds, lowest first: no variant words or plain stereo, then mono in stereo out,
+/// mono, the live versions, surround.
+fn pick_rank(e: &Entry, base: &str) -> u8 {
+    let name = strip_marker(&e.name);
+    let tail = name.get(base.len()..).unwrap_or("").trim().to_lowercase();
+    let (live, surround) = (tail.contains("live"), tail.contains('.'));
+    match () {
+        _ if tail.is_empty() || tail == "stereo" => 0,
+        _ if surround => 4,
+        _ if live => 3,
+        _ if tail.contains("stereo") => 1,
+        _ => 2,
+    }
+}
+
+/// The families of `list` (one kind, as `Lists` holds it), alphabetical. A family of one plugin keeps its label.
+pub fn families(list: &[Entry], effect: bool) -> Vec<Family> {
+    let mut by: BTreeMap<(String, String), Vec<&Entry>> = BTreeMap::new();
+    for e in list {
+        by.entry((variant_base(strip_marker(&e.name)).to_lowercase(), e.vendor.to_lowercase())).or_default().push(e);
+    }
+    by.into_values()
+        .map(|mut es| {
+            es.sort_by_key(|e| e.label.to_lowercase());
+            let name = if es.len() == 1 { es[0].label.clone() } else { variant_base(strip_marker(&es[0].name)).to_string() };
+            let pick = (0..es.len()).min_by_key(|&i| (pick_rank(es[i], &name), i)).unwrap_or(0);
+            let (vendor, category) = (es[0].vendor.clone(), es[0].category);
+            Family { name, vendor, category, effect, variants: es.into_iter().cloned().collect(), pick }
+        })
+        .collect()
 }
 
 /// Plugin table columns (§2 group 3).
@@ -869,7 +1012,7 @@ pub fn table(available: &[Available], effects: &[Available], cache: &Cache, pref
             let note = into[i].map(|j| format!("Listed as {} ({})", list[j].desc.name, format_label(list[j].desc.format))).unwrap_or_default();
             rows.push(TableRow {
                 name: d.name.clone(),
-                format: format_label(d.format),
+                format: if crate::yabridge::is_bridged(&d.path) { windows_label(d.format) } else { format_label(d.format) },
                 kind: kind_label(kind),
                 vendor: if builtin { BUILTIN_VENDOR.into() } else { d.vendor.clone() },
                 status: if builtin { "built in".into() } else { "ok".into() },
@@ -979,6 +1122,12 @@ pub struct Db {
     pub top: usize,
     /// While a scan runs.
     pub progress: Option<Progress>,
+    /// yabridge and Wine, for Windows plugins (`crate::yabridge::info`, read at startup and after each scan).
+    pub windows: crate::yabridge::Info,
+    /// Windows plugin folders the next scan adds to yabridge's (Add Windows folder...).
+    pub win_add: Vec<PathBuf>,
+    /// While Install yabridge or a Windows installer runs: what the plugin manager says.
+    pub win_busy: Option<String>,
 }
 
 impl Default for Db {
@@ -994,6 +1143,9 @@ impl Default for Db {
             finding: false,
             top: 0,
             progress: None,
+            windows: crate::yabridge::Info::default(),
+            win_add: Vec::new(),
+            win_busy: None,
         }
     }
 }
@@ -1105,7 +1257,7 @@ mod tests {
     /// Installed bundles of the built-in Lemon plugins are not scanned: the built-in copy is used.
     #[test]
     fn installed_copies_of_built_in_plugins_are_skipped() {
-        for name in ["Lemon Sampler.clap", "Lemon Parametric EQ.vst3", "Lemon Limiter.clap", "Lemon Chorus.vst3", "lemon stereo shaper.clap"] {
+        for name in ["Mango Sampler.clap", "Mango Parametric EQ.vst3", "Mango Limiter.clap", "Mango Chorus.vst3", "lemon stereo shaper.clap"] {
             assert!(builtin_file(Path::new(&format!("/Library/Audio/Plug-Ins/{name}"))), "{name}");
         }
         assert!(!builtin_file(Path::new("/Library/Audio/Plug-Ins/Surge XT.clap")));
@@ -1199,7 +1351,7 @@ mod tests {
         w("added/Vendor/Deep/Er/Fx.vst3");
         w("added/Bundle.vst3/Contents/x86_64-win/Bundle.vst3");
         w("added/Bundle.vst3/Contents/x86_64-win/Inner.clap");
-        w("added/Lemon Sampler.clap");
+        w("added/Mango Sampler.clap");
         w("added/Open Parametric EQ 2.vst3/Contents/x86_64-win/Open Parametric EQ 2.vst3");
         w("added/readme.txt");
         // A macOS CLAP bundle: a plugin on macOS, a plain folder elsewhere.

@@ -174,7 +174,7 @@ pub const EXPORT_ZIP_LABEL: &str = "Export zipped project...";
 pub const FILE_EXIT: usize = 19;
 /// OPTIONS > Theme settings (flat index: header counts).
 #[cfg(test)]
-pub const OPT_THEME: usize = 5;
+pub const OPT_THEME: usize = 6;
 /// OPTIONS > Metronome (spec: ui/metronome.md §1).
 pub const METRONOME_LABEL: &str = "Metronome";
 /// OPTIONS > the record options (spec: ui/recording.md §3).
@@ -199,7 +199,7 @@ pub const ALIGN_LABEL: &str = "Align all channel editors";
 /// Index of the OPTIONS menu.
 pub const OPTIONS_MENU: usize = 5;
 /// OPTIONS > Project info (the toolbar's info button).
-pub const OPT_INFO: usize = 9;
+pub const OPT_INFO: usize = 10;
 /// HELP > About (the toolbar logo).
 pub const HELP_MENU: usize = 7;
 pub const HELP_ABOUT: usize = 6;
@@ -306,6 +306,7 @@ const PAT_CMDS: &[Item] = &[
 
 const VIEW_ITEMS: &[Item] = &[
     head("Windows"),
+<<<<<<< HEAD
     it("Arranger", "F5").on().tick().cmd(MenuCmd::Window(Win::Playlist)),
     it("Piano roll", "F7").on().tick().cmd(MenuCmd::Window(Win::PianoRoll)),
     it("Instrument rack", "F6").on().tick().cmd(MenuCmd::Window(Win::ChannelRack)),
@@ -315,6 +316,18 @@ const VIEW_ITEMS: &[Item] = &[
     it("Plugin palette", "F8").on().cmd(MenuCmd::PluginPalette),
     it("Tap tempo", "Ctrl+F5").tick().cmd(MenuCmd::Window(Win::Tapper)),
     it("Touch controller", "Alt+F7").tick().cmd(MenuCmd::Window(Win::Touch)),
+=======
+    it("Command palette", "Ctrl+Shift+Space").on(),
+    it("Playlist", "F5").on().tick(),
+    it("Piano roll", "F7").on().tick(),
+    it("Channel rack", "F6").on().tick(),
+    it("Mixer", "F9").on().tick(),
+    it("Browser", "Alt+F8").on().tick(),
+    it("Project picker", "Ctrl+F8").on(),
+    it("Plugin picker", "F8").on(),
+    it("Tempo tapper", "Ctrl+F5").tick(),
+    it("Touch controller", "Alt+F7").tick(),
+>>>>>>> main
     it("Script output", ""),
     it("Toolbars", "").sub().cmd(MenuCmd::Sub(Sub::Toolbars)),
     it("Plugin performance monitor", "").cmd(MenuCmd::Window(Win::Perf)),
@@ -337,12 +350,22 @@ const VIEW_ITEMS: &[Item] = &[
 
 const OPTIONS: &[Item] = &[
     head("System"),
+<<<<<<< HEAD
     it("MIDI settings", "F10").cmd(MenuCmd::Settings(crate::views::settings::MIDI)),
     it("Audio settings", "").cmd(MenuCmd::Settings(crate::views::settings::AUDIO)),
     it("General settings", "").cmd(MenuCmd::Settings(crate::views::settings::GENERAL)),
     it("File settings", "").cmd(MenuCmd::Settings(crate::views::settings::FILE)),
     it("Theme settings", "").cmd(MenuCmd::Settings(crate::views::settings::THEME)),
     it("Manage plugins", "").cmd(MenuCmd::Settings(crate::views::settings::PLUGINS)),
+=======
+    it("MIDI settings", "F10"),
+    it("Audio settings", ""),
+    it("Recording settings", ""),
+    it("General settings", ""),
+    it("File settings", ""),
+    it("Theme settings", ""),
+    it("Manage plugins", ""),
+>>>>>>> main
     head("Project"),
     it("Project general settings", "").cmd(MenuCmd::Settings(crate::views::settings::PROJECT)),
     it("Project info", "F11").cmd(MenuCmd::Settings(crate::views::settings::INFO)),
@@ -463,6 +486,15 @@ pub fn bar_layout(c: &mut os_ui::Canvas) -> [(f32, f32, f32); 8] {
 /// browser), or a ▸ entry whose submenu is built.
 pub fn works(menu: usize, item: &Item) -> bool {
     item.works
+<<<<<<< HEAD
+=======
+        || ((menu == OPTIONS_MENU || menu == ADD_MENU) && crate::views::settings::tab_for_menu(item.label).is_some())
+        || (menu == PATTERNS && crate::patterns::Cmd::from_label(item.label).is_some())
+        || (menu == VIEW && (win_of(item.label).is_some() || matches!(item.label, "Plugin picker" | "Project picker" | "Command palette")))
+        || (menu == EDIT_MENU && matches!(item.label, "Undo" | "Redo"))
+        || crate::params::menu_handles(item.label)
+        || crate::browser::Jump::from_label(menu, item.label).is_some()
+>>>>>>> main
         || opens_sub(menu, item)
         || match item.cmd {
             MenuCmd::Settings(_) | MenuCmd::Pattern(_) | MenuCmd::Window(_) | MenuCmd::PluginPalette | MenuCmd::ClipPalette | MenuCmd::Undo | MenuCmd::Redo | MenuCmd::Params(_) => true,
@@ -530,8 +562,18 @@ pub fn needs_file(menu: usize, label: &str) -> bool {
 }
 
 fn item_action(menu: usize, i: usize, item: &Item) -> Action {
+<<<<<<< HEAD
     if let MenuCmd::Window(w) = item.cmd {
         return Action::ToggleWin(w);
+=======
+    if menu == VIEW {
+        if item.label == "Command palette" {
+            return Action::ToggleCommandPalette;
+        }
+        if let Some(w) = win_of(item.label) {
+            return Action::ToggleWin(w);
+        }
+>>>>>>> main
     }
     if opens_sub(menu, item) {
         return Action::MenuSub(menu, i);
@@ -568,11 +610,22 @@ pub const CLIPS_SEL_LABEL: &str = "Switch selected audio clip channels to";
 /// What fills the submenu of ▸ entry `label` of `menu`: the app's own popup items, as the same submenu shows them
 /// elsewhere (the channel rack's options menu, the plugin menus). `None` while it is not built: the entry stays greyed
 /// out. The dropdown opens it to the right of the row (`App::open_menu_sub`).
+<<<<<<< HEAD
 pub fn sub_items(cmd: MenuCmd) -> Option<fn(&State) -> Vec<crate::playlist::PItem>> {
     let MenuCmd::Sub(sub) = cmd else { return None };
     Some(match sub {
         // spec: ui/midi-files.md §1: FL's Import holds only MIDI file...
         Sub::Import => |_| vec![crate::playlist::PItem::new("MIDI file...", crate::playlist::Cmd::MidiImport(false))],
+=======
+pub fn submenu(menu: usize, label: &str) -> Option<fn(&State) -> Vec<crate::playlist::PItem>> {
+    match (menu, label) {
+        // spec: ui/midi-files.md §1: FL's Import holds only MIDI file...; the audio file import is ours, the same files
+        // a drop on the playlist takes (Load sample's filter).
+        (0, "Import") => Some(|_| vec![
+            crate::playlist::PItem::new("MIDI file...", crate::playlist::Cmd::MidiImport(false)),
+            crate::playlist::PItem::new("Audio file...", crate::playlist::Cmd::AudioImport),
+        ]),
+>>>>>>> main
         // spec: ui/project-templates.md
         Sub::Templates => crate::project_files::template_items,
         // spec: ui/plugin-menu.md §1: the effects, a pick into the selected mixer track's first empty slot as from F8.
@@ -953,9 +1006,10 @@ fn row_text(ui: &mut Ui, rr: Rect, label: &str, key: &str, sub: bool, ok: bool) 
         ui.c.text_right(font.italic(), right, rr.y + 3.0 + dy, sc, key);
     }
     if sub {
+        // As bright as the label, so it shows on the dark menus; dim with it.
         let ax = rr.right() - 11.0;
-        ui.c.line(ax, my - 3.5, ax + 3.5, my, 1.2, t.menu_pop_dim);
-        ui.c.line(ax + 3.5, my, ax, my + 3.5, 1.2, t.menu_pop_dim);
+        ui.c.line(ax, my - 3.5, ax + 3.5, my, 1.5, color);
+        ui.c.line(ax + 3.5, my, ax, my + 3.5, 1.5, color);
     }
 }
 
@@ -1093,7 +1147,12 @@ mod tests {
         }
         assert_eq!(built, ["New from template", "Import", "Effect", "Toolbars", "Arrange windows", "Background", ONE_CLICK_LABEL, DUMP_LOG_LABEL, LOGGER_SETTINGS_LABEL, CLIPS_ALL_LABEL, CLIPS_SEL_LABEL, EDITORS_LABEL, DECLICK_LABEL]);
         let labels = |menu, label| submenu(menu, label).unwrap()(&app.state).iter().map(|p| p.label.to_string()).collect::<Vec<_>>();
+<<<<<<< HEAD
         let modes = ["Fade out only", "Transient", "Transient (tail continues)", "Standard (tail continues)", "Smooth (tail continues)", "Crossfade (tail continues)"];
+=======
+        assert_eq!(labels(0, "Import"), ["MIDI file...", "Audio file..."], "the audio file import sits beside the MIDI one");
+        let modes = ["Out only (no bleeding)", "Transient (no bleeding)", "Transient (bleeding)", "Generic (bleeding)", "Smooth (bleeding)", "Crossfade (bleeding)"];
+>>>>>>> main
         assert_eq!(labels(TOOLS_MENU, DECLICK_LABEL), modes, "the six declick modes in order (spec: audio/declick.md)");
         assert_eq!(labels(TOOLS_MENU, EDITORS_LABEL), ["Attached", "Detached"]);
         // ADD > Effect: the effect plugin menu as a submenu (spec: ui/plugin-menu.md §1-2).

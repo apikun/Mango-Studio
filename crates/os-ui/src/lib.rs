@@ -1786,7 +1786,7 @@ mod tests {
         let Ok(mut c) = Canvas::new(200, 50, 1.0) else { return }; // no system font: skip
         c.clear(Color::rgb(0x000000));
         c.fill_rrect(Rect::new(5.0, 5.0, 20.0, 20.0), 3.0, Color::rgb(0xff0000));
-        let w = c.text(Font::new(14), 40.0, 10.0, Color::rgb(0xffffff), "Lemon Studio");
+        let w = c.text(Font::new(14), 40.0, 10.0, Color::rgb(0xffffff), "Mango Studio");
         assert!(w > 40.0);
         assert!(c.pixmap.data().chunks_exact(4).any(|p| p[0] > 200 && p[1] > 200));
     }

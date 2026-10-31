@@ -39,7 +39,7 @@ const RIGHT_WAVE: Color = Color::rgb(0xd4b43c);
 const FLAG: Color = Color::rgb(0xf0a030);
 const LOOP: Color = Color::rgb(0xe0505a);
 const RECORD: Color = Color::rgb(0xe8503c);
-const SEL: Color = Color::rgb(0xffe066);
+const SEL: Color = Color::rgb(0xffa33a);
 
 const CAPTION: Font = Font::condensed(9, 0).bold();
 const VALUE: Font = Font::new(11).bold();
@@ -563,7 +563,6 @@ fn toolbar(ui: &mut Ui, l: &Look, lay: &Layout) {
     let nx = lay.w - 45.0 - name_w;
     let wr = Rect::new(nx - 16.0, 3.0, name_w + 18.0, 19.0);
     ui.hit(wr, Target::Wordmark);
-    lemon::lemon_mark(ui.c, nx - 9.0, 12.5, 4.5, brand::MAIN);
     lemon::spaced(ui.c, MARK, nx, 3.0, plug::WORDMARK, "TESLA", 3.0);
     let lv = lay.meter;
     lemon::plug_well(ui.c, lv, 3.0);
@@ -1203,7 +1202,7 @@ pub fn hint(t: &Target, l: &HintCtx) -> String {
         Target::Menu(MenuId::Options) => "Options".into(),
         Target::Menu(m) => MENUS.iter().find(|(id, _)| id == m).map_or("", |(_, n)| n).to_string(),
         Target::Tool(i) => TOOLS[*i].hint.to_string(),
-        Target::Wordmark => "Tesla: Lemon Studio's audio editor and recorder".into(),
+        Target::Wordmark => "Tesla: Mango Studio's audio editor and recorder".into(),
         Target::Mute => "Mute input".into(),
         Target::Format => "Channels / press to convert".into(),
         Target::Wave => String::new(),

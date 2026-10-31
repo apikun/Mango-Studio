@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
+<<<<<<< HEAD
 //! Lemon Slicer: Lemon Studio's recreation of Fruity Slicer as a VST3 / CLAP plugin (nih-plug). A loop cut into
+=======
+//! Mango Slicer: Lemon Studio's recreation of Fruity Slicer as a VST3 / CLAP plugin (nih-plug). A loop cut into
+>>>>>>> main
 //! slices; slice n plays on key C5 + n; the editor dumps the slices to the piano roll (host link).
 //!
 // spec: plugins/lemon-slicer.md, plugins/fruity-slicer.md, plugins/plugin-formats.md
@@ -18,7 +22,11 @@ pub mod view;
 
 use std::num::NonZeroU32;
 use std::path::Path;
+<<<<<<< HEAD
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+=======
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+>>>>>>> main
 use std::sync::{Arc, Mutex};
 
 use nih_plug::prelude::*;
@@ -171,7 +179,11 @@ impl LemonSlicer {
 }
 
 impl Plugin for LemonSlicer {
+<<<<<<< HEAD
     const NAME: &'static str = "Lemon Slicer";
+=======
+    const NAME: &'static str = "Mango Slicer";
+>>>>>>> main
     const VENDOR: &'static str = "Lemon Studio";
     const URL: &'static str = "";
     const EMAIL: &'static str = "";
@@ -202,7 +214,11 @@ impl Plugin for LemonSlicer {
         let path = sample_file(&self.params);
         if path != self.shared.loaded_path() {
             if let Err(e) = self.shared.open(&path, &self.params) {
+<<<<<<< HEAD
                 nih_log!("Lemon Slicer: {e}");
+=======
+                nih_log!("Mango Slicer: {e}");
+>>>>>>> main
             }
         } else {
             self.shared.rebuild(&self.params);
@@ -294,6 +310,12 @@ pub(crate) mod tests {
 
     /// A loop file: 2 s of 44.1 kHz stereo 16-bit clicks every half second, with `extra` chunks.
     pub(crate) fn loop_file(name: &str, extra: &[Vec<u8>]) -> std::path::PathBuf {
+<<<<<<< HEAD
+=======
+        // A file each call: the tests run in parallel, and one's cleanup must not delete another's loop.
+        static N: AtomicU32 = AtomicU32::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
+>>>>>>> main
         let frames = 88200usize;
         let mut data = Vec::with_capacity(frames * 4);
         for i in 0..frames {
@@ -320,7 +342,11 @@ pub(crate) mod tests {
         let mut file = b"RIFF".to_vec();
         file.extend((body.len() as u32).to_le_bytes());
         file.extend(body);
+<<<<<<< HEAD
         let p = std::env::temp_dir().join(format!("lemon-slicer-{}-{name}.wav", std::process::id()));
+=======
+        let p = std::env::temp_dir().join(format!("lemon-slicer-{}-{name}-{n}.wav", std::process::id()));
+>>>>>>> main
         std::fs::write(&p, file).unwrap();
         p
     }

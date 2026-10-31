@@ -1,4 +1,5 @@
 // Copyright (C) 2026 ItsAlphaNeon
+// Copyright (C) 2026 Artig3nce
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
@@ -80,15 +81,18 @@ pub struct Slider {
     pub default: u16,
     /// What one wheel notch over it adds or takes.
     pub step: u16,
+    /// The unit its value shows in ("ms"); empty shows none.
+    pub unit: &'static str,
 }
 
-/// General ▸ Display: the UI's scale. System = the monitor's (the operating system's); a percentage replaces it.
+/// General ▸ Display: the UI's scale. Auto = the monitor's, smaller on monitors over 1080 px tall (`crate::gui_scale`);
+/// System = the monitor's (the operating system's); a percentage replaces it.
 /// Read by `crate::gui_scale` at every event and paint, so it applies at once (FL needs a restart). Spec:
 /// ui/ui-scaling.md §1.
 pub const MAIN_GUI_SCALING: Combo = Combo {
     key: "main_gui_scaling",
     label: "Main GUI scaling",
-    choices: &["System", "100%", "125%", "150%", "175%", "200%", "250%", "300%", "350%", "400%"],
+    choices: &["Auto", "System", "100%", "125%", "150%", "175%", "200%", "250%", "300%", "350%", "400%"],
     default: 0,
 };
 
@@ -514,6 +518,43 @@ pub const OMNI_CHANNEL: Number = Number { key: "midi_omni_channel", label: "Omni
 pub const MARKER_CHANNEL: Number = Number { key: "midi_marker_channel", label: "Song marker jump MIDI channel", min: 0, max: 16, default: 0 };
 pub const MUTING_CHANNEL: Number = Number { key: "midi_muting_channel", label: "Instrument muting MIDI channel", min: 0, max: 16, default: 0 };
 
+/// Audio ▸ Rolling sampler: keeps the newest master output in a rolling buffer in memory, shown in the strip between
+/// the toolbar and the playlist (issue #82); a selection on the strip drops onto the playlist as an audio clip. Off
+/// by default: nothing is captured, the strip is gone, nothing is allocated until it is on.
+pub const ROLLING_SAMPLER: Check = Check { key: "rolling_sampler", label: "Rolling sampler", default: false };
+
+/// Audio ▸ Rolling sampler: how much of the past the buffer keeps (a change empties it).
+pub const ROLLING_BUFFER: Combo =
+    Combo { key: "rolling_buffer", label: "Rolling buffer", choices: &["30 s", "1 min", "2 min", "5 min", "10 min"], default: 2 };
+
+/// Audio ▸ Rolling sampler: a dragged-out clip's leading and trailing silence is cut (issue #82).
+pub const ROLLING_TRIM: Check = Check { key: "rolling_trim", label: "Remove silence", default: false };
+
+/// The rolling strip's wave colour (`rolling_wave_color` in `settings.txt`): empty, the theme's; else the RGB as
+/// `rrggbb` hex (`crate::views::rolling`'s paint, the settings' picker).
+pub fn rolling_wave_color() -> Option<u32> {
+    read(|st| st.get("rolling_wave_color").map(|v| v.to_owned())).and_then(|v| u32::from_str_radix(&v, 16).ok())
+}
+
+/// Sets the rolling strip's wave colour; `None` back to the theme's.
+pub fn set_rolling_wave_color(c: Option<u32>) {
+    match c {
+        Some(c) => write("rolling_wave_color", &format!("{c:06x}")),
+        None => write("rolling_wave_color", ""),
+    }
+}
+
+/// The rolling buffer's seconds the `ROLLING_BUFFER` combo asks for.
+pub fn rolling_secs() -> f32 {
+    match index(&ROLLING_BUFFER) {
+        0 => 30.0,
+        1 => 60.0,
+        3 => 300.0,
+        4 => 600.0,
+        _ => 120.0,
+    }
+}
+
 /// The declared checks.
 pub const CHECKS: &[&Check] = &[
     &RESTORE_AFTER_SOLO,
@@ -566,9 +607,11 @@ pub const CHECKS: &[&Check] = &[
     &AUTO_ACCEPT,
     &FOOT_PEDAL,
     &TOGGLE_ON_RELEASE,
+    &ROLLING_SAMPLER,
+    &ROLLING_TRIM,
 ];
 /// The declared combos.
-pub const COMBOS: &[&Combo] = &[&MAIN_GUI_SCALING, &POPUPS_SCALING, &NOTE_NAMES, &BLACK_NOTES, &AUTOSAVE, &BACKUP_LOCATION, &STARTUP_PROJECT, &COLORFUL_WAVEFORMS, &ANIMATION_REFRESH_RATE, &TRANSPARENT_WINDOWS, &CURSORS_SCALING, &LEGACY_SCALING, &OPTIMIZE_FOR, &RESAMPLING_QUALITY, &PROJECT_DATA_SIZE_WARNING, &TOOLBARS_SCALING, &ASK_DATA_FOLDER, &VELOCITY_LINK, &RELEASE_LINK, &CONTROLLER_TYPE, &SYNC_TYPE];
+pub const COMBOS: &[&Combo] = &[&MAIN_GUI_SCALING, &POPUPS_SCALING, &NOTE_NAMES, &BLACK_NOTES, &AUTOSAVE, &BACKUP_LOCATION, &STARTUP_PROJECT, &COLORFUL_WAVEFORMS, &ANIMATION_REFRESH_RATE, &TRANSPARENT_WINDOWS, &CURSORS_SCALING, &LEGACY_SCALING, &OPTIMIZE_FOR, &RESAMPLING_QUALITY, &PROJECT_DATA_SIZE_WARNING, &TOOLBARS_SCALING, &ASK_DATA_FOLDER, &VELOCITY_LINK, &RELEASE_LINK, &CONTROLLER_TYPE, &SYNC_TYPE, &ROLLING_BUFFER];
 /// The declared combos no settings page shows (a window of their own does): General ▸ Input ▸ Manage shortcuts' rows
 /// (`crate::shortcuts`). Read by the declaration tests.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -580,19 +623,23 @@ pub const NUMBERS: &[&Number] = &[&MAX_UNDO_LEVELS, &BACKUP_MAXIMUM, &BROWSER_PR
 /// General ▸ Input: the editors scroll by the vertical wheel's steps times value / 256 (`crate::scroll_speed`);
 /// Shift+wheel keeps its own step. Spec: ui/settings-choices.md "Input: Vertical and Horizontal scrolling speed".
 pub const VERTICAL_SCROLLING_SPEED: Slider =
-    Slider { key: "vertical_scrolling_speed", label: "Vertical scrolling speed", max: 512, default: 256, step: 32 };
+    Slider { key: "vertical_scrolling_speed", label: "Vertical scrolling speed", max: 512, default: 256, step: 32, unit: "" };
 
 /// General ▸ Input: the same for the sideways wheel (a tilt wheel, a touchpad's sideways swipe).
 pub const HORIZONTAL_SCROLLING_SPEED: Slider =
-    Slider { key: "horizontal_scrolling_speed", label: "Horizontal scrolling speed", max: 512, default: 256, step: 32 };
+    Slider { key: "horizontal_scrolling_speed", label: "Horizontal scrolling speed", max: 512, default: 256, step: 32, unit: "" };
 
 /// General ▸ Display: how slowly the editors' scrolls ease to where the wheel or a scroll arrow sends them, 0 (they
 /// jump) to 512 (`crate::smooth`). Spec: ui/settings-choices.md "Display: Smoothing, Animation refresh rate,
 /// Transparent menus and windows (2026-10-16)".
-pub const SMOOTHING: Slider = Slider { key: "smoothing", label: "Smoothing", max: 512, default: 128, step: 16 };
+pub const SMOOTHING: Slider = Slider { key: "smoothing", label: "Smoothing", max: 512, default: 128, step: 16, unit: "" };
+
+/// Audio ▸ Rolling sampler: the fade in and out a dragged-out clip's edges get, 0 (none) to 10 ms, aligned to the
+/// nearest zero crossing so a clip that starts mid-waveform does not click (issue #82).
+pub const ROLLING_FADE: Slider = Slider { key: "rolling_fade", label: "Fade in/out", max: 10, default: 3, step: 1, unit: "ms" };
 
 /// The declared sliders.
-pub const SLIDERS: &[&Slider] = &[&SMOOTHING, &VERTICAL_SCROLLING_SPEED, &HORIZONTAL_SCROLLING_SPEED];
+pub const SLIDERS: &[&Slider] = &[&SMOOTHING, &VERTICAL_SCROLLING_SPEED, &HORIZONTAL_SCROLLING_SPEED, &ROLLING_FADE];
 
 /// Audio ▸ Mixer: the insert track the browser's previews enter the mixer at; 0, shown "---", plays them straight into
 /// the master (`crate::preview_track`). The wheel offers the open project's insert tracks (`App::settings_number`), up
@@ -697,6 +744,12 @@ pub fn choice(c: &Combo) -> &'static str {
     c.choices[index(c)]
 }
 
+/// Whether combo `c` is on its choice by name ("Main", the first of the scaling combos): what it does follows another
+/// setting, rather than a value of its own.
+pub fn is_main_choice(c: &Combo) -> bool {
+    index(c) == 0
+}
+
 /// Chooses entry `i` of combo `c` and keeps it (an index past its choices changes nothing).
 pub fn set_choice(c: &Combo, i: usize) {
     if let Some(v) = c.choices.get(i) {
@@ -741,6 +794,10 @@ impl App {
             crate::mix_threads::apply();
         }
         self.state.message = Some(format!("{}: {}", c.label, if on { "on" } else { "off" }));
+        // The rolling sampler's strip appears or goes with the setting (and the tape with it).
+        if c.key == ROLLING_SAMPLER.key {
+            self.rolling_sync();
+        }
         self.invalidate();
     }
 
@@ -769,6 +826,10 @@ impl App {
         if c.key == TOOLBARS_SCALING.key && !self.state.toolbar.hidden {
             let dy = crate::views::band_h(&self.state) - band;
             crate::app::lift_windows(&mut self.state, dy);
+        }
+        // The rolling sampler's tape: a new length empties it (`App::rolling_sync`).
+        if c.key == ROLLING_BUFFER.key {
+            self.rolling_sync();
         }
         self.invalidate();
         Some(format!("{}: {}", c.label, choice(c)))
@@ -817,7 +878,7 @@ mod tests {
 junk
 main_gui_scaling=150%
 ");
-        assert_eq!(index_in(&s, &MAIN_GUI_SCALING), 3);
+        assert_eq!(index_in(&s, &MAIN_GUI_SCALING), 4);
         assert!(check_in(&s, &TEST_CHECK), "missing: the default");
         assert!(!check_in(&Store::parse("test_check=0"), &TEST_CHECK));
         let s = Store::parse("test_check=yes
@@ -825,18 +886,18 @@ main_gui_scaling=90%
 main_gui_scaling = 200% 
 ");
         assert!(check_in(&s, &TEST_CHECK));
-        assert_eq!(index_in(&s, &MAIN_GUI_SCALING), 5, "the last line counts");
+        assert_eq!(index_in(&s, &MAIN_GUI_SCALING), 6, "the last line counts");
         assert_eq!(index_in(&Store::parse("main_gui_scaling=90%"), &MAIN_GUI_SCALING), 0);
     }
 
     #[test]
     fn reading_and_changing_settings() {
-        assert_eq!((check(&TEST_CHECK), choice(&MAIN_GUI_SCALING)), (true, "System"));
+        assert_eq!((check(&TEST_CHECK), choice(&MAIN_GUI_SCALING)), (true, "Auto"));
         assert!(!toggle(&TEST_CHECK) && !check(&TEST_CHECK));
         set_check(&TEST_CHECK, true);
         assert!(check(&TEST_CHECK));
-        set_choice(&MAIN_GUI_SCALING, 2);
-        assert_eq!((index(&MAIN_GUI_SCALING), choice(&MAIN_GUI_SCALING)), (2, "125%"));
+        set_choice(&MAIN_GUI_SCALING, 3);
+        assert_eq!((index(&MAIN_GUI_SCALING), choice(&MAIN_GUI_SCALING)), (3, "125%"));
         set_choice(&MAIN_GUI_SCALING, 99);
         assert_eq!(choice(&MAIN_GUI_SCALING), "125%");
         assert_eq!(find_combo("Main GUI scaling"), Some(&MAIN_GUI_SCALING));
@@ -925,7 +986,7 @@ main_gui_scaling = 200%
         let mut app = App::new(None);
         app.open_settings(settings::GENERAL);
         app.paint(&mut c, None);
-        // Main GUI scaling opens its list under its box, System marked; Language is not available yet.
+        // Main GUI scaling opens its list under its box, Auto marked; Language is not available yet.
         let combo = |app: &App| {
             app.hits.iter().rev().find(|h| matches!(&h.action, Action::Settings(SAct::Combo(l, ..)) if *l == MAIN_GUI_SCALING.label)).map(|h| h.rect).expect("the combo works")
         };
@@ -938,7 +999,7 @@ main_gui_scaling = 200%
         assert_eq!(p.items[0].mark, crate::playlist::Mark::Radio(true));
         assert!(p.items[1..].iter().all(|it| it.mark == crate::playlist::Mark::Radio(false)));
         assert!((p.y - r.bottom()).abs() < 2.0, "under its box");
-        let item = hit_rect(&app, &Action::PlPopup(2));
+        let item = hit_rect(&app, &Action::PlPopup(3));
         click(&mut app, &mut c, item);
         assert!(app.state.playlist.popup.is_none());
         assert_eq!(choice(&MAIN_GUI_SCALING), "125%");
@@ -946,7 +1007,7 @@ main_gui_scaling = 200%
         // The menu marks the new choice.
         let r = combo(&app);
         click(&mut app, &mut c, r);
-        assert_eq!(app.state.playlist.popup.as_ref().unwrap().items[2].mark, crate::playlist::Mark::Radio(true));
+        assert_eq!(app.state.playlist.popup.as_ref().unwrap().items[3].mark, crate::playlist::Mark::Radio(true));
         app.state.playlist.popup = None;
         // The test check (Updates, further down the page: the groups above it folded) toggles.
         app.state.settings.folded.extend(["Display", "Language", "Input", "Undo history"]);
@@ -1143,7 +1204,7 @@ main_gui_scaling = 200%
             "fast_sample_preview=0\nauto_keep_long_audio_on_disk=0\nthreaded_project_sample_loading=1\ncursors_scaling=250%\nlegacy_scaling=300%\n",
         );
         assert_eq!((checks(&s), combos(&s)), ([false, false, true], (6, 3)));
-        assert_eq!(CURSORS_SCALING.choices, MAIN_GUI_SCALING.choices);
+        assert_eq!(CURSORS_SCALING.choices, &MAIN_GUI_SCALING.choices[1..], "Main GUI scaling's, but Auto");
         assert_eq!(LEGACY_SCALING.choices, ["Main", "100%", "200%", "300%", "400%"]);
 
         let Ok(mut c) = Canvas::new(1920, 1080, 1.0) else { return };

@@ -343,14 +343,14 @@ impl Logic {
                 m.sep(Cmd::None);
                 m.add(MenuItem::item("Create automation clip").enabled(self.hosted), Cmd::Automate(id.clone()));
                 m.sep(Cmd::None);
-                m.add(MenuItem::item("About Lemon Delay..."), Cmd::About);
+                m.add(MenuItem::item("About Mango Delay..."), Cmd::About);
                 m
             }
             MenuReq::About => {
                 let mut m = MenuDef::new(MenuStyle::Context);
-                m.head("Lemon Delay", Cmd::None);
+                m.head("Mango Delay", Cmd::None);
                 m.add(MenuItem::item(&format!("Version {}", env!("CARGO_PKG_VERSION"))).enabled(false), Cmd::None);
-                m.add(MenuItem::item("Lemon Studio's recreation of Fruity Delay 3").enabled(false), Cmd::None);
+                m.add(MenuItem::item("Mango Studio's recreation of Fruity Delay 3").enabled(false), Cmd::None);
                 m
             }
         }
@@ -482,7 +482,7 @@ mod win32 {
                 tracking: false,
                 slot: slot.clone(),
             });
-            let title = pw::wide("Lemon Delay");
+            let title = pw::wide("Mango Delay");
             let hwnd = CreateWindowExW(
                 0,
                 class.as_ptr(),
@@ -1030,7 +1030,7 @@ mod tests {
         assert!(matches!(l.pick(&MenuReq::Param("dry".into()), Cmd::About, 1.0, 2.0).last(), Some(Act::Menu(MenuReq::About, _, _))));
         let (x, y) = centre(&l, &Target::Logo);
         assert!(matches!(l.down(x, y, Btn::Left, Mods::default(), false).last(), Some(Act::Menu(MenuReq::About, _, _))));
-        assert_eq!(l.hint, "Lemon Delay");
+        assert_eq!(l.hint, "Mango Delay");
         assert!(l.wheel(x, y, 1.0, Mods::default()).is_empty());
     }
 

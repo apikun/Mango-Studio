@@ -1,4 +1,5 @@
 // Copyright (C) 2026 ItsAlphaNeon
+// Copyright (C) 2026 Artig3nce
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
@@ -34,14 +35,18 @@ impl Design {
     pub fn name(self) -> &'static str {
         match self {
             Design::Citrus => "Citrus",
-            Design::Lemon => "Lemon",
+            Design::Lemon => "Mango",
         }
     }
 
-    /// A skin by name; `Classic` (Citrus's old name, still in older `design.txt` files) is Citrus.
+    /// A skin by name; `Classic` (Citrus's old name, still in older `design.txt` files) is Citrus, and `Lemon` (this
+    /// skin's name before Mango Studio, in Lemon Studio's `design.txt`) is Mango.
     pub fn parse(s: &str) -> Option<Design> {
         if s.trim().eq_ignore_ascii_case("classic") {
             return Some(Design::Citrus);
+        }
+        if s.trim().eq_ignore_ascii_case("lemon") {
+            return Some(Design::Lemon);
         }
         Design::ALL.into_iter().find(|d| d.name().eq_ignore_ascii_case(s.trim()))
     }
@@ -179,39 +184,40 @@ pub fn classic_keys() -> Keys {
     }
 }
 
-/// The Lemon brand palette (owner's base colours, 2026-10-12) and the in-between shades derived from it.
+/// The Mango brand palette (Mango Studio's colours, 2026-10-28, after Lemon Studio's 2026-10-12 lemon palette) and
+/// the in-between shades derived from it. The module keeps its name: the skin is the same design in other colours.
 pub mod lemon {
     use crate::Color;
-    /// Main colour (pale yellow): "on" controls, selection, the playhead, lit steps.
-    pub const MAIN: Color = Color::rgb(0xffe066);
+    /// Main colour (mango orange): "on" controls, selection, the playhead, lit steps.
+    pub const MAIN: Color = Color::rgb(0xffa33a);
     /// Highlight: the bright top of lit controls, hover on lit controls, selected notes.
-    pub const HIGHLIGHT: Color = Color::rgb(0xfff1b8);
+    pub const HIGHLIGHT: Color = Color::rgb(0xffd59a);
     /// Dark: the main surface (toolbar).
-    pub const DARK: Color = Color::rgb(0x3b3b3b);
+    pub const DARK: Color = Color::rgb(0x181818);
     /// Dark highlight: raised faces on hover, hairlines, knob tracks.
-    pub const DARK_HIGHLIGHT: Color = Color::rgb(0x666666);
-    /// Coloured dark: glyphs and text on lemon, unlit LEDs, hovered menu rows.
-    pub const COLORED_DARK: Color = Color::rgb(0x473900);
-    /// In-between: a darker lemon for edges of lit controls and meter bodies.
-    pub const DEEP: Color = Color::rgb(0xc9a92c);
+    pub const DARK_HIGHLIGHT: Color = Color::rgb(0x4a4a4a);
+    /// Coloured dark: glyphs and text on mango, unlit LEDs, hovered menu rows.
+    pub const COLORED_DARK: Color = Color::rgb(0x4a2300);
+    /// In-between: a darker mango for edges of lit controls and meter bodies.
+    pub const DEEP: Color = Color::rgb(0xd9731a);
     /// Text on the greys.
     pub const TEXT: Color = Color::rgb(0xececec);
 }
 
-/// Lemon: Classic lightness -> Lemon lightness. Classic's toolbar (0.19) lands on DARK (#3b3b3b, 0.231) and the
-/// 0.33 raised greys on DARK_HIGHLIGHT (#666666, 0.40); the near-black lists and rulers lift to about #151515.
+/// Mango: Classic lightness -> Mango lightness, black (2026-10-28): Classic's black stays black, its toolbar (0.19) lands
+/// near DARK (#181818), and the raised greys (0.33) on about #363636, so the parts still stand apart.
 const LEMON_RAMP: &[(f32, f32)] = &[
-    (0.0, 0.07),
-    (0.03, 0.085),
-    (0.06, 0.10),
-    (0.10, 0.125),
-    (0.13, 0.15),
-    (0.155, 0.18),
-    (0.19, 0.231),
-    (0.23, 0.285),
-    (0.27, 0.33),
-    (0.33, 0.40),
-    (0.5, 0.56),
+    (0.0, 0.0),
+    (0.03, 0.018),
+    (0.06, 0.032),
+    (0.10, 0.048),
+    (0.13, 0.062),
+    (0.155, 0.078),
+    (0.19, 0.098),
+    (0.23, 0.128),
+    (0.27, 0.16),
+    (0.33, 0.21),
+    (0.5, 0.38),
     (0.8, 0.84),
     (1.0, 1.0),
 ];
@@ -221,7 +227,7 @@ fn map_of(d: Design) -> Option<DesignMap> {// This code is a part of L e m o n S
         Design::Citrus => None,
         Design::Lemon => Some(DesignMap {
             ramp: LEMON_RAMP,
-            tint: (48.0, 0.0),
+            tint: (30.0, 0.0),
             accent: lemon::MAIN,
             highlight: lemon::MAIN,
             mute: lemon::MAIN,
@@ -239,16 +245,16 @@ fn overrides(d: Design) -> Vec<(&'static str, Color)> {
         Design::Citrus => vec![],
         Design::Lemon => vec![
             ("toolbar", DARK),
-            ("toolbar_line", c(0x2a2a2a)),
-            ("toolbar_edge", c(0x4a4a4a)),
-            ("sunken", c(0x2b2b2b)),
-            ("sunken_dark", c(0x232323)),
-            ("time_panel", c(0x232323)),
-            ("menu_panel", c(0x333333)),
+            ("toolbar_line", c(0x111111)),
+            ("toolbar_edge", c(0x1e1e1e)),
+            ("sunken", c(0x111111)),
+            ("sunken_dark", c(0x0e0e0e)),
+            ("time_panel", c(0x0e0e0e)),
+            ("menu_panel", c(0x141414)),
             ("menu_text", TEXT),
-            ("news_panel", c(0x333333)),
-            ("button", c(0x474747)),
-            ("button_hi", c(0x555555)),
+            ("news_panel", c(0x141414)),
+            ("button", c(0x1c1c1c)),
+            ("button_hi", c(0x222222)),
             ("glyph", c(0xe6e6e6)),
             ("glyph_dim", c(0x8c8c8c)),
             ("text", TEXT),
@@ -260,19 +266,19 @@ fn overrides(d: Design) -> Vec<(&'static str, Color)> {
             ("pill", MAIN),
             ("pill_text", COLORED_DARK),
             ("record", c(0xff6159)),
-            ("tempo_box", c(0x2b2b2b)),
+            ("tempo_box", c(0x111111)),
             ("accent", MAIN),
             ("accent_dim", COLORED_DARK),
-            ("workspace", c(0x262626)),
-            ("watermark", c(0x2e2e2e)),
+            ("workspace", c(0x0f0f0f)),
+            ("watermark", c(0x121212)),
             ("version_text", c(0x5a5a5a)),
-            ("browser_title", c(0x333333)),
-            ("browser_tabs", c(0x2b2b2b)),
+            ("browser_title", c(0x141414)),
+            ("browser_tabs", c(0x111111)),
             ("browser_tab_outline", MAIN),
-            ("browser_list", c(0x1f1f1f)),
-            ("browser_row_hi", c(0x333333)),
+            ("browser_list", c(0x0c0c0c)),
+            ("browser_row_hi", c(0x141414)),
             ("browser_folder", c(0xd9d9d9)),
-            ("browser_footer", c(0x2b2b2b)),
+            ("browser_footer", c(0x111111)),
             ("browser_search", MAIN),
             ("cat_project", MAIN),
             ("cat_recent", c(0xc8e3a6)),
@@ -280,67 +286,67 @@ fn overrides(d: Design) -> Vec<(&'static str, Color)> {
             ("cat_plugin_presets", c(0xe6b3cf)),
             ("cat_channel_presets", c(0xd4bce8)),
             ("cat_mixer_presets", c(0xbcc2ec)),
-            ("splitter", c(0x262626)),
-            ("splitter_dark", c(0x1c1c1c)),
-            ("window_title", c(0x333333)),
-            ("window_title_float", c(0x333333)),
-            ("window_title_hi", c(0x3d3d3d)),
-            ("window_body", c(0x2e2e2e)),
-            ("window_border", c(0x1a1a1a)),
-            ("picker", c(0x2b2b2b)),
-            ("track_header", c(0x383838)),
-            ("overview", c(0x555555)),
-            ("ruler", c(0x232323)),
+            ("splitter", c(0x0f0f0f)),
+            ("splitter_dark", c(0x0b0b0b)),
+            ("window_title", c(0x141414)),
+            ("window_title_float", c(0x141414)),
+            ("window_title_hi", c(0x181818)),
+            ("window_body", c(0x121212)),
+            ("window_border", c(0x0a0a0a)),
+            ("picker", c(0x111111)),
+            ("track_header", c(0x161616)),
+            ("overview", c(0x222222)),
+            ("ruler", c(0x0e0e0e)),
             ("ruler_text", c(0x9e9e9e)),
-            ("grid", c(0x282828)),
-            ("grid_alt", c(0x2d2d2d)),
-            ("grid_gap", c(0x202020)),
-            ("grid_bar", c(0x161616)),
-            ("scrollbar", c(0x2b2b2b)),
+            ("grid", c(0x1a1a1a)),
+            ("grid_alt", c(0x202020)),
+            ("grid_gap", c(0x050505)),
+            ("grid_bar", c(0x000000)),
+            ("scrollbar", c(0x111111)),
             ("playhead", MAIN),
-            ("mixer_bg", c(0x262626)),
-            ("mixer_strip", c(0x303030)),
-            ("mixer_strip_dark", c(0x242424)),
-            ("mixer_panel", c(0x333333)),
-            ("slot", c(0x2b2b2b)),
+            ("mixer_bg", c(0x0f0f0f)),
+            ("mixer_strip", c(0x131313)),
+            ("mixer_strip_dark", c(0x0e0e0e)),
+            ("mixer_panel", c(0x141414)),
+            ("slot", c(0x111111)),
             ("slot_text", c(0x707070)),
             ("slot_text_used", c(0xdedede)),
-            ("fader_handle", c(0x5c5c5c)),
+            ("fader_handle", c(0x252525)),
             ("meter_low", DEEP),
             ("meter_high", HIGHLIGHT),
             ("meter_clip", c(0xff6159)),
-            ("rack_row_box", c(0x3a3a3a)),
-            ("name_button", c(0x474747)),
-            ("name_button_sel", c(0x5e5e5e)),
+            ("rack_row_box", c(0x171717)),
+            ("name_button", c(0x1c1c1c)),
+            ("name_button_sel", c(0x262626)),
             ("name_text", c(0xe2e2e2)),
-            ("rack_inset", c(0x333333)),
-            ("rack_inset_border", c(0x262626)),
-            ("rack_control_border", c(0x222222)),
-            ("step_a", c(0x4d4d4d)),
-            ("step_b", c(0x5a4d1f)),
-            ("step_dim_a", c(0x3a3a3a)),
-            ("step_dim_b", c(0x3d3827)),
-            ("step_dim_border", c(0x2e2e2e)),
+            ("rack_inset", c(0x141414)),
+            ("rack_inset_border", c(0x0f0f0f)),
+            ("rack_control_border", c(0x0e0e0e)),
+            ("step_a", c(0x1f1f1f)),
+            ("step_b", c(0x4a2c14)),
+            ("step_dim_a", c(0x171717)),
+            ("step_dim_b", c(0x261a10)),
+            ("step_dim_border", c(0x121212)),
             ("step_on", MAIN),
             ("add_hover", MAIN),
-            ("menu_drop", c(0x333333)),
-            ("menu_drop_hi", c(0x4d4d4d)),
+            ("menu_drop", c(0x141414)),
+            ("menu_drop_hi", c(0x1f1f1f)),
             ("menu_drop_text", TEXT),
             ("menu_drop_disabled", c(0x7f7f7f)),
-            ("menu_pop", c(0x333333)),
-            ("menu_pop_border", c(0x1f1f1f)),
+            ("menu_pop", c(0x141414)),
+            ("menu_pop_border", c(0x0c0c0c)),
             ("menu_pop_hi", COLORED_DARK),
             ("menu_pop_text", TEXT),
             ("menu_pop_shortcut", c(0xa3a3a3)),
-            ("menu_pop_dim", c(0x7f7f7f)),
-            ("menu_pop_head", c(0x2b2b2b)),
+            ("menu_pop_dim", c(0x333333)),
+            ("menu_pop_head", c(0x111111)),
             ("menu_pop_head_text", c(0x8c8c8c)),
             ("clip", c(0x8a7a3a)),
-            ("pr_row", c(0x2b2b2b)),
-            ("pr_row_black", c(0x242424)),
+            ("pr_row", c(0x111111)),
+            ("pr_row_black", c(0x0e0e0e)),
             ("pr_row_sel", c(0x2f2c22)),
             ("pr_row_black_sel", c(0x29261c)),
-            ("pr_bar", c(0x141414)),
+            ("pr_bar", c(0x080808)),
             ("note_top", MAIN),
             ("note_bottom", c(0xf2d052)),
             ("note_rim", c(0x8a7420)),
@@ -351,8 +357,8 @@ fn overrides(d: Design) -> Vec<(&'static str, Color)> {
             ("note_sel_text", COLORED_DARK),
             ("key_white", c(0xededed)),
             ("key_white_left", c(0xd2d2d2)),
-            ("key_black", c(0x3b3b3b)),
-            ("key_black_left", c(0x262626)),
+            ("key_black", c(0x181818)),
+            ("key_black_left", c(0x0f0f0f)),
             ("key_c", c(0xdddddd)),
             ("key_label", c(0x8a7420)),
             ("key_lit", HIGHLIGHT),
@@ -406,6 +412,7 @@ fn skin_palette(design: Design, theme: Option<&FlTheme>) -> Palette {
         let c = classic.get(name).expect("token");
         let v = match fl::role(name) {
             fl::Role::Surface | fl::Role::StepEven | fl::Role::StepOdd | fl::Role::Fixed => map.surface(c),
+            fl::Role::Raw => c,
             fl::Role::Accent => map.accent_of(c),
             fl::Role::Highlight => map.highlight_of(c),
             fl::Role::Text => map.text_of(c),
@@ -549,6 +556,7 @@ fn retint(p: &mut Palette, th: &FlTheme) {
             fl::Role::StepEven if th.step_even.is_none() => r.surface(c),
             fl::Role::StepOdd if th.step_odd.is_none() => r.surface(c),
             fl::Role::StepEven | fl::Role::StepOdd => citrus.get(name).expect("token"),
+            fl::Role::Raw => c,
             fl::Role::Fixed => match *name {
                 "step_on" | "note_top" | "note_bottom" | "note_rim" | "note_text" | "note_sel_top" | "note_sel_bottom"
                 | "note_sel_rim" | "note_sel_text" | "key_label" | "clip" | "cat_project" | "velocity" | "velocity_dot" => r.accent(c),
@@ -599,6 +607,18 @@ mod tests {
         assert_eq!(palette(Design::Citrus, Some(&th)), fl::palette(&th));
     }
 
+    /// A picked outline (`display_edge`, a `Raw` token) paints exactly the colour the palette states: neither the
+    /// skin's map nor a theme's tint moves it, so a designer's hex is what reaches the screen.
+    #[test]
+    fn picked_outline_is_not_tinted() {
+        let edge = Color::rgb(0x2a2e31);
+        let th = FlTheme::parse("Hue=120\nSaturation=60\nLightness=-90\nContrast=0\nSelected=16744576\n");
+        for d in Design::ALL {
+            assert_eq!(palette(d, None).display_edge, edge, "{d:?}");
+            assert_eq!(palette(d, Some(&th)).display_edge, edge, "{d:?}");
+        }
+    }
+
     #[test]
     fn lemon_uses_the_brand_colours() {
         let p = palette(Design::Lemon, None);
@@ -606,10 +626,10 @@ mod tests {
         assert_eq!(p.toolbar, lemon::DARK);
         assert_eq!(p.pill, lemon::MAIN);
         assert_eq!(p.on_glyph, lemon::COLORED_DARK);
-        // Role-mapped literals follow the design: Classic's raised grey lands on the dark highlight,
-        // orange highlights on lemon.
+        // Role-mapped literals follow the design: Classic's raised grey lands on a dark grey (the black Mango greys),
+        // orange highlights on mango.
         let g = p.s(0x505355);
-        assert!(g.r.abs_diff(0x66) <= 6 && g.r == g.g && g.g == g.b, "{g}");
+        assert!(g.r.abs_diff(0x34) <= 6 && g.r == g.g && g.g == g.b, "{g}");
         let (h, s, _) = p.h(0xfb9244).hsl();
         assert!((h - lemon::MAIN.hsl().0).abs() < 4.0 && s > 0.8, "{}", p.h(0xfb9244));
         assert_eq!(p.a(0xa8e44a), lemon::MAIN);

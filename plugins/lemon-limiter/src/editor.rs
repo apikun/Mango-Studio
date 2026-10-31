@@ -471,9 +471,9 @@ impl Logic {
                 let mut m = MenuDef::new(MenuStyle::Context);
                 m.add(MenuItem::item("0.2 dB limiter safety").mark(Mark::Check(self.safety())), Cmd::Safety);
                 let mut about = MenuDef::new(MenuStyle::Context);
-                about.head("Lemon Limiter", Cmd::None);
+                about.head("Mango Limiter", Cmd::None);
                 about.add(MenuItem::item(&format!("Version {}", env!("CARGO_PKG_VERSION"))).enabled(false), Cmd::None);
-                about.add(MenuItem::item("Lemon Studio's recreation of Fruity Limiter").enabled(false), Cmd::None);
+                about.add(MenuItem::item("Mango Studio's recreation of Fruity Limiter").enabled(false), Cmd::None);
                 m.submenu("About", about, Cmd::None);
                 m
             }
@@ -622,7 +622,7 @@ mod win32 {
                 tracking: false,
                 slot: slot.clone(),
             });
-            let title = pw::wide("Lemon Limiter");
+            let title = pw::wide("Mango Limiter");
             let hwnd = CreateWindowExW(
                 0,
                 class.as_ptr(),

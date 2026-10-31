@@ -1,4 +1,5 @@
 // Copyright (C) 2026 ItsAlphaNeon
+// Copyright (C) 2026 Artig3nce
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
@@ -10,7 +11,7 @@ use std::f32::consts::PI;
 use os_ui::kit::lemon as lk;
 use os_ui::{Color, Font, Glyph, Rect};
 
-use super::{led, resize_zones, window_body, window_buttons, FrameInfo};
+use super::{led_small, resize_zones, window_body, window_buttons, FrameInfo};
 use crate::knobs::KnobId;
 use crate::app::{Action, Live, State, Ui, Win, TITLE_H};
 use crate::meters;
@@ -115,6 +116,8 @@ pub fn paint(ui: &mut Ui, s: &State, r: Rect, f: &FrameInfo) {
     let inner = super::float_frame(ui, s, Win::Mixer, r);
     let r = inner.unwrap_or(r);
     let client = super::window_frame_ex(ui, Win::Mixer, Rect::new(r.x, r.y, r.w - panel_w, r.h), "", 0.0, false, inner.is_some());
+    // The window's own rim, like the toolbar readouts and the other windows (theme token `display_edge`).
+    super::display_edge(ui.c, ui.t, outer, if super::lemon(ui) { os_ui::kit::lemon::r_panel(ui.t) } else { 0.0 });
     title_tools(ui, s, r);
     if r.h < 2.0 * TITLE_H {
         // Collapsed to the title bar: only the slot panel's title with the window buttons.
@@ -204,32 +207,36 @@ pub fn paint(ui: &mut Ui, s: &State, r: Rect, f: &FrameInfo) {
         ui.c.fill_rect(Rect::new(r.x + 92.0, ly.y(497.0 + 3.0 * k as f32), 1.0, 1.0), ui.t.s(0x3a3e41));
     }
     ui.c.push_clip(area);
+    let visible = mx::visible_tracks(s);
+    let total_tracks = visible.len();
     let first = (s.mixer_scroll / STRIP_W) as usize;
     let count = (area.w / STRIP_W).ceil() as usize + 2;
-    for n in (first + 1..first + 1 + count).filter(|n| *n <= usize::from(inserts)) {
-        let left = area.x + STRIP_W * (n - 1) as f32 - s.mixer_scroll;
-        strip(ui, s, n as u16, left, bottom, f, &ly);
+    for (i, &n) in visible.iter().enumerate().skip(first).take(count) {
+        let left = area.x + STRIP_W * i as f32 - s.mixer_scroll;
+        strip(ui, s, n, left, bottom, f, &ly);
     }
     // "+" after the last strip, at the fader handle's height (spec: ui/mixer.md §1).
-    let px = area.x + STRIP_W * f32::from(inserts) - s.mixer_scroll + 14.0;
-    let pb = Rect::new(px - 9.0, ly.y(HANDLE_0DB) - 9.0, 18.0, 18.0);
-    if px < area.right() + 10.0 {
-        let hov = ui.hit(pb, Action::Mix(MHit::Add), "Add more tracks");
-        if hov && lemon {
-            ui.c.fill_rrect(pb, lk::r_btn(ui.t), ui.t.button_hi);
-        } else if hov {
-            ui.c.stroke_rrect(pb, 3.0, 1.0, ui.t.h(0xf09a28));
+    if s.pattern_mixer_filter.is_none() {
+        let px = area.x + STRIP_W * f32::from(inserts) - s.mixer_scroll + 14.0;
+        let pb = Rect::new(px - 9.0, ly.y(HANDLE_0DB) - 9.0, 18.0, 18.0);
+        if px < area.right() + 10.0 {
+            let hov = ui.hit(pb, Action::Mix(MHit::Add), "Add more tracks");
+            if hov && lemon {
+                ui.c.fill_rrect(pb, lk::r_btn(ui.t), ui.t.button_hi);
+            } else if hov {
+                ui.c.stroke_rrect(pb, 3.0, 1.0, ui.t.h(0xf09a28));
+            }
+            icons::draw(ui.c, Icon::Plus, pb.inset(3.0), if hov { ui.t.tx(0xffffff) } else { ui.t.tx(0x9aa1a5) });
         }
-        icons::draw(ui.c, Icon::Plus, pb.inset(3.0), if hov { ui.t.tx(0xffffff) } else { ui.t.tx(0x9aa1a5) });
     }
     ui.c.pop_clip();
     strip(ui, s, 0, r.x + 44.0, bottom, f, &ly);
 
     // Horizontal scroll bar under the strips.
     let sb = Rect::new(area.x + 13.0, bottom - 14.0, area.w - 20.0, 9.0);
-    super::scrollbar(ui, sb, false, s.mixer_scroll, area.w, (f32::from(inserts) + 1.0) * STRIP_W, crate::app::Scroll::MixerX);
+    super::scrollbar(ui, sb, false, s.mixer_scroll, area.w, (total_tracks as f32 + 1.0) * STRIP_W, crate::app::Scroll::MixerX);
     chevron(ui, area.x + 5.0, bottom - 9.5, false, ui.t.s(0x5d6366));
-    cables(ui, s, strips, area, bottom);
+    cables(ui, s, strips, area, bottom, &visible);
 
     slot_panel(ui, s, Rect::new(r.right() - panel_w, r.y, panel_w, r.h));
     resize_zones(ui, s, Win::Mixer, outer);
@@ -237,10 +244,16 @@ pub fn paint(ui: &mut Ui, s: &State, r: Rect, f: &FrameInfo) {
 
 /// The routing cables (spec: ui/mixer.md §5): one from the current track's ⬇ into each of its send knobs, sagging
 /// and swinging (crate::cable). Sockets on strips scrolled out of view still hold their cable's end.
-fn cables(ui: &mut Ui, s: &State, strips: Rect, area: Rect, bottom: f32) {
+fn cables(ui: &mut Ui, s: &State, strips: Rect, area: Rect, bottom: f32, visible: &[u16]) {
     let socket_x = |n: u16| match n {
         0 => strips.x + 44.0 + 22.0,
-        n => area.x + STRIP_W * f32::from(n - 1) - s.mixer_scroll + 22.0,
+        n => {
+            let idx = visible.iter().position(|&t| t == n);
+            match idx {
+                Some(i) => area.x + STRIP_W * i as f32 - s.mixer_scroll + 22.0,
+                None => -1000.0,
+            }
+        }
     };
     // Each cable is plugged in under the middle of its ⬇ and its knob, which are drawn again over the cables' ends.
     let (ay, ky) = (bottom - 38.0, bottom - 40.0);
@@ -309,8 +322,19 @@ fn title_tools(ui: &mut Ui, s: &State, r: Rect) {
     icons::draw(ui.c, Icon::Plus, Rect::new(r.x + 110.0 + px, y - 7.0, 14.0, 14.0), if hov { ui.t.tx(0xffffff) } else { ui.t.tx(0xc4ccd0) });
     let lb = Rect::new(r.x + 130.0 + px, r.y + 2.0, 50.0, 20.0);
     let hov = ui.hit(lb, Action::Mix(MHit::Layout), "Mixer layout");
-    let _ = s;
     ui.c.text(Font::new(17), r.x + 134.0 + px, r.y + 2.0, if hov { ui.t.tx(0xffffff) } else { ui.t.tx(0xb8c4cb) }, "Wide");
+
+    if let Some(pat) = s.pattern_mixer_filter {
+        let pat_name = crate::patterns::name_of(s, pat);
+        let badge_text = format!("Focus: {pat_name}  ✕");
+        let badge_w = (badge_text.len() as f32 * 7.5 + 16.0).max(80.0);
+        let badge = Rect::new(r.x + 190.0 + px, r.y + 2.0, badge_w, 20.0);
+        let hov = ui.hit(badge, Action::Mix(MHit::ClearPatternFilter), "Click to clear pattern focus and show all mixer tracks");
+        let bg_col = if hov { ui.t.s(0x3a4248) } else { ui.t.s(0x283036) };
+        ui.c.fill_rrect(badge, 3.0, bg_col);
+        ui.c.stroke_rrect(badge, 3.0, 1.0, ui.t.h(0xf09a28));
+        ui.c.text_center(Font::new(13), badge, if hov { ui.t.tx(0xffffff) } else { ui.t.h(0xf3b234) }, &badge_text);
+    }
 }
 
 fn mix(a: Color, b: Color, t: f32) -> Color {
@@ -397,10 +421,21 @@ fn strip(ui: &mut Ui, s: &State, n: u16, left: f32, bottom: f32, f: &FrameInfo, 
     };
     let lemon = super::lemon(ui);
     if lemon {
-        // Lemon (spec: ui/lemon-design.md §8): each strip is a rounded card on the dark gap colour.
+        // Lemon (spec: ui/lemon-design.md §8): each strip is a rounded card on the dark gap colour. Mango, black: the gap
+        // black, the card lit from the top down and rimmed, the selected one lighter with a mango rim, so every strip
+        // stands on its own.
         let card = Rect::new(left, ly.y(HEAD_Y1) + 1.0, STRIP_W, bottom - ly.y(HEAD_Y1) - 1.0);
-        ui.c.fill_rect(card, ui.t.s(0x131517));
-        ui.c.fill_rrect(Rect::new(card.x + 1.5, card.y + 1.0, card.w - 3.0, card.h - 4.0), lk::r_panel(t), body);
+        ui.c.fill_rect(card, Color::rgb(0x000000));
+        let face = Rect::new(card.x + 2.0, card.y + 1.0, card.w - 4.0, card.h - 4.0);
+        let (top, low, rim) = if selected {
+            (Color::rgb(0x2a2a2a), Color::rgb(0x1a1a1a), t.accent.mix(super::MANGO_MIXER_RIM, 0.55))
+        } else {
+            (Color::rgb(0x202020), Color::rgb(0x121212), super::MANGO_MIXER_RIM)
+        };
+        ui.c.fill_rrect(face.outset(1.0), lk::r_panel(t) + 1.0, rim);
+        ui.c.fill_rect_gradient(face, top, low, lk::r_panel(t));
+        // The shine: a light line along the card's top edge.
+        ui.c.fill_rrect(Rect::new(face.x + 4.0, face.y + 1.0, face.w - 8.0, 1.0), 0.5, top.mix(Color::rgb(0xffffff), 0.12));
     } else {
         ui.c.fill_rect(Rect::new(left, ly.y(HEAD_Y1) + 1.0, STRIP_W, bottom - ly.y(HEAD_Y1) - 1.0), body);
         ui.c.fill_rect(Rect::new(left + STRIP_W - 1.0, ly.y(HEAD_Y1) + 1.0, 1.0, bottom - ly.y(HEAD_Y1) - 1.0), ui.t.s(0x1c1f21));
@@ -413,7 +448,17 @@ fn strip(ui: &mut Ui, s: &State, n: u16, left: f32, bottom: f32, f: &FrameInfo, 
     if n != 0 {
         let hr = Rect::new(left, ly.y(HEAD_Y0), STRIP_W, ly.y(HEAD_Y1) - ly.y(HEAD_Y0) + 1.0);
         ui.c.fill_rect(hr, ui.t.s(0x2b2e30));
-        if selected && lemon {
+        let own = s.project.mixer.iter().find(|m| m.index == n).and_then(|m| m.color).map(super::rgb);
+        let pill = Rect::new(hr.x + 3.0, hr.y + 2.0, hr.w - 6.0, hr.h - 4.0);
+        if let (true, Some(col)) = (lemon, own) {
+            // Mango: a coloured track's number sits on a pill of its colour (lit for the black), outlined in mango
+            // when selected.
+            ui.c.fill_rrect(pill, lk::r_btn(t), readable_on_black(col));
+            if selected {
+                ui.c.stroke_rrect(pill.outset(1.0), lk::r_btn(t) + 1.0, 2.0, t.accent);
+            }
+            ui.c.text_center(Font::new(17), Rect::new(left, ly.y(HEAD_Y0), STRIP_W, 21.0), Color::rgb(0x141414), &n.to_string());
+        } else if selected && lemon {
             lk::lit_in(ui.c, ui.t, Rect::new(hr.x + 3.0, hr.y + 2.0, hr.w - 6.0, hr.h - 4.0), lk::r_btn(t), false);
         } else if selected {
             // Hatched header for the selected strip.
@@ -424,13 +469,25 @@ fn strip(ui: &mut Ui, s: &State, n: u16, left: f32, bottom: f32, f: &FrameInfo, 
             }
             ui.c.pop_clip();
         }
-        let c = if selected && lemon { lk::ink_on_lit(ui.t) } else if selected || hov { ui.t.tx(0x9aa1a5) } else { ui.t.s(0x6d7275) };
-        ui.c.text_center(Font::new(17), Rect::new(left, ly.y(HEAD_Y0), STRIP_W, 21.0), c, &n.to_string());
+        if !(lemon && own.is_some()) {
+            let c = if selected && lemon {
+                lk::ink_on_lit(ui.t)
+            } else if selected || hov {
+                ui.t.tx(0x9aa1a5)
+            } else if lemon {
+                ui.t.tx(0x8c8c8c)
+            } else {
+                ui.t.s(0x6d7275)
+            };
+            ui.c.text_center(Font::new(17), Rect::new(left, ly.y(HEAD_Y0), STRIP_W, 21.0), c, &n.to_string());
+        }
     }
 
-    // Dark head panel (name, LED, pan) with a rounded bottom.
-    ui.c.fill_rrect(Rect::new(left + 1.0, ly.y(PANEL_Y0), STRIP_W - 2.0, ly.y(PANEL_Y1) - ly.y(PANEL_Y0)), 9.0, ui.t.s(0x1d1f21));
-    ui.c.fill_rect(Rect::new(left + 1.0, ly.y(PANEL_Y0), STRIP_W - 2.0, 12.0), ui.t.s(0x1d1f21));
+    // Dark head panel (name, LED, pan) with a rounded bottom. Mango's black skin makes it a soft charcoal, not black: the
+    // name and the light on it were hard to see on the near-black the skin maps this grey to.
+    let panel = if lemon { Color::rgb(0x2b2e31) } else { ui.t.s(0x1d1f21) };
+    ui.c.fill_rrect(Rect::new(left + 1.0, ly.y(PANEL_Y0), STRIP_W - 2.0, ly.y(PANEL_Y1) - ly.y(PANEL_Y0)), 9.0, panel);
+    ui.c.fill_rect(Rect::new(left + 1.0, ly.y(PANEL_Y0), STRIP_W - 2.0, 12.0), panel);
 
     // Meter slot with its tick marks; the selected strip gets a green frame.
     let meter = Rect::new(mx - 7.5, ly.y(METER_Y0), 16.0, ly.y(METER_Y1) - ly.y(METER_Y0));
@@ -461,6 +518,7 @@ fn strip(ui: &mut Ui, s: &State, n: u16, left: f32, bottom: f32, f: &FrameInfo, 
     }
 
     // Name, rotated, reading upward from the bottom of the meter.
+<<<<<<< HEAD
     let name = track.and_then(|m| m.name.clone()).unwrap_or_else(|| if n == 0 { "Master".into() } else { format!("Bus {n}") });
     let name_c = track
         .and_then(|m| m.color)
@@ -468,13 +526,30 @@ fn strip(ui: &mut Ui, s: &State, n: u16, left: f32, bottom: f32, f: &FrameInfo, 
         .map_or(if selected { ui.t.tx(0xaab2b7) } else if also { ui.t.tx(0xe4e8ea) } else { ui.t.s(0x7f868a) }, |c| {
             if also { c.mix(ui.t.tx(0xffffff), 0.5) } else { c.mix(ui.t.s(0x7f868a), 0.4) }
         });
+=======
+    let name = track.and_then(|m| m.name.clone()).unwrap_or_else(|| if n == 0 { "Master".into() } else { format!("Insert {n}") });
+    // Mango: names near white on the black strips, the selected track's in mango; a track's colour shows on its number's
+    // pill at the top instead.
+    let name_c = if lemon {
+        if selected { t.accent } else { ui.t.tx(0xe2e2e2) }
+    } else {
+        track
+            .and_then(|m| m.color)
+            .map(super::rgb)
+            .map_or(if selected { ui.t.tx(0xaab2b7) } else if also { ui.t.tx(0xe4e8ea) } else { ui.t.s(0x7f868a) }, |c| {
+                if also { c.mix(ui.t.tx(0xffffff), 0.5) } else { c.mix(ui.t.s(0x7f868a), 0.4) }
+            })
+    };
+>>>>>>> main
     ui.c.push_clip(Rect::new(left + 2.0, ly.y(PANEL_Y0), 20.0, ly.y(METER_Y1) - ly.y(PANEL_Y0)));
     ui.c.text_vertical(Font::new(15), sx - 7.0, meter.bottom() - 1.0, name_c, &name);
     ui.c.pop_clip();
 
     let enabled = track.is_none_or(|m| m.enabled);
-    ui.hit(Rect::new(kx - 7.0, ly.y(LED_Y) - 7.0, 14.0, 14.0), Action::Mix(MHit::Led(n)), "Mute / solo");
-    led(ui, kx, ly.y(LED_Y), enabled);
+    // As on FL, the light takes clicks across the strip, from the meter's bottom to the pan knob.
+    let (led0, led1) = (ly.y(METER_Y1) + 1.0, (ly.y(PAN_Y) - 14.0).max(ly.y(LED_Y) + 7.0));
+    ui.hit(Rect::new(left + 1.0, led0, STRIP_W - 2.0, led1 - led0), Action::Mix(MHit::Led(n)), "Mute / solo");
+    led_small(ui, kx, ly.y(LED_Y), enabled);
     let pan = KnobId::MixPan(n);
     ui.hit(Rect::new(kx - 14.0, ly.y(PAN_Y) - 14.0, 28.0, 28.0), Action::Knob(pan), s.knob_text(pan));
     mixer_knob(ui, kx, ly.y(PAN_Y), 10.5, 15.0, s.knob(pan), Some(true));
@@ -491,6 +566,10 @@ fn strip(ui: &mut Ui, s: &State, n: u16, left: f32, bottom: f32, f: &FrameInfo, 
     g.polygon(&[(sx - 5.0, sep_y - 1.5), (sx, sep_y - 6.0), (sx + 5.0, sep_y - 1.5)]);
     g.polygon(&[(sx - 5.0, sep_y + 1.5), (sx, sep_y + 6.0), (sx + 5.0, sep_y + 1.5)]);
     ui.c.glyph(if pol { ui.t.h(0xf3b234) } else if hp { ui.t.tx(0xffffff) } else { ui.t.tx(0xb7c3ca) }, &g);
+    // Under the pointer, a rounded border, in the lit colour when on (FL's look).
+    if hp {
+        ui.c.stroke_rrect(pr.inset(0.5), 3.0, 1.0, if pol { ui.t.h(0xf3b234) } else { ui.t.tx(0x8d989e) });
+    }
     let wr = Rect::new(sx - 8.0, swap_y - 8.0, 16.0, 16.0);
     let hw = ui.hit(wr, Action::Mix(MHit::Swap(n)), "Swap left & right channels");
     let mut g = Glyph::new();
@@ -498,33 +577,52 @@ fn strip(ui: &mut Ui, s: &State, n: u16, left: f32, bottom: f32, f: &FrameInfo, 
     g.polygon(&[(sx + 1.5, swap_y - 6.0), (sx + 7.5, swap_y), (sx + 1.5, swap_y + 6.0)]);
     ui.c.glyph(if swp { Color::rgb(0x5fb6f0) } else if hw { ui.t.tx(0xffffff) } else { ui.t.tx(0xb7c3ca) }, &g);
     ui.c.fill_rect(Rect::new(sx - 0.5, swap_y - 6.0, 1.0, 12.0), ui.t.s(0x5a6266));
+    if hw {
+        ui.c.stroke_rrect(wr.inset(0.5), 3.0, 1.0, if swp { Color::rgb(0x5fb6f0) } else { ui.t.tx(0x8d989e) });
+    }
     let sep = KnobId::MixSep(n);
     ui.hit(Rect::new(sx - 9.0, ring_y - 9.0, 18.0, 18.0), Action::Knob(sep), s.knob_text(sep));
     mixer_knob(ui, sx, ring_y, 6.0, 9.5, s.knob(sep), Some(true));
 
-    // Fader: track, gain marks, handle (green on the selected strip, with the track lit below it).
+    // Fader: track, gain marks, handle (green on the selected strip, with the track lit below it). In the Mango skin
+    // the track is a rounded trough and the level below the handle a rounded bar, as the logo's equalizer bars: bright
+    // on the selected strip, softer on the others.
     let track_y1 = bottom - 99.0;
+    let trough = Rect::new(mx - 7.0, ly.y(TRACK_Y0), 14.0, track_y1 - ly.y(TRACK_Y0));
     if lemon {
-        ui.c.fill_rrect(Rect::new(mx - 2.0, ly.y(TRACK_Y0), 4.0, track_y1 - ly.y(TRACK_Y0)), 2.0, ui.t.s(0x141618));
+        ui.c.fill_rrect(trough, 7.0, ui.t.s(0x141618));
     } else {
-        ui.c.fill_rect(Rect::new(mx - 1.5, ly.y(TRACK_Y0), 3.0, track_y1 - ly.y(TRACK_Y0)), ui.t.s(0x141618));
+        ui.c.fill_rect(Rect::new(mx - 1.5, trough.y, 3.0, trough.h), ui.t.s(0x141618));
     }
-    fader_marks(ui, mx, track_y1, ly);
+    fader_marks(ui, mx, track_y1, ly, lemon);
     let v = track.and_then(|m| m.volume).unwrap_or(0.8) as f32;
     // max/min, not clamp: a very short window gives track_y1 < ly.y(TRACK_Y0) (clamp would panic).
     let hy = (ly.y(HANDLE_0DB + (0.8 - v) * 440.0)).min(track_y1 - 5.0).max(ly.y(TRACK_Y0) + 5.0);
-    if selected {
-        if lemon {
-            ui.c.fill_rrect(Rect::new(mx - 1.5, hy, 3.0, track_y1 - hy), 1.5, t.accent);
-        } else {
+    let hov = ui.hit(Rect::new(mx - 9.0, ly.y(TRACK_Y0) - 5.0, 18.0, track_y1 - ly.y(TRACK_Y0) + 10.0), Action::Fader(n), mx::level_text("Volume", f64::from(v)));
+    if lemon {
+        // The bar is the fader: its rounded top, as the logo's bars end, is where it is held; no separate cap.
+        let r = 6.0;
+        let bar = Rect::new(mx - r, hy - r, 2.0 * r, (track_y1 - 1.0 - (hy - r)).max(2.0 * r));
+        let (top, bottom_c) = (t.brand_sel(os_theme::design::lemon::HIGHLIGHT), t.brand_sel(os_theme::design::lemon::MAIN));
+        // Full mango on the selected strip and while held; softer on the others, a little brighter under the pointer.
+        let held = f.fader_drag == Some(n);
+        let (top, bottom_c) = if selected || held { (top, bottom_c) } else { (top.mix(ui.t.s(0x141618), 0.38), bottom_c.mix(ui.t.s(0x141618), 0.32)) };
+        let lift = if held { 0.07 } else if hov { 0.12 } else { 0.0 };
+        let (top, bottom_c) = (top.shade(lift), bottom_c.shade(lift));
+        ui.c.fill_rect_gradient(bar, top, bottom_c, r);
+    } else {
+        if selected {
             ui.c.fill_rect(Rect::new(mx - 1.0, hy, 2.0, track_y1 - hy), ui.t.a(0x8ec63a));
         }
+        fader_handle(ui, mx, hy, selected, hov);
     }
-    let hov = ui.hit(Rect::new(mx - 9.0, ly.y(TRACK_Y0) - 5.0, 18.0, track_y1 - ly.y(TRACK_Y0) + 10.0), Action::Fader(n), mx::level_text("Volume", f64::from(v)));
-    fader_handle(ui, mx, hy, selected, hov);
 
+<<<<<<< HEAD
     // Input pin: not available yet, greyed out. The latency clock under it sets the track latency (right click); the
     // disk-record button below them arms the track.
+=======
+    // Input pin and latency clock: not available yet, greyed out. The disk-record button below them arms the track.
+>>>>>>> main
     let master = n == 0;
     let by = bottom;
     let pin_c = if master { ui.t.h(0xf09a28) } else { ui.t.s(0x4d5357) };
@@ -542,7 +640,13 @@ fn strip(ui: &mut Ui, s: &State, n: u16, left: f32, bottom: f32, f: &FrameInfo, 
     let mut g = Glyph::new();
     g.ring(sx, by - 117.0, 6.0, 1.6).rect(sx - 0.7, by - 121.0, 1.4, 4.5).rect(sx - 0.7, by - 117.7, 3.5, 1.4);
     ui.c.glyph(clk, &g);
+<<<<<<< HEAD
     let hint = if armed { format!("Record to: {}", crate::track_rec::armed_file(s, n)) } else { "Arm disk recording".into() };
+=======
+    ui.off(Rect::new(sx - 8.0, by - 125.0, 16.0, 16.0), "Track latency");
+    ui.veil(Rect::new(sx - 9.0, by - 149.0, 18.0, 38.0), body);
+    let hint = if armed { "Armed: monitoring the input (recording into tracks is not available yet)" } else { "Arm disk recording" };
+>>>>>>> main
     let hov = ui.hit(Rect::new(sx - 7.0, by - 107.0, 14.0, 14.0), Action::Mix(MHit::Arm(n)), hint);
     if armed {
         // An orange-red ring about 8 px across with a 3 px hole.
@@ -604,16 +708,34 @@ fn mixer_knob(ui: &mut Ui, cx: f32, cy: f32, r: f32, halo: f32, value: f32, arc:
     os_ui::kit::knob(ui.c, ui.t, cx, cy, r, value, arc.unwrap_or(false), look, os_ui::kit::State::hover(hov));
 }
 
+/// A track colour on the Mango skin's black strips (its number's pill): its hue kept, lit to at least 68 % lightness and given some
+/// saturation back, so a dark red reads as a clear red; greys stay grey and light colours as they are.
+fn readable_on_black(c: Color) -> Color {
+    let (h, s, l) = c.hsl();
+    let s = if s < 0.08 { s } else { s.max(0.6) };
+    Color::from_hsl_pub(h, s, l.clamp(0.68, 0.85), 255)
+}
+
 /// Gain marks beside a fader track (spec: ui/mixer.md §5, measured from FL): 6 px ticks on both sides at 0, −6, −12 and
 /// −18 dB (2 px clear of the track), and faint 4 px rails between consecutive ticks (1 px clear of each tick). They
-/// belong to the track: the handle covers them as it moves.
-fn fader_marks(ui: &mut Ui, mx: f32, track_y1: f32, ly: &Ly) {
+/// belong to the track: the handle covers them as it moves. In the Mango skin (`lemon`) only short ticks, clear of its
+/// wider trough.
+fn fader_marks(ui: &mut Ui, mx: f32, track_y1: f32, ly: &Ly, lemon: bool) {
     let ys: Vec<f32> = [0.0, -6.0, -12.0, -18.0]
         .iter()
         .map(|&db| ly.y(HANDLE_0DB + (0.8 - fader_value(db)) * 440.0).floor())
         .filter(|&y| y < track_y1 - 1.0)
         .collect();
     let (tick, rail) = (ui.t.s(0x181a1c), ui.t.s(0x202324));
+    if lemon {
+        // Short ticks between the trough (7 px either side) and the separation knob on the left, the strip's edge on
+        // the right.
+        for y in ys {
+            ui.c.fill_rect(Rect::new(mx - 10.0, y, 2.5, 1.0), tick);
+            ui.c.fill_rect(Rect::new(mx + 7.5, y, 3.0, 1.0), tick);
+        }
+        return;
+    }
     for w in ys.windows(2) {
         let (a, b) = (w[0] + 2.0, w[1] - 1.0);
         if b > a {
@@ -686,9 +808,12 @@ fn slot_panel(ui: &mut Ui, s: &State, r: Rect) {
     } else {
         off_combo(ui, combo, "Audio input source", &text, input_bg);
     }
+<<<<<<< HEAD
     let clock = Rect::new(r.x + 192.0, r.y + 29.0, 21.0, 21.0);
     let lat = mx::track(s, n).map_or(0.0, |m| m.latency_in);
     let hov = ui.hit(clock, Action::Mix(MHit::InLatency), format!("Input latency  {}", mx::latency_text(lat)));
+=======
+>>>>>>> main
     let mut g = Glyph::new();
     g.ring(r.x + 202.0, r.y + 39.5, 8.5, 1.8).rect(r.x + 201.2, r.y + 34.0, 1.6, 6.5).rect(r.x + 201.2, r.y + 38.9, 5.0, 1.6);
     ui.c.glyph(if hov { ui.t.tx(0xffffff) } else if lat != 0.0 { ui.t.h(0xf09a28) } else { ui.t.tx(0xd4dade) }, &g);
@@ -729,7 +854,7 @@ fn slot_panel(ui: &mut Ui, s: &State, r: Rect) {
         mixer_knob(ui, row.right() - 33.0, row.cy(), 10.5 * q, 12.0 * q, s.knob(mix), Some(false));
         ui.c.stroke_circle(row.right() - 33.0, row.cy(), 11.8 * q, 1.5, ui.t.s(0x55595c));
         ui.hit(Rect::new(row.right() - 18.0, row.y, 18.0, row.h), Action::Mix(MHit::SlotLed(k)), "Mute / solo  (ctrl)0..9");
-        led(ui, row.right() - 10.0, row.cy(), track.is_none_or(|m| m.slot_on[i]));
+        led_small(ui, row.right() - 10.0, row.cy(), track.is_none_or(|m| m.slot_on[i]));
     }
     let sep = r.y + 61.0 + 330.0 * kp;
     ui.c.fill_rect(Rect::new(r.x, sep, r.w, 1.0), ui.t.s(0x1f2224));
@@ -813,16 +938,28 @@ fn slot_panel(ui: &mut Ui, s: &State, r: Rect) {
     }
     let b = r.bottom();
 
+<<<<<<< HEAD
     // Output rows at the bottom: the track latency combo, then the output combo.
+=======
+    // Output rows at the bottom: the track latency combo (not available yet: greyed out), then the output combo.
+>>>>>>> main
     ui.c.fill_rect(Rect::new(r.x, b - 66.0, r.w, 1.0), ui.t.s(0x1f2224));
     ui.c.fill_rect(Rect::new(r.x, b - 33.0, r.w, 1.0), ui.t.s(0x1f2224));
     let lat = mx::track(s, n).map_or(0.0, |m| m.latency_out);
     let hov = ui.hit(Rect::new(r.x + 3.0, b - 60.0, r.w - 6.0, 22.0), Action::Mix(MHit::OutLatency), format!("Track latency  {}", mx::latency_text(lat)));
     let mut g = Glyph::new();
     g.ring(r.x + 14.0, b - 48.5, 8.0, 1.5).rect(r.x + 13.3, b - 53.0, 1.4, 5.0).rect(r.x + 13.3, b - 49.2, 4.0, 1.4);
+<<<<<<< HEAD
     ui.c.glyph(if lat != 0.0 { ui.t.h(0xf09a28) } else { ui.t.tx(0xc4ccd0) }, &g);
     ui.c.text(Font::new(17), r.x + 30.0, b - 59.0, if hov { ui.t.tx(0xffffff) } else { ui.t.tx(0xd4dade) }, &mx::latency_text(lat));
     chevron(ui, r.right() - 11.0, b - 48.5, true, if hov { ui.t.tx(0xffffff) } else { ui.t.tx(0x8c969c) });
+=======
+    ui.c.glyph(ui.t.s(0x40464a), &g);
+    ui.off(Rect::new(r.x + 25.0, b - 60.0, r.w - 28.0, 22.0), "Track latency");
+    ui.c.text(Font::new(17), r.x + 30.0, b - 59.0, ui.t.tx(0xd4dade), "(none)");
+    chevron(ui, r.right() - 11.0, b - 48.5, true, ui.t.tx(0x8c969c));
+    ui.veil(Rect::span(r.x, r.right(), b - 65.0, b - 34.0), ui.t.s(0x2e3133));
+>>>>>>> main
     let mut g = Glyph::new();
     g.ring(r.x + 13.0, b - 16.0, 8.0, 1.6);
     g.erase(true).rect(r.x + 13.0, b - 26.0, 10.0, 20.0);

@@ -195,7 +195,7 @@ impl PulpFilter {
 
 impl Plugin for PulpFilter {
     const NAME: &'static str = "Pulp Filter";
-    const VENDOR: &'static str = "Lemon Studio";
+    const VENDOR: &'static str = "Mango Studio";
     const URL: &'static str = "";
     const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
@@ -251,7 +251,7 @@ impl Plugin for PulpFilter {
 
 impl ClapPlugin for PulpFilter {
     const CLAP_ID: &'static str = "org.openstudio.pulp-filter";
-    const CLAP_DESCRIPTION: Option<&'static str> = Some("Lemon Studio's pattern-controlled multi-filter");
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("Mango Studio's pattern-controlled multi-filter");
     const CLAP_MANUAL_URL: Option<&'static str> = None;
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Filter, ClapFeature::Stereo];

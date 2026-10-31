@@ -1,4 +1,5 @@
 // Copyright (C) 2026 ItsAlphaNeon
+// Copyright (C) 2026 ravenmarkdev-alt
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
@@ -7,6 +8,7 @@
 // spec: ui/browser.md, ui/browser-commands.md
 
 use os_model::{ChannelKind, ClipSource};
+use os_ui::Rect;
 
 use crate::app::{Action, App, Drag, Win};
 use crate::playlist::{Cmd, Mark, PItem, Popup};
@@ -28,6 +30,7 @@ impl App {
         let s = &mut self.state;
         match *a {
             Action::BrowserTab(i) => {
+                self.browser_click = None;
                 s.browser_tab = i;
                 s.browser_scroll = 0.0;
             }
@@ -44,15 +47,55 @@ impl App {
                 s.playlist.popup = if open { None } else { Some(Popup { x, y, items: options_menu(s), sub: None, scroll: [0; 2] }) };
             }
             Action::BrowserSearch => s.browser_search_focus = true,
+<<<<<<< HEAD
             // The cross that stands in for the magnifier while there is text (spec §5).
             Action::BrowserClear => {
                 s.browser_search.clear();
                 s.browser_search_focus = false;
                 s.browser_scroll = 0.0;
             }
+=======
+            Action::BrowserPlugFilter(i) => {
+                s.browser_plug_filter = i;
+                s.browser_plug_cat = None;
+                s.browser_scroll = 0.0;
+            }
+            Action::BrowserPlugCat(c) => {
+                s.browser_plug_cat = c;
+                s.browser_scroll = 0.0;
+            }
+            Action::BrowserPlugStar(i) => {
+                let Some(f) = crate::views::plugin_panel::list(s).into_iter().nth(i) else { return true };
+                crate::plugin_menu::run(self, crate::plugin_menu::PlugCmd::Star { effect: f.effect, index: f.entry().index });
+            }
+>>>>>>> main
             Action::BrowserRow(i) => {
                 let Some(row) = view::rows(s).into_iter().nth(i) else { return true };
+                let project = project_path(&row.item);
+                let now = std::time::Instant::now();
+                let double = project.as_ref().is_some_and(|path| {
+                    self.browser_click.as_ref().is_some_and(|(last, time)| last == path && now.duration_since(*time).as_millis() < 400)
+                });
+                self.browser_click = if double { None } else { project.map(|path| (path, now)) };
                 select(s, &row.key);
+                // The plugin browser: a second press on the same plugin adds it, as its row menu's Add does.
+                if s.browser_tab == view::PLUGIN_TAB {
+                    let now = std::time::Instant::now();
+                    let double = s.browser_plug_click.as_ref().is_some_and(|(k, t)| *k == row.key && now.duration_since(*t).as_millis() < 400);
+                    s.browser_plug_click = if double { None } else { Some((row.key.clone(), now)) };
+                    if double {
+                        let m = match row.item {
+                            Item::Generator(i) => crate::plugin_menu::add_generator(self, i, None),
+                            Item::Effect(i) => crate::plugin_menu::add_effect(self, i, None),
+                            _ => None,
+                        };
+                        if m.is_some() {
+                            self.state.message = m;
+                        }
+                        self.invalidate();
+                        return true;
+                    }
+                }
                 if row.open.is_some() && !s.browser_open.remove(&row.key) {
                     s.browser_open.insert(row.key.clone());
                 }
@@ -66,6 +109,10 @@ impl App {
                     }
                     Item::History(e) => s.message = crate::history::go_to(s, e),
                     _ => {}
+                }
+                if double {
+                    self.drop_file(project_path(&row.item).unwrap());
+                    return true;
                 }
                 if let Item::Sample(path) = &row.item {
                     self.preview_sample(path);
@@ -289,6 +336,16 @@ impl App {
         let shift = self.shift;
         let focus = self.state.browser_search_focus;
         let over = self.over_browser() || focus;
+        if over && !focus && !ctrl && !alt && matches!(key, Key::Named(NamedKey::Enter)) {
+            let project = view::rows(&self.state).into_iter()
+                .find(|row| self.state.browser_sel.as_ref() == Some(&row.key))
+                .and_then(|row| project_path(&row.item));
+            if let Some(path) = project {
+                self.browser_click = None;
+                self.drop_file(path);
+                return true;
+            }
+        }
         let cmd = match key {
             Key::Named(NamedKey::F2) if !self.state.browser_search.is_empty() => Some(BCmd::Find(-1)),
             Key::Named(NamedKey::F3) if !self.state.browser_search.is_empty() => Some(BCmd::Find(1)),
@@ -303,6 +360,31 @@ impl App {
                 self.state.message = Some(m);
             }
             return true;
+        }
+        // The arrow keys, as FL's browser has them (spec §7): Down / Up walk the visible rows, wrapping, and the
+        // sample a move lands on is heard at once; Right replays the focused sample from its start, opens a closed
+        // folder or steps into its first row; Left closes an opened folder or selects the parent. From the search
+        // field Up / Down still walk the rows (the results); Left / Right stay with the field. The older Shift and
+        // Ctrl arrows above keep their meanings, and an open menu or popup takes its keys first.
+        if over && !ctrl && !alt && !shift && self.state.playlist.popup.is_none() && self.state.menu_open.is_none() {
+            let arrow = matches!(key, Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown | NamedKey::ArrowLeft | NamedKey::ArrowRight));
+            if arrow && (!focus || matches!(key, Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown))) {
+                let s = &mut self.state;
+                let sample = match key {
+                    Key::Named(NamedKey::ArrowDown) => move_sel(s, 1),
+                    Key::Named(NamedKey::ArrowUp) => move_sel(s, -1),
+                    Key::Named(NamedKey::ArrowRight) => into_sel(s),
+                    _ => {
+                        out_sel(s);
+                        None
+                    }
+                };
+                if let Some(p) = sample {
+                    self.preview_sample(&p);
+                }
+                self.invalidate();
+                return true;
+            }
         }
         let s = &mut self.state;
         if focus {
@@ -350,6 +432,7 @@ impl App {
         if double {
             s.browser_w = crate::views::BROWSER_W;
             save_width(s.browser_w);
+            crate::win_clamp::keep_all(s);
             return self.invalidate();
         }
         self.drag = Some(Drag::BrowserSplit { dx: self.mouse.0 - crate::views::browser_w(&self.state) });
@@ -362,6 +445,7 @@ impl App {
         let w = right.min(s.screen.0 / 2.0).max(crate::views::BROWSER_W).round();
         if w != s.browser_w {
             s.browser_w = w;
+            crate::win_clamp::keep_all(s);
             self.invalidate();
         }
     }
@@ -394,16 +478,33 @@ impl App {
         if !started && (x - m0.0).hypot(y - m0.1) < DRAG_START {
             return;
         }
+        // The playlist's drop-zone ghost (issue #4): damaged where it was (the drag's last place) and where it goes,
+        // so the moving preview leaves no trail.
+        let grid = self.pl_grid();
+        let old_zone = self.state.browser_drag.as_ref().and_then(|d| zone_rect(&self.state, grid, d.x, d.y));
+        // The label too: redrawn where it was, or each old copy stays on screen as a trail.
+        let old_ghost = self.state.browser_drag.as_ref().map(|d| view::ghost_rect(d.x, d.y));
         if !started {
-            self.drag = Some(Drag::Browser { item, label: label.clone(), m0, started: true });
+            self.drag = Some(Drag::Browser { item: item.clone(), label: label.clone(), m0, started: true });
         }
-        if let Some((_, ox, oy)) = self.state.browser_drag {
-            self.damage_rect(view::ghost_rect(ox, oy));
+        self.state.browser_drag = Some(view::BrowserDrag { item: item.clone(), label, x, y, alt: self.alt });
+        for r in old_zone.into_iter().chain(zone_rect(&self.state, grid, x, y)) {
+            self.damage_rect(r.outset(1.0));
         }
-        self.state.browser_drag = Some((label, x, y));
-        self.damage_rect(view::ghost_rect(x, y));
+        for r in old_ghost.into_iter().chain([view::ghost_rect(x, y)]) {
+            self.damage_rect(r.outset(1.0));
+        }
     }
+}
 
+/// The drop-zone ghost's rect over the playlist's grid, when the drag at (x, y) would land one (issue #4): None off
+/// the grid, while the playlist is not shown, or where no clip would be placed.
+fn zone_rect(s: &crate::app::State, grid: Option<Rect>, x: f32, y: f32) -> Option<Rect> {
+    let grid = grid.filter(|g| g.contains(x, y) && s.shown(Win::Playlist))?;
+    crate::views::playlist::drop_ghost(s, grid, x, y).map(|dg| dg.rect)
+}
+
+impl App {
     /// Release: drop the dragged item on whatever is under the mouse (spec §3).
     pub(crate) fn browser_drop(&mut self, item: Item, started: bool) {
         self.state.browser_drag = None;
@@ -425,8 +526,17 @@ impl App {
         }
         let (x, y) = self.mouse;
         let win = self.top_hit(x, y).and_then(|h| h.win);
+        // A drop on a track header (issue #2): the track it names, and where on it the instrument lands — the song
+        // position, snapped like a drop on the rows (a header has no place of its own).
+        let head = self.top_hit(x, y).and_then(|h| match h.action { Action::PlHeader(t) => Some(t), _ => None });
         let grid = self.pl_grid().filter(|g| g.contains(x, y) && win == Some(Win::Playlist));
         let alt = self.alt;
+        let on_header = head.filter(|_| grid.is_none()).map(|track| {
+            (track, self.pl_grid().map_or(0, |grid| {
+                let g = pl::PGeom::new(&self.state, grid);
+                pl::snap_place(&self.state, &g, self.state.playlist.pos as f32, alt)
+            }))
+        });
         let s = &mut self.state;
         // Snapped playlist position under the mouse.
         let spot = grid.map(|grid| {
@@ -474,9 +584,15 @@ impl App {
                     self.sample_to_rack(path, y);
                 }
             }
-            // As if picked in the F8 menu (spec: ui/plugin-menu.md §5): a new channel at the bottom of the rack.
+            // On the playlist — a track row or its header (issue #2) — the instrument lands there: the channel as
+            // the F8 menu adds it, plus a clip of a new pattern named after it on that track, at the drop (on a
+            // header, at the song position). On the rack: a new channel at the bottom (spec: ui/plugin-menu.md §5).
             Item::Generator(i) => {
-                if spot.is_some() || win == Some(Win::ChannelRack) {
+                if let Some((track, tick)) = spot.or(on_header) {
+                    if let Some(m) = crate::plugin_menu::add_generator_on_track(self, i, track, tick) {
+                        self.state.message = Some(m);
+                    }
+                } else if win == Some(Win::ChannelRack) {
                     if let Some(m) = crate::plugin_menu::add_generator(self, i, None) {
                         self.state.message = Some(m);
                     }
@@ -614,7 +730,7 @@ fn remove_root(s: &mut crate::app::State, path: &std::path::Path) -> String {
 }
 
 /// Opens folder `dir` in the system's file manager (tests: nothing).
-fn open_folder(dir: &std::path::Path) {
+pub(crate) fn open_folder(dir: &std::path::Path) {
     if cfg!(test) {
         return;
     }
@@ -749,8 +865,61 @@ fn folders_file() -> Option<std::path::PathBuf> {
 }
 
 fn read_folders() -> Vec<(std::path::PathBuf, String)> {
-    let Some(text) = folders_file().and_then(|p| std::fs::read_to_string(p).ok()) else { return Vec::new() };
-    crate::search_folders::parse_file(&text)
+    let Some(file) = folders_file() else { return Vec::new() };
+    match std::fs::read_to_string(file) {
+        Ok(text) => crate::search_folders::parse_file(&text),
+        // No list kept yet: FL Studio's Projects folder when there is one. A kept list, even an empty one, wins.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            initial_folders(None, documents_dir().as_deref()).into_iter().map(|f| (f, String::new())).collect()
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
+fn project_path(item: &Item) -> Option<std::path::PathBuf> {
+    let Item::File(path) = item else { return None };
+    let path = std::path::PathBuf::from(path);
+    path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("flp")).then_some(path)
+}
+
+fn initial_folders(saved: Option<&str>, documents: Option<&std::path::Path>) -> Vec<std::path::PathBuf> {
+    if let Some(text) = saved {
+        return text.lines().map(str::trim).filter(|l| !l.is_empty()).map(std::path::PathBuf::from).collect();
+    }
+    documents.map(|dir| dir.join("Image-Line").join("FL Studio").join("Projects"))
+        .filter(|path| path.is_dir()).into_iter().collect()
+}
+
+/// Ask Windows for Documents so OneDrive and other redirected folders work.
+#[cfg(windows)]
+fn documents_dir() -> Option<std::path::PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_APARTMENTTHREADED};
+    use windows_sys::Win32::UI::Shell::{SHGetKnownFolderPath, FOLDERID_Documents};
+    unsafe {
+        let initialized = CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32);
+        let mut path = std::ptr::null_mut();
+        let result = SHGetKnownFolderPath(&FOLDERID_Documents, 0, std::ptr::null_mut(), &mut path);
+        let folder = if result >= 0 && !path.is_null() {
+            let mut length = 0;
+            while *path.add(length) != 0 {
+                length += 1;
+            }
+            Some(std::path::PathBuf::from(std::ffi::OsString::from_wide(std::slice::from_raw_parts(path, length))))
+        } else {
+            None
+        };
+        CoTaskMemFree(path.cast());
+        if initialized >= 0 {
+            CoUninitialize();
+        }
+        folder
+    }
+}
+
+#[cfg(not(windows))]
+fn documents_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join("Documents"))
 }
 
 pub(crate) fn load_folders() -> Vec<std::path::PathBuf> {
@@ -798,6 +967,75 @@ impl Jump {
             Jump::Section(name) => view::section_key(name).is_some(),
             _ => true,
         }
+    }
+}
+
+#[cfg(test)]
+mod project_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn browser_initial_projects_follow_documents_and_saved_choices() {
+        let documents = std::env::temp_dir().join(format!("os_browser_documents_{}", std::process::id()));
+        let projects = documents.join("Image-Line/FL Studio/Projects");
+        std::fs::create_dir_all(&projects).unwrap();
+        assert_eq!(initial_folders(None, Some(&documents)), vec![projects.clone()]);
+        assert!(initial_folders(Some(""), Some(&documents)).is_empty(), "removing all folders remains saved");
+        let custom = documents.join("My projects");
+        assert_eq!(initial_folders(Some(&format!("{}\r\n", custom.display())), Some(&documents)), vec![custom]);
+        assert!(initial_folders(None, Some(&documents.join("Missing"))).is_empty());
+        std::fs::remove_dir(&projects).unwrap();
+        std::fs::remove_dir(projects.parent().unwrap()).unwrap();
+        std::fs::remove_dir(documents.join("Image-Line")).unwrap();
+        std::fs::remove_dir(documents).unwrap();
+    }
+
+    #[test]
+    fn browser_projects_open_on_double_click_and_enter() {
+        use winit::keyboard::{Key, NamedKey};
+        let dir = std::env::temp_dir().join(format!("os_browser_projects_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let first = dir.join("First.FLP");
+        let second = dir.join("Second.flp");
+        let mut source = App::new(None);
+        source.state.project.info.title = Some("Browser project".into());
+        source.save_to(first.clone());
+        source.save_to(second.clone());
+        let mut app = App::new(None);
+        app.add_browser_folder(dir.clone());
+        let index = |app: &App, path: &PathBuf| view::rows(&app.state).iter()
+            .position(|row| row.path.as_ref() == Some(path)).unwrap();
+        app.browser_act(&Action::BrowserRow(index(&app, &first)));
+        assert!(app.state.path.is_none(), "one click only selects");
+        app.browser_act(&Action::BrowserRow(index(&app, &first)));
+        assert_eq!(app.state.path.as_ref(), Some(&first));
+        assert_eq!(app.state.project.info.title.as_deref(), Some("Browser project"));
+        app.browser_act(&Action::BrowserRow(index(&app, &second)));
+        assert_eq!(app.state.path.as_ref(), Some(&first), "a different row is not a double click");
+        app.mouse = (10.0, view::LIST_Y + 10.0);
+        assert!(app.browser_key(&Key::Named(NamedKey::Enter), false, false));
+        assert_eq!(app.state.path.as_ref(), Some(&second));
+        std::fs::remove_file(first).unwrap();
+        std::fs::remove_file(second).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn browser_text_files_cannot_open_as_projects() {
+        assert!(project_path(&Item::File("readme.txt".into())).is_none());
+        assert!(project_path(&Item::Sample("audio.wav".into())).is_none());
+        assert_eq!(project_path(&Item::File("Track.FLP".into())), Some(PathBuf::from("Track.FLP")));
+    }
+
+    #[test]
+    #[ignore = "reads the native user's Documents location; does not modify it"]
+    fn browser_native_documents_discovery() {
+        let documents = documents_dir().expect("Documents location");
+        println!("Documents: {}", documents.display());
+        let folders = initial_folders(None, Some(&documents));
+        assert!(!folders.is_empty(), "FL Studio Projects folder must exist for this native check");
+        println!("Projects: {}", folders[0].display());
     }
 }
 
@@ -916,6 +1154,10 @@ pub fn row_menu(s: &crate::app::State, row: &view::Row) -> Vec<PItem> {
             items.push(if s.hosted_rows.contains(&key) { it } else { it.off() });
         }
         Item::None | Item::File(_) | Item::Param(..) => {}
+    }
+    // The plugin browser's variants and star.
+    if s.browser_tab == view::PLUGIN_TAB {
+        items.extend(crate::views::plugin_panel::row_menu(s, row));
     }
     if let Some(path) = &row.path {
         sep(&mut items);
@@ -1084,6 +1326,62 @@ fn send_sample(s: &mut crate::app::State, path: &str, label: &str) -> Option<Str
     s.sample_loads.push((row, path));
     s.piano.dirty = true;
     Some(format!("Sent {label} to the selected channel"))
+}
+
+/// Arrow Down / Up over the browser: the selection moves a visible row, wrapping from the last to the first and back
+/// (FL's browser). The row landed on is returned when it is a sample, so the move itself plays it (§7, the sample
+/// heard as soon as it is focused); every other kind of row is only selected.
+fn move_sel(s: &mut crate::app::State, dir: isize) -> Option<String> {
+    let rows = view::rows(s);
+    let i = step(s, &rows, dir, |_| true)?;
+    let key = rows[i].key.clone();
+    select(s, &key);
+    reveal(s);
+    match &rows[i].item {
+        Item::Sample(p) => Some(p.clone()),
+        _ => None,
+    }
+}
+
+/// Arrow Right over the browser: the focused sample is returned to be replayed from its start; a closed folder opens
+/// where it stands; an opened folder selects its first row (the one below it), which is heard when it is a sample.
+fn into_sel(s: &mut crate::app::State) -> Option<String> {
+    let rows = view::rows(s);
+    let i = rows.iter().position(|r| Some(&r.key) == s.browser_sel.as_ref())?;
+    if let Item::Sample(p) = &rows[i].item {
+        return Some(p.clone());
+    }
+    match rows[i].open? {
+        true => {
+            let child = rows.get(i + 1)?;
+            select(s, &child.key);
+            reveal(s);
+            match &child.item {
+                Item::Sample(p) => Some(p.clone()),
+                _ => None,
+            }
+        }
+        false => {
+            s.browser_open.insert(rows[i].key.clone());
+            None
+        }
+    }
+}
+
+/// Arrow Left over the browser: an opened folder closes; a leaf or a closed folder selects the nearest folder above
+/// it (its parent, when the tree shows it), so walking out of a folder of samples takes the arrows alone.
+fn out_sel(s: &mut crate::app::State) {
+    let rows = view::rows(s);
+    let Some(i) = rows.iter().position(|r| Some(&r.key) == s.browser_sel.as_ref()) else { return };
+    if rows[i].open == Some(true) {
+        s.browser_open.remove(rows[i].key.as_str());
+        s.browser_scroll = s.browser_scroll.min(view::max_scroll(s));
+        return;
+    }
+    if let Some(p) = rows[..i].iter().rposition(|r| r.open.is_some() && r.depth < rows[i].depth) {
+        select(s, &rows[p].key);
+        reveal(s);
+    }
 }
 
 #[cfg(test)]
@@ -1319,5 +1617,113 @@ mod tests {
         let favs = vec![Fav { path: "C:\\Kits\\Kick.wav".into(), label: "Kick".into() }, Fav { path: "/x/y.fxp".into(), label: "y".into() }];
         assert_eq!(parse_favs(&favs_text(&favs)), favs);
         assert_eq!(parse_favs("C:\\Kits\\Snare.wav\n\n")[0].label, "Snare.wav");
+    }
+
+    /// The arrows' walk over the browser's rows (FL's browser): Down / Up step a row, wrapping, every kind of row
+    /// selected, a sample heard the moment it is focused, files and folders silent; Right replays a sample, opens a
+    /// closed folder or steps into an opened one's first row; Left closes it again or walks out to the parent.
+    #[test]
+    fn arrows_walk_the_rows_and_hear_the_samples() {
+        let dir = std::env::temp_dir().join(format!("os_browser_arrows_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let wav = |n: &str| {
+            let p = dir.join(format!("{n}.wav"));
+            os_engine::wav::write_f32_stereo(&mut std::fs::File::create(&p).unwrap(), 44100, &[0.0; 8]).unwrap();
+            p.to_string_lossy().into_owned()
+        };
+        let (kick, snare, hat) = (wav("A Kick"), wav("B Snare"), wav("C Hat"));
+        std::fs::write(dir.join("readme.txt"), b"hello").unwrap();
+        let mut app = App::new(None);
+        app.state.browser_folders.push(dir.clone());
+        app.state.browser_open.insert(view::disk_key(&dir));
+        let keys: Vec<String> = view::rows(&app.state).into_iter().map(|r| r.key).collect();
+        assert_eq!(keys.len(), 8, "the three closed roots, the dropped folder and its four rows");
+        // From no selection Down takes the first row: the closed Current project root, nothing heard.
+        assert_eq!(move_sel(&mut app.state, 1), None);
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[0].as_str()));
+        for k in &keys[1..4] {
+            assert_eq!(move_sel(&mut app.state, 1), None, "roots and the folder row are silent");
+            assert_eq!(app.state.browser_sel.as_deref(), Some(k.as_str()));
+        }
+        // The folder's samples, each heard the moment it is focused:
+        assert_eq!(move_sel(&mut app.state, 1).as_deref(), Some(kick.as_str()));
+        assert_eq!(move_sel(&mut app.state, 1).as_deref(), Some(snare.as_str()));
+        assert_eq!(move_sel(&mut app.state, 1).as_deref(), Some(hat.as_str()));
+        // The readme is a file, not a sample: silent, and the walk wraps to the top.
+        assert_eq!(move_sel(&mut app.state, 1), None);
+        assert_eq!(move_sel(&mut app.state, 1), None);
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[0].as_str()), "wrapped to the first row");
+        // Up from the first row wraps to the last (the readme, silent), then back onto the samples.
+        assert_eq!(move_sel(&mut app.state, -1), None);
+        assert_eq!(move_sel(&mut app.state, -1).as_deref(), Some(hat.as_str()));
+        assert_eq!(move_sel(&mut app.state, -1).as_deref(), Some(snare.as_str()));
+        assert_eq!(move_sel(&mut app.state, -1).as_deref(), Some(kick.as_str()));
+        assert_eq!(move_sel(&mut app.state, -1), None, "the folder row again");
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[3].as_str()));
+        // Right on the opened folder steps into its first row, the kick, heard.
+        assert_eq!(into_sel(&mut app.state).as_deref(), Some(kick.as_str()));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[4].as_str()));
+        // Right on a sample replays it, the selection staying where it is.
+        assert_eq!(into_sel(&mut app.state).as_deref(), Some(kick.as_str()));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[4].as_str()));
+        // Left from the sample back to its parent folder...
+        out_sel(&mut app.state);
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[3].as_str()));
+        // ...and Left on the opened folder closes it.
+        out_sel(&mut app.state);
+        assert!(!app.state.browser_open.contains(&keys[3]));
+        // Right on the closed folder opens it where the selection stands, nothing heard yet.
+        assert_eq!(into_sel(&mut app.state), None);
+        assert!(app.state.browser_open.contains(&keys[3]));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[3].as_str()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The arrows in the app's keys: over the browser (or from its search field) they are the browser's, elsewhere
+    /// they are left alone, and Shift+Down keeps its older meaning of sending the next sample to the channel.
+    #[test]
+    fn the_browser_takes_its_arrows_only_over_the_browser() {
+        use winit::keyboard::{Key, NamedKey};
+        let dir = std::env::temp_dir().join(format!("os_browser_arrows_key_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("A Kick.wav");
+        os_engine::wav::write_f32_stereo(&mut std::fs::File::create(&p).unwrap(), 44100, &[0.0; 8]).unwrap();
+        let mut app = App::new(None);
+        app.state.browser_folders.push(dir.clone());
+        app.state.browser_open.insert(view::disk_key(&dir));
+        app.mouse_move(100.0, 400.0);
+        assert!(app.over_browser());
+        let keys: Vec<String> = view::rows(&app.state).into_iter().map(|r| r.key).collect();
+        // Down takes the first row; Right opens the closed root without moving; Down walks into it; Left back out.
+        assert!(app.browser_key(&Key::Named(NamedKey::ArrowDown), false, false));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[0].as_str()));
+        assert!(app.browser_key(&Key::Named(NamedKey::ArrowRight), false, false));
+        assert!(app.state.browser_open.contains(&keys[0]));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[0].as_str()), "opening keeps the row");
+        assert!(app.browser_key(&Key::Named(NamedKey::ArrowDown), false, false));
+        assert_ne!(app.state.browser_sel.as_deref(), Some(keys[0].as_str()));
+        assert!(app.browser_key(&Key::Named(NamedKey::ArrowLeft), false, false));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[0].as_str()));
+        // From the search field the Up / Down walk goes on (the results).
+        app.state.browser_search_focus = true;
+        app.state.browser_sel = None;
+        assert!(app.browser_key(&Key::Named(NamedKey::ArrowDown), false, false));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[0].as_str()));
+        app.state.browser_search_focus = false;
+        // With the pointer off the browser the arrow is somebody else's.
+        app.mouse_move(1500.0, 400.0);
+        app.state.browser_sel = None;
+        assert!(!app.browser_key(&Key::Named(NamedKey::ArrowDown), false, false));
+        assert!(app.state.browser_sel.is_none());
+        // Over the browser again, Shift+Down still sends the next sample to the selected channel (and selects it).
+        app.mouse_move(100.0, 400.0);
+        app.shift = true;
+        assert!(app.browser_key(&Key::Named(NamedKey::ArrowDown), false, false));
+        app.shift = false;
+        let row = view::rows(&app.state).into_iter().find(|r| Some(&r.key) == app.state.browser_sel.as_ref());
+        assert_eq!(row.map(|r| r.label), Some("A Kick".into()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

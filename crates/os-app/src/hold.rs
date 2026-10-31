@@ -55,39 +55,8 @@ pub struct Hold {
     pub periods: u32,
 }
 
-/// A note's type as a held click cycles it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NoteType {
-    Plain,
-    /// A slide note (flags bit 0x0008).
-    Slide,
-    /// The note's own portamento switch (byte 19, value 16).
-    Porta,
-}
-
-impl NoteType {
-    /// The type after `periods` whole periods of a hold: plain, slide, porta, then over again.
-    pub fn after(periods: u32) -> NoteType {
-        [NoteType::Plain, NoteType::Slide, NoteType::Porta][(periods % 3) as usize]
-    }
-
-    /// Note `n`'s type.
-    #[cfg(test)]
-    pub fn of(n: &Note) -> NoteType {
-        if n.slide() {
-            NoteType::Slide
-        } else if n.porta() {
-            NoteType::Porta
-        } else {
-            NoteType::Plain
-        }
-    }
-
-    pub fn apply(self, n: &mut Note) {
-        n.set_slide(self == NoteType::Slide);
-        n.set_porta(self == NoteType::Porta);
-    }
-}
+/// A note's type as a held click cycles it (crate::piano::NoteType).
+pub use crate::piano::NoteType;
 
 impl App {
     /// A press just started a drag of `kind`'s sort: with the check on, it is held from now.
@@ -509,7 +478,7 @@ mod tests {
         assert_eq!(pl::clips(&app.state).to_vec(), vec![orig], "one undo step");
         // Empty grid: the usual new clip, and nothing more while held.
         app.paint(&mut c, None);
-        let empty = (g.grid.x + 10.0, y + 3.0 * g.rows.clip_h());
+        let empty = (g.grid.x + 10.0, y + 3.0 * g.rows.clip_h(0));
         press(&mut app, empty.0, empty.1);
         assert!(app.hold.is_none());
         app.hold_tick(Instant::now() + Duration::from_millis(2500));

@@ -118,7 +118,7 @@ fn with_submenu(mtm: MainThreadMarker, menu: Retained<NSMenu>) -> Retained<NSMen
 /// (which asks about unsaved changes, see `macos::hook_app`). These keep their usual key equivalents.
 fn app_menu(mtm: MainThreadMarker, target: &Target) -> Retained<NSMenu> {
     let app = NSApplication::sharedApplication(mtm);
-    let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), ns_string!("Lemon Studio"));
+    let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), ns_string!("Mango Studio"));
     menu.setAutoenablesItems(false);
     let add = |title: &NSString, action: Option<Sel>, key: &NSString, mods: NSEventModifierFlags| {
         let item = unsafe { NSMenuItem::initWithTitle_action_keyEquivalent(NSMenuItem::alloc(mtm), title, action, key) };
@@ -137,7 +137,7 @@ fn app_menu(mtm: MainThreadMarker, target: &Target) -> Retained<NSMenu> {
             None => item.setEnabled(false),
         }
     };
-    own(add(ns_string!("About Lemon Studio"), Some(sel!(pick:)), ns_string!(""), cmd), Some((menus::HELP_MENU, menus::HELP_ABOUT)));
+    own(add(ns_string!("About Mango Studio"), Some(sel!(pick:)), ns_string!(""), cmd), Some((menus::HELP_MENU, menus::HELP_ABOUT)));
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     let settings = menus::MENUS[menus::OPTIONS_MENU].cols.iter().flat_map(|(_, items)| items.iter()).position(|it| it.label == "General settings");
     own(add(ns_string!("Settings…"), Some(sel!(pick:)), ns_string!(","), cmd), settings.map(|i| (menus::OPTIONS_MENU, i)));
@@ -147,11 +147,11 @@ fn app_menu(mtm: MainThreadMarker, target: &Target) -> Retained<NSMenu> {
     item.setSubmenu(Some(&services));
     app.setServicesMenu(Some(&services));
     menu.addItem(&NSMenuItem::separatorItem(mtm));
-    add(ns_string!("Hide Lemon Studio"), Some(sel!(hide:)), ns_string!("h"), cmd);
+    add(ns_string!("Hide Mango Studio"), Some(sel!(hide:)), ns_string!("h"), cmd);
     add(ns_string!("Hide Others"), Some(sel!(hideOtherApplications:)), ns_string!("h"), cmd | NSEventModifierFlags::Option);
     add(ns_string!("Show All"), Some(sel!(unhideAllApplications:)), ns_string!(""), cmd);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
-    add(ns_string!("Quit Lemon Studio"), Some(sel!(terminate:)), ns_string!("q"), cmd);
+    add(ns_string!("Quit Mango Studio"), Some(sel!(terminate:)), ns_string!("q"), cmd);
     menu
 }
 

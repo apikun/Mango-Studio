@@ -9,6 +9,11 @@
 //!
 // spec: ui/midi-settings.md §2, §8; ui/midi-input.md §3
 
+// Android has no system MIDI for midir (it links ALSA): the stand-in lists no devices and refuses
+// every connect, so the pages compile untouched and show an empty device list.
+#[cfg(target_os = "android")]
+use crate::midi_shim as midir;
+
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -204,7 +209,7 @@ pub struct MidiIn {
 }
 
 /// The name Lemon Studio's connections show in the system's MIDI routing (ALSA / JACK clients).
-pub const CLIENT: &str = "Lemon Studio";
+pub const CLIENT: &str = "Mango Studio";
 
 /// How often the watcher lists the devices.
 const WATCH: Duration = Duration::from_secs(2);
@@ -399,7 +404,7 @@ mod tests {
         }
         let midi = MidiIn::open(wake);
         let names = midi.open_names();
-        let out = midir::MidiOutput::new("Lemon Studio test").expect("MIDI output");
+        let out = midir::MidiOutput::new("Mango Studio test").expect("MIDI output");
         let port = out.ports().into_iter().find(|p| out.port_name(p).is_ok_and(|n| names.contains(&n)));
         let Some(port) = port else { panic!("no loopback port among the inputs {names:?}") };
         let mut conn = out.connect(&port, "loopback").expect("open the loopback output");
