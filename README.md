@@ -83,16 +83,8 @@ young, so read the warning below before trying it on real work.
 >
 > - **Greyed-out controls are not implemented yet.** Many menus and buttons are already laid out but do
 >   nothing so far; they are drawn dim and say "not available yet".
-<<<<<<< HEAD
-> - **No prebuilt binaries** will be published until Lemon Studio reaches a usable state. Until then it
->   can only be built from source.
-> - **Projects saved by FL Studio 10 or later open** (25 and 26 included). Projects older than 24.2 are
->   converted to the current layout as they open and are saved in it, so the version that wrote them may not
->   read the saved copy.
-=======
 > - **Only projects saved by FL Studio 24.2 or later open for now** (25 and 26 included). Older projects
 >   are refused with a dialog that explains how to re-save them; support for them is on the roadmap.
->>>>>>> main
 > - **Project-file support is at a very early stage.** Do not overwrite your original `.flp` projects
 >   with files saved by Mango Studio until this support is declared stable. Work on copies and keep backups.
 
@@ -111,32 +103,21 @@ Where Mango Studio stands against what a complete DAW offers:
 | Time-stretching | ✅ | All twelve stretch methods for samples and audio clips, played by one open-source stretcher |
 | Playback engine | 🚧 | Renders ahead of the audio device so edits do not cause dropouts; voice limits, cut groups, glides, layer channels; one audio thread for now |
 | Automation | 🚧 | Clips for channel, mixer and plugin parameters with every curve shape, their range and their LFO; channel volume and pan moves record into a pattern; not yet recording into automation clips |
-<<<<<<< HEAD
-| Project files | 🚧 | Opens and saves projects from FL Studio 10 and later (older layouts are converted as they open). Keep backups |
-| Built-in instruments and effects | 🚧 | Instruments: Lemon Sampler (long samples can play straight from disk), Lemon Trio (three oscillators), Citrus (a six-operator synth that plays Sytrus patches), Lemon Slicer (a loop cut into slices that plays Fruity Slicer channels) and Lemon Drum Sampler (32 pads of velocity-layered samples that plays FPC kits) and the Soundfont Player (SoundFont 2 files, the original's layout). Effects: Lemon Parametric EQ (all of FL's quality modes: HQ+, HQ Enhanced, linear phase), Limiter, Reverb, Delay, Chorus, Stereo Shaper, Stereo Enhancer, Balance, Soft Clipper, Fast Distortion, Transient Processor, Filter, Flanger and Phaser, plus Pulp Filter (a pattern-controlled multi-filter) and Press (a multiband maximiser). All built in, and also VST3 and CLAP plugins for other DAWs; a project's Fruity Limiter slots play Lemon Limiter's sound, sidechain included |
-=======
 | Project files | 🚧 | Opens and saves projects from FL Studio 24.2 and later; projects from FL 20 to 24.1 open converted (Save asks for a new file); older ones are not read yet. Keep backups |
-| Built-in instruments and effects | 🚧 | Instruments: Mango Sampler (long samples can play straight from disk), Mango Trio (three oscillators), Mango Font (SF2 bank and preset player with automatable envelope, LFO, cutoff, modulation and effect sends), Citrus (a six-operator synth that plays Sytrus patches), Mango Kick (a kick drum), Mango Boom (a bass drum), Mango Bass (a bass guitar), Mango Acid (an acid bass), Mango
-Monk (a singing vocal synthesizer), Mango Pluck (a plucked string), Mango Mini (a two-oscillator synth), Mango DX (a small FM synth), Mango Autogun (a seed-grown patch synth), Mango Drums (a synthesized drum voice), Mango Surface (a control surface: eight faders a performance links, records and automates), Mango Dashboard (a hardware panel: twelve knobs and four faders a performance links, records and automates), Mango BeepMap (an image synthesizer: a loaded PNG sings), Mango Flex (a preset synthesizer with four macros), Mango Keys (an electric piano) and Mango Slayer (an electric guitar). Effects: Mango Parametric EQ (all of FL's quality modes: HQ+, HQ Enhanced, linear phase), Limiter, Reverb, Delay, Chorus, Stereo Shaper, Stereo Enhancer, Balance, Soft Clipper, Fast Distortion, Transient Processor, Filter, Flanger, Phaser, Mango Beat (FL's Gross Beat: time and gate envelopes per beat), Press (FL's Maximus) and Pulp Filter (FL's Fruity Love Philter). All built in, and also VST3 and CLAP plugins for other DAWs; a project's Fruity Limiter slots play Mango Limiter's sound, sidechain included |
->>>>>>> main
+| Built-in instruments and effects | 🚧 | Instruments: Mango Sampler (long samples can play straight from disk), Mango DirectWave (a sampler: eight zones, each one sample and where it plays), Mango Trio (three oscillators), Mango Font (SF2 bank and preset player with automatable envelope, LFO, cutoff, modulation and effect sends), Citrus (a six-operator synth that plays Sytrus patches), Mango Kick (a kick drum), Mango Boom (a bass drum), Mango Bass (a bass guitar), Mango Acid (an acid bass), Mango
+Monk (a singing vocal synthesizer), Mango Pluck (a plucked string), Mango Mini (a two-oscillator synth), Mango DX (a small FM synth), Mango Autogun (a seed-grown patch synth), Mango Drums (a synthesized drum voice), Mango Surface (a control surface: eight faders a performance links, records and automates), Mango BeepMap (an image synthesizer: a loaded PNG sings), Mango Flex (a preset synthesizer with four macros), Mango Keys (an electric piano) and Mango Slayer (an electric guitar). Effects: Mango Parametric EQ (all of FL's quality modes: HQ+, HQ Enhanced, linear phase), Limiter, Reverb, Delay, Chorus, Stereo Shaper, Stereo Enhancer, Balance, Soft Clipper, Fast Distortion, Transient Processor, Filter, Flanger, Phaser, Mango Beat (FL's Gross Beat: time and gate envelopes per beat), Press (FL's Maximus) and Pulp Filter (FL's Fruity Love Philter). All built in, and also VST3 and CLAP plugins for other DAWs; a project's Fruity Limiter slots play Mango Limiter's sound, sidechain included |
 | Exporting audio | ✅ | Song, pattern or selection to WAV, FLAC, MP3 and OGG at once; bit depth, sample rate, interpolation, dither, mono, tails, stems and WAV markers; a pattern rendered as an audio clip (Quick render, Render and replace) |
 | MIDI file import / export | ✅ | Import into a new project, the open one or a piano roll channel (tracks, channels, tempo changes, time signatures, markers), the channels playing the Trio, Citrus, the Sampler, the chanting Monk (every part sings) or an 8-bit square patch; export a pattern or the song's patterns |
 | Note input | 🚧 | Mouse, computer keyboard, MIDI controllers (velocity curves, sustain pedal, pitch bend, aftertouch) and the touch controller; note recording into patterns with loop record, precount and Start on input; step edit |
 | MIDI controllers and sync | ✅ | Link any knob, fader or plugin parameter to a controller (or many at once with Multilink); MIDI clock and time code out, external clock in |
-| Undo | 🚧 | One history for the whole project, with redo and the browser's History: edits, knobs and faders, the mixer, channels added and deleted, the tempo and project settings, and plugin parameters, those changed in their own windows too |
-| Scripting and assistants | 🚧 | Scripts, tests and AI assistants read and edit projects over a local socket, every change undoable; see [docs/control-plane.md](docs/control-plane.md) |
+| Undo | 🚧 | One history for the whole project, with redo and the browser's History: edits, knobs and faders, channels added and deleted, project settings; not yet for a plugin editor's own changes |
 | Audio drivers | 🚧 | WASAPI (shared and exclusive) and ASIO® (output, and inputs for audio recording) on Windows, ALSA (and PipeWire / PulseAudio through it) on Linux, Core Audio on macOS; no JACK yet |
 | Platforms | 🚧 | Windows 10 / 11, Linux (X11, and Wayland through XWayland) and macOS 11 or newer; macOS is supported at the same level as Linux |
 | Look and themes | 🚧 | Lemon and Citrus (formerly Classic) skins; 25 built-in themes, your own themes and `.flstheme` files colour either skin, with live adjustments and a colour picker; Lemon plugin editors in the Lemon design only |
-<<<<<<< HEAD
-| Settings | 🚧 | The General, Audio, MIDI, File, Theme, Project and Info pages work; not yet the recording settings |
-| Audio recording | 🚧 | Armed mixer tracks record into the playlist at their record source; one-click audio recording into the playlist or the audio editor, from ASIO or system inputs; Tesla records what reaches its mixer slot |
-=======
 | Settings | 🚧 | The General, Audio, MIDI, File, Theme, Project, Info and Recording pages work; a few controls stay greyed out until their features are built |
 | Audio recording | 🚧 | One-click audio recording into the playlist or the audio editor, from ASIO or system inputs; Tesla records what reaches its mixer slot |
->>>>>>> main
 | Audio editing | ✅ | Tesla, the audio editor and recorder after FL's Edison: a mixer effect (and VST3 / CLAP plugin) with markers, regions, destructive edits and tools; a project's Edison slots open in it |
-| Plugin delay compensation | 🚧 | Plugins' reported delays and the mixer tracks' latency settings, in playback and exports; the settings are edited from the mixer |
+| Plugin delay compensation | 🚧 | Plugins' reported delays and the mixer tracks' latency settings, in playback and exports; the settings can't be edited yet |
 
 ✅ usable · 🚧 partial · ❌ not available yet
 
@@ -172,19 +153,11 @@ git clone https://github.com/apikun/Mango-Studio.git
 cd Mango-Studio
 ```
 
-<<<<<<< HEAD
-`cargo run -p os-app --release` builds and runs Lemon Studio. Before Lemon Studio starts, it also rebuilds Lemon
-Studio's own plugins (Lemon Sampler, Lemon Trio, Lemon Parametric EQ, Lemon Limiter, Lemon Reverb, Lemon Delay, Lemon
-Soft Clipper, Lemon Fast Distortion, Lemon Balance, Lemon Stereo Enhancer, Lemon Transient Processor, Lemon Chorus,
-Lemon Stereo Shaper, Lemon Filter, Lemon Flanger, Lemon Phaser, Pulp Filter, Press, Tesla and Citrus) and
-installs the ones that changed as VST3 and CLAP plugins, in the folders where other DAWs find them. Lemon Studio itself
-=======
 `cargo run -p os-app --release` builds and runs Mango Studio. Before Mango Studio starts, it also rebuilds Mango
 Studio's own plugins (Mango Sampler, Mango Trio, Mango Parametric EQ, Mango Limiter, Mango Reverb, Mango Delay, Mango
 Soft Clipper, Mango Fast Distortion, Mango Balance, Mango Stereo Enhancer, Mango Transient Processor, Mango Chorus,
 Mango Stereo Shaper, Mango Filter, Mango Flanger, Mango Phaser, Mango Beat, Citrus, Tesla, Press, Pulp Filter, Mango Kick, Mango Boom, Mango Bass, Mango Acid and Mango Monk) and
 installs the ones that changed as VST3 and CLAP plugins, in the folders where other DAWs find them. Mango Studio itself
->>>>>>> main
 has every one of them built in and needs no plugin files. A plugin that is new or updated in the repository shows up
 in other DAWs at the next run. The first run builds every plugin, which takes
 a few minutes more; later runs rebuild only what changed. Set `OPENSTUDIO_NO_PLUGIN_BUILD=1` to skip the plugin build. A
@@ -228,17 +201,8 @@ and `...\CLAP`, where DAWs find them. To build and install them without starting
 
 **Notes**
 
-<<<<<<< HEAD
-- A plugin that crashes is stopped (its slot passes the sound through) instead of closing Lemon Studio.
-- `lemonstudio.exe` is a Windows GUI program: started from Explorer, the Start menu or a shortcut it opens no console
-  window. Under `cargo run` its output goes to the terminal as before. Started directly from a terminal it prints there
-  too, but the terminal does not wait for it: for `--render`, add `| Out-Default` in PowerShell (or use
-  `start /wait` in `cmd`) to wait until the render is done.
-- Settings, themes and presets live in `%APPDATA%\Lemon Studio`. `OPENSTUDIO_USER_DIR` overrides the folder.
-=======
 - A plugin that crashes is stopped (its slot passes the sound through) instead of closing Mango Studio.
 - Settings, themes and presets live in `%APPDATA%\Mango Studio`. `OPENSTUDIO_USER_DIR` overrides the folder.
->>>>>>> main
 - Plugins are found in `%LOCALAPPDATA%\Programs\Common\{VST3,CLAP}`, `%COMMONPROGRAMFILES%\{VST3,CLAP}` and
   `CLAP_PATH`, plus any folder added in Settings > Plugins. VST2 plugins are found in the folder their installers
   record (`HKEY_LOCAL_MACHINE\SOFTWARE\VST`, `VSTPluginsPath`) and in those of `%PROGRAMFILES%\VSTPlugins`,
@@ -405,11 +369,7 @@ that stay above Mango Studio while it is the active application. A few things di
   it back. A sample dragged from Mango Studio's browser onto a plugin window reaches Mango Sampler only (other plugins
   take dropped files only from the Finder).
 - **Microphone:** the first time a mixer track monitors or records an input (the Mac's microphone, an audio
-<<<<<<< HEAD
-  interface's inputs), macOS asks whether Lemon Studio may use the microphone; System Settings > Privacy & Security >
-=======
   interface's inputs), macOS asks whether Mango Studio may use the microphone; System Settings > Privacy & Security >
->>>>>>> main
   Microphone changes the answer. Started from a terminal, macOS asks on the terminal's behalf instead.
 - **FL Studio's factory content** (samples that projects name through `%FLStudioFactoryData%`) is found in the newest
   `/Applications/FL Studio *.app`; `OPENSTUDIO_FACTORY` overrides it.
@@ -468,22 +428,6 @@ ordinary suite because it requires a display; it does not certify every third-pa
 The watermark test (`cargo test -p watermark`) checks that every source file opens with its header: a copyright line
 for each of its copyright holders, its SPDX licence identifier and the project's name.
 
-Every test binary is compiled and linked on its own, so a crate keeps its integration tests in one:
-`tests/integration/main.rs` names each file there as a module (run one with `cargo test -p os-engine --test integration
-fx_null`); a new file goes there, not beside it. The crates have no doc tests (`doctest = false`: code in doc comments is
-`text` or `ignore`), and a crate without tests has `test = false`; take that out when adding its first test.
-
-### Scripting and assistants
-
-`--control <socket>` lets scripts, tests and AI assistants read and change the open project over a local socket
-(JSON-RPC 2.0), and `--serve <socket> [project.flp]` does the same without a window. Each change is an undo step named
-after the client; clients can be limited to reading or to proposing changes the user accepts. The protocol and its
-commands are in [docs/control-plane.md](docs/control-plane.md).
-
-```bash
-cargo run -p os-app --release -- --control /tmp/lemon.sock path/to/project.flp
-```
-
 ### Command-line tools
 
 | Tool | Purpose |
@@ -511,45 +455,6 @@ Mango Studio is a Cargo workspace of focused crates:
 | [`os-clap`](crates/os-clap) | CLAP plugin host |
 | [`os-vst3`](crates/os-vst3) | VST3 plugin host |
 | [`os-vst2`](crates/os-vst2) | VST2 plugin host, on a clean-room description of the interface (no Steinberg SDK) |
-<<<<<<< HEAD
-| [`os-hostlink`](crates/os-hostlink) | Host link protocol between Lemon Studio and its own plugins |
-| [`os-plugkit`](crates/os-plugkit) | Shared editor pieces of Lemon Studio's own plugins |
-| [`os-paths`](crates/os-paths) | Where Lemon Studio keeps its settings, themes and presets on each platform |
-| [`lemon-sampler`](plugins/lemon-sampler) | Lemon Sampler instrument (VST3 + CLAP) |
-| [`lemon-3x-osc`](plugins/lemon-3x-osc) | Lemon Trio instrument (VST3 + CLAP) |
-| [`lemon-drum-sampler`](plugins/lemon-drum-sampler) | Lemon Drum Sampler instrument, 32 pads of velocity-layered samples (VST3 + CLAP) |
-| [`soundfont-player`](plugins/soundfont-player) | Soundfont Player instrument, SoundFont 2 files with the original's layout (VST3 + CLAP) |
-| [`lemon-parametric-eq-2`](plugins/lemon-parametric-eq-2) | Lemon Parametric EQ effect (VST3 + CLAP) |
-| [`lemon-limiter`](plugins/lemon-limiter) | Lemon Limiter effect (VST3 + CLAP) |
-| [`lemon-reverb`](plugins/lemon-reverb) | Lemon Reverb effect (VST3 + CLAP) |
-| [`lemon-delay`](plugins/lemon-delay) | Lemon Delay effect (VST3 + CLAP) |
-| [`lemon-small-fx`](plugins/lemon-small-fx) | What the small Lemon effects share: the plugin, its state, the editor and each effect's description |
-| [`lemon-soft-clipper`](plugins/lemon-soft-clipper) | Lemon Soft Clipper effect (VST3 + CLAP) |
-| [`lemon-fast-distortion`](plugins/lemon-fast-distortion) | Lemon Fast Distortion effect (VST3 + CLAP) |
-| [`lemon-balance`](plugins/lemon-balance) | Lemon Balance effect (VST3 + CLAP) |
-| [`lemon-stereo-enhancer`](plugins/lemon-stereo-enhancer) | Lemon Stereo Enhancer effect (VST3 + CLAP) |
-| [`lemon-transient-processor`](plugins/lemon-transient-processor) | Lemon Transient Processor effect (VST3 + CLAP) |
-| [`lemon-chorus`](plugins/lemon-chorus) | Lemon Chorus effect (VST3 + CLAP) |
-| [`lemon-stereo-shaper`](plugins/lemon-stereo-shaper) | Lemon Stereo Shaper effect (VST3 + CLAP) |
-| [`lemon-filter`](plugins/lemon-filter) | Lemon Filter effect (VST3 + CLAP) |
-| [`lemon-flanger`](plugins/lemon-flanger) | Lemon Flanger effect (VST3 + CLAP) |
-| [`lemon-peak-controller`](plugins/lemon-peak-controller) | Lemon Peak Controller: a peak follower and LFO whose outputs drive linked controls (VST3 + CLAP) |
-| [`lemon-formula-controller`](plugins/lemon-formula-controller) | Lemon Formula Controller: a typed formula of three knobs and the song position whose output drives linked controls (VST3 + CLAP) |
-| [`lemon-phaser`](plugins/lemon-phaser) | Lemon Phaser effect (VST3 + CLAP) |
-| [`lemon-vocoder`](plugins/lemon-vocoder) | Lemon Vocoder: a band vocoder with a sidechain input for the carrier (VST3 + CLAP) |
-| [`pulp-filter`](plugins/pulp-filter) | Pulp Filter effect, a pattern-controlled multi-filter (VST3 + CLAP) |
-| [`press`](plugins/press) | Press effect, a multiband maximiser (VST3 + CLAP) |
-| [`tesla`](plugins/tesla) | Tesla, the audio editor and recorder (VST3 + CLAP) |
-| [`citrus`](plugins/citrus) | Citrus instrument, a six-operator synthesizer (VST3 + CLAP) |
-| [`lemon-slicer`](plugins/lemon-slicer) | Lemon Slicer instrument, a loop cut into slices (VST3 + CLAP) |
-
-## Roadmap
-
-The roadmap is kept on the [Lemon Studio Discord server](https://discord.gg/yC2uCuGs3M), where every item is
-marked as complete, in progress or not started. The broad next steps are the engine rework (sampler voice,
-automation), opening projects from older FL Studio versions, more built-in instruments and effects, and the rest of
-the plugin window features on Linux.
-=======
 | [`os-hostlink`](crates/os-hostlink) | Host link protocol between Mango Studio and its own plugins |
 | [`os-plugkit`](crates/os-plugkit) | Shared editor pieces of Mango Studio's own plugins |
 | [`os-paths`](crates/os-paths) | Where Mango Studio keeps its settings, themes and presets on each platform |
@@ -585,6 +490,7 @@ the plugin window features on Linux.
 | [`mango-dashboard`](plugins/mango-dashboard) | Mango Dashboard, a hardware panel: twelve knobs and four faders a performance links, records and automates; it sounds nothing (VST3 + CLAP) |
 | [`mango-beepmap`](plugins/mango-beepmap) | Mango BeepMap, an image synthesizer: a loaded PNG sings, its columns the time, its rows the pitch (VST3 + CLAP) |
 | [`mango-flex`](plugins/mango-flex) | Mango Flex, a preset synthesizer: two hundred fifty-six named presets and four macros over each, the echo and space of the preset behind them (VST3 + CLAP) |
+| [`mango-directwave`](plugins/mango-directwave) | Mango DirectWave, a sampler: a program of eight zones, each one sample and where it plays — key and velocity ranges, gain, pan, tune and loop — through the master's envelope and filter (VST3 + CLAP) |
 | [`lemon-pluck`](plugins/lemon-pluck) | Mango Pluck, a plucked string (VST3 + CLAP) |
 | [`lemon-mini`](plugins/lemon-mini) | Mango Mini, a small subtractive synthesizer (VST3 + CLAP) |
 | [`lemon-dx`](plugins/lemon-dx) | Mango DX, a small FM synthesizer (VST3 + CLAP) |
@@ -598,7 +504,6 @@ the plugin window features on Linux.
 
 The item-by-item roadmap, as it is kept on the [Lemon Studio Discord server](https://discord.gg/yC2uCuGs3M) (the original project's):
 every feature marked as done, in progress or not started.
->>>>>>> main
 
 ✅ done · 🚧 in progress · ⬜ not started
 
@@ -802,7 +707,7 @@ every feature marked as done, in progress or not started.
 #### Samplers / Players
 
 - ✅ Sampler (Mango Sampler: built into the app, also VST3 and CLAP)
-- ⬜ DirectWave
+- ✅ DirectWave (Mango DirectWave: built into the app, also VST3 and CLAP)
 - ✅ Fruity Slicer (Mango Slicer: built into the app, also VST3 and CLAP)
 - ⬜ Fruity Slicer 2
 - ✅ Soundfont Player (Mango Font: built into the app, also VST3 and CLAP)
