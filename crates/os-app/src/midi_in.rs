@@ -367,7 +367,7 @@ mod tests {
         assert_eq!(parse(&[0xd2, 99]), Some(Msg::Pressure { ch: 2, v: 99 }));
         assert_eq!(parse(&[0xc0, 5]), Some(Msg::Program { ch: 0, p: 5 }));
         assert_eq!(parse(&[0xf2, 0x10, 0x01]), Some(Msg::Spp(144)));
-        assert!(own("Lemon Studio:Lemon Studio 131:0") && !own("Lemon Studio test:out 130:0") && !own("Launchkey MK4 61:Launchkey MK4 61 MIDI In 24:0"));
+        assert!(own("Mango Studio:Mango Studio 131:0") && !own("Mango Studio test:out 130:0") && !own("Launchkey MK4 61:Launchkey MK4 61 MIDI In 24:0"));
         assert_eq!(parse(&[0xfa]), Some(Msg::Start));
         assert_eq!(parse(&[0xf8]), None, "the clock is not a message here");
         assert_eq!(Msg::Bend { ch: 4, v: 8192 }.bytes(), Some([0xe0, 0, 64]), "sent on channel 1");
