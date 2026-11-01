@@ -149,10 +149,15 @@ pub enum Cmd {
     DefaultKeys,
     /// Select previous (-1) or next (1) region.
     Select(i32),
+    /// The chosen slice's reverse switch; its name typed in.
+    ToggleReverse,
+    Rename,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuReq {
+    /// The chosen slice's menu (right click on the wave): reverse, rename, trigger note, delete.
+    Slice,
     /// One of the toolbar's menus (`view::MENUS`).
     Toolbar(u8),
     Param(String),
@@ -168,6 +173,8 @@ pub enum MenuReq {
 /// The type-in ids of the loop's tempo and length (not parameters).
 pub const BPM_ID: &str = "bpm";
 pub const BEATS_ID: &str = "beats";
+/// The type-in id of the chosen slice's name.
+pub const SLICE_NAME_ID: &str = "slice-name";
 
 /// Something the window has to do after an event.
 #[derive(Clone, Debug, PartialEq)]
@@ -365,9 +372,10 @@ impl Logic {
                 return vec![Act::Resize(w, h), Act::Repaint];
             }
             Ctl::Smooth => self.edit_ext(|e| e.smooth = !e.smooth),
-            Ctl::Layer(n) => self.edit_ext(|e| e.layer = n.min(2)),
+            Ctl::Layer(n) => self.edit_ext(|e| e.layer = n.min(6)),
             Ctl::SameDeck => self.edit_ext(|e| e.same_deck = !e.same_deck),
-            Ctl::Crossfade => self.edit_ext(|e| e.crossfade = !e.crossfade),
+            Ctl::Crossfade(n) => self.edit_ext(|e| e.fade = n.min(4)),
+            Ctl::AutoDump => self.edit_ext(|e| e.auto_dump = !e.auto_dump),
             Ctl::Key(k) => {
                 self.view.pressed = Some(Target::Ext(c));
                 let st = self.state();
@@ -386,15 +394,12 @@ impl Logic {
             }
             Ctl::Stop => self.play(None),
             Ctl::DeckToggle(d) => self.edit_ext(|e| {
-                let (a, b) = (e.layer != 2, e.layer != 1);
-                let (a, b) = if d == 0 { (!a, b) } else { (a, !b) };
-                // Both off leaves the other one on.
-                e.layer = match (a, b) {
-                    (true, true) => 0,
-                    (true, false) => 1,
-                    (false, true) => 2,
-                    (false, false) => if d == 0 { 2 } else { 1 },
-                };
+                // A deck goes on or off; both off leaves the other one on.
+                if d == 0 {
+                    e.a_on = !e.a_on || !e.b_on;
+                } else {
+                    e.b_on = !e.b_on || !e.a_on;
+                }
             }),
             Ctl::LoadDeck(n) => {
                 self.load_deck = n.min(1);
@@ -420,9 +425,11 @@ impl Logic {
             Ctl::Src(i) => format!("Source: {}", crate::ext::ALL_SOURCES[i.min(5)].name()),
             Ctl::Tempo => format!("Times in beats\t{}", tab(if sel.src == Source::Lfo { a.lfo[sel.tgt.index()].tempo } else { a.env[sel.tgt.index()].tempo })),
             Ctl::LfoShape(_) => "LFO shape: click for the next".into(),
-            Ctl::Layer(n) => format!("Layers: {}", crate::ext::LAYERS[usize::from(n).min(2)]),
+            Ctl::Layer(n) => format!("Drum layering\t{}", crate::ext::LAYERS[usize::from(n).min(6)]),
             Ctl::SameDeck => format!("Deck B plays deck A's slice number\t{}", tab(x.same_deck)),
-            Ctl::Crossfade => format!("The pad's X fades from A to B\t{}", tab(x.crossfade)),
+            Ctl::Crossfade(n) => format!("Crossfade\t{}", crate::ext::FADES[usize::from(n).min(4)]),
+            Ctl::AutoDump => format!("Auto-dump\t{}", tab(x.auto_dump)),
+            Ctl::RandLvl | Ctl::LfoLvl => format!("{}\t{}", c.caption(), extctl::text(&x, &sel, c)),
             _ => String::new(),
         }
     }
@@ -519,6 +526,14 @@ impl Logic {
                     self.view.pressed = Some(Target::Well);
                     let key = u8::try_from(st.key_of(i)).ok().filter(|&k| k < 128);
                     self.play(key);
+                }
+            }
+            (Target::Well, Btn::Right) if has => {
+                let st = self.state();
+                let i = slice_at(&st, view::frame_at(x, self.frames()));
+                if i < st.slices.len() {
+                    self.view.chosen = i;
+                    acts.push(Act::Menu(MenuReq::Slice, x, y));
                 }
             }
             (Target::Key, Btn::Left | Btn::Right) if !self.state().slices.is_empty() => acts.push(Act::Menu(MenuReq::Key, view::KEY_BOX.x, view::KEY_BOX.bottom())),
@@ -644,6 +659,27 @@ impl Logic {
     pub fn menu(&self, req: &MenuReq) -> MenuDef<Cmd> {
         let mut m = MenuDef::new(MenuStyle::Context);
         match req {
+            MenuReq::Slice => {
+                let st = self.state();
+                let i = self.chosen(&st);
+                let s = st.slices.get(i);
+                m.head(&format!("Slice {}", i + 1), Cmd::None);
+                m.add(MenuItem::item("Reverse").mark(Mark::Check(s.is_some_and(|s| s.reversed()))), Cmd::ToggleReverse);
+                m.add(MenuItem::item("Rename..."), Cmd::Rename);
+                let root = s.map_or(-1, |s| s.root);
+                let mut keys = MenuDef::new(MenuStyle::Context);
+                keys.add(MenuItem::item(&format!("Default ({})", view::key_name(60 + i as i32))).mark(Mark::Radio(root < 0)), Cmd::Root(-1));
+                for oct in 0..=10 {
+                    let mut sub = MenuDef::new(MenuStyle::Context);
+                    for k in oct * 12..(oct * 12 + 12).min(128) {
+                        sub.add(MenuItem::item(&view::key_name(k)).mark(Mark::Radio(k == root)), Cmd::Root(k));
+                    }
+                    keys.submenu(&format!("Octave {oct}"), sub, Cmd::None);
+                }
+                m.submenu("Trigger note", keys, Cmd::None);
+                m.sep(Cmd::None);
+                m.add(MenuItem::item("Delete").enabled(st.slices.len() > 1), Cmd::DeleteSlice);
+            }
             MenuReq::Toolbar(i) => self.toolbar_menu(&mut m, usize::from(*i)),
             MenuReq::Param(id) => {
                 m.head(&Self::name(id), Cmd::None);
@@ -822,6 +858,15 @@ impl Logic {
                     self.commit(&st);
                 }
             }
+            Cmd::ToggleReverse => {
+                let mut st = self.state();
+                let i = self.chosen(&st);
+                if let Some(s) = st.slices.get_mut(i) {
+                    s.flags ^= 1;
+                    self.commit(&st);
+                }
+            }
+            Cmd::Rename => return vec![Act::TypeIn(SLICE_NAME_ID.into(), x, y)],
             Cmd::DefaultKeys => {
                 let mut st = self.state();
                 for s in &mut st.slices {
@@ -912,6 +957,7 @@ impl Logic {
         match id {
             BPM_ID => format!("{:.3}", st.bpm()),
             BEATS_ID => format!("{:.2}", st.beats()),
+            SLICE_NAME_ID => st.slices.get(self.chosen(&st)).map(|s| s.name()).unwrap_or_default(),
             _ => self.vals.text(id),
         }
     }
@@ -922,6 +968,14 @@ impl Logic {
         match id {
             BPM_ID => self.set_tempo(num(), None),
             BEATS_ID => self.set_tempo(None, num()),
+            SLICE_NAME_ID => {
+                let mut st = self.state();
+                let i = self.chosen(&st);
+                if let Some(s) = st.slices.get_mut(i) {
+                    s.name = text.trim().as_bytes().to_vec();
+                    self.commit(&st);
+                }
+            }
             _ => {
                 if let Some(n) = self.vals.parse(id, text) {
                     self.vals.edit(id, n);
@@ -931,7 +985,7 @@ impl Logic {
     }
 
     /// Loads a loop (the open dialog's file).
-    pub fn load(&mut self, path: &str) {
+    pub fn load(&mut self, path: &str) -> Vec<Act> {
         let deck = std::mem::take(&mut self.load_deck);
         let r = if deck == 1 {
             self.shared.load_b(path, &self.params)
@@ -939,8 +993,14 @@ impl Logic {
             self.view.chosen = 0;
             self.shared.load(path, &self.params)
         };
-        if let Err(e) = r {
-            self.hint = e;
+        match r {
+            // A loop loaded into deck A goes to the piano roll at once when AUTO-DUMP is on.
+            Ok(()) if deck == 0 && self.hosted && self.params.ext().auto_dump => self.dump(false).map(Act::Notes).into_iter().collect(),
+            Ok(()) => Vec::new(),
+            Err(e) => {
+                self.hint = e;
+                Vec::new()
+            }
         }
     }
 
@@ -960,7 +1020,8 @@ impl Logic {
         let frames = self.frames();
         let can_dump = self.hosted && frames > 0 && !st.slices.is_empty();
         self.view.chosen = self.chosen(&st);
-        let hint = if self.hosted { String::new() } else { self.hint.clone() };
+        // A value shows over the wave while it is dragged; no tooltips otherwise.
+        let hint = if self.hosted || (self.drag.is_none() && self.ext_drag.is_none()) { String::new() } else { self.hint.clone() };
         self.peaks();
         let ext = self.params.ext();
         let a_name = std::path::Path::new(&st.path()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -1283,7 +1344,8 @@ mod win32 {
                     }
                     Act::OpenDialog => {
                         if let Some(path) = file_dialog(self.hwnd) {
-                            self.logic.load(&path);
+                            let acts = self.logic.load(&path);
+                            self.act(acts);
                         }
                         repaint = true;
                     }
@@ -1542,7 +1604,8 @@ mod gui {
                     }
                     Act::OpenDialog => {
                         if let Some(path) = file_dialog(&self.win) {
-                            self.logic.load(&path);
+                            let acts = self.logic.load(&path);
+                            self.act(acts);
                         }
                         self.dirty = true;
                     }
@@ -1622,10 +1685,9 @@ mod tests {
     #[test]
     fn every_parameter_has_a_control() {
         let l = logic();
-        for (id, _) in NAMES {
-            assert!(l.hits.iter().any(|h| matches!(&h.t, Target::Knob(i) | Target::Switch(i) if i == id)), "{id}");
-        }
-        for t in [Target::Well, Target::Key, Target::Rev, Target::Bpm, Target::Beats, Target::Logo, Target::Ext(Ctl::Menu(0)), Target::Ext(Ctl::Menu(8)), Target::Ext(Ctl::Edit(7)), Target::Ext(Ctl::Edit(8)), Target::Ext(Ctl::PlaySlice)] {
+        // The window has the original's four master faders; attack, decay and the switches stay plugin parameters only.
+        assert!(l.hits.iter().any(|h| matches!(&h.t, Target::Knob(i) if i == params::PITCH_ID)));
+        for t in [Target::Well, Target::Bpm, Target::Beats, Target::Logo, Target::Ext(Ctl::Master), Target::Ext(Ctl::RandLvl), Target::Ext(Ctl::LfoLvl), Target::Ext(Ctl::AutoDump), Target::Ext(Ctl::Crossfade(2)), Target::Ext(Ctl::Menu(0)), Target::Ext(Ctl::Menu(8)), Target::Ext(Ctl::Edit(7)), Target::Ext(Ctl::Edit(8)), Target::Ext(Ctl::PlaySlice)] {
             centre(&l, &t);
         }
     }
@@ -1633,26 +1695,26 @@ mod tests {
     #[test]
     fn knobs_switches_and_hints() {
         let mut l = logic();
-        let (x, y) = centre(&l, &Target::Knob(params::DECAY_ID.into()));
-        assert!(l.down(x, y, Btn::Left, Mods::default(), false).contains(&Act::Lock));
-        // 200 px = 0..1000 ms: 4 px up = +20.
-        for _ in 0..4 {
-            l.delta(0.0, -1.0, Mods::default());
-        }
-        l.up(Btn::Left);
-        assert_eq!(l.params.values().decay, 24);
-        assert_eq!(l.hint, "Decay: 24ms");
-        l.wheel(x, y, 1.0, Mods::default());
-        assert_eq!(l.params.values().decay, 25);
         let (x, y) = centre(&l, &Target::Knob(params::PITCH_ID.into()));
         l.wheel(x, y, 1.0, Mods::default());
         assert_eq!(l.params.values().pitch, 10);
         assert_eq!(l.hint, "Pitch shift: +10 cents");
-        let (x, y) = centre(&l, &Target::Switch(params::TO_END_ID.into()));
+        assert!(l.down(x, y, Btn::Left, Mods::default(), false).contains(&Act::Lock));
+        // 200 px = the whole range: 5 px up = +60 cents.
+        for _ in 0..5 {
+            l.delta(0.0, -1.0, Mods::default());
+        }
+        l.up(Btn::Left);
+        assert_eq!(l.params.values().pitch, 70);
+        // The master level faders move what Slicex adds.
+        let (x, y) = centre(&l, &Target::Ext(Ctl::LfoLvl));
         l.down(x, y, Btn::Left, Mods::default(), false);
-        assert!(l.params.values().to_end);
-        assert_eq!(l.hint, "Play to end\ton");
-        assert_eq!(l.pick(&MenuReq::Param("toend".into()), Cmd::Automate("toend".into()), 0.0, 0.0), vec![Act::Automate(4)]);
+        for _ in 0..20 {
+            l.delta(0.0, 1.0, Mods::default());
+        }
+        l.up(Btn::Left);
+        assert!((l.params.ext().lfo_level - 0.9).abs() < 1e-3, "{}", l.params.ext().lfo_level);
+        assert_eq!(l.pick(&MenuReq::Param("pitch".into()), Cmd::Automate("pitch".into()), 0.0, 0.0), vec![Act::Automate(0)]);
     }
 
     #[test]
@@ -1675,10 +1737,16 @@ mod tests {
         l.up(Btn::Left);
         assert_eq!(l.shared.previews.lock().unwrap().last(), Some(&(62, 0.0, false)));
         assert_eq!(l.hint, "Slice 3\tD5");
-        // Its key and its reverse switch.
-        l.pick(&MenuReq::Key, Cmd::Root(36), 0.0, 0.0);
-        let (x, y) = centre(&l, &Target::Rev);
-        l.down(x, y, Btn::Left, Mods::default(), false);
+        // A right click on the wave opens the slice's menu: its trigger note, reverse and name.
+        let x = view::WAVE.x + view::WAVE.w * 0.6;
+        let acts = l.down(x, view::WAVE.cy(), Btn::Right, Mods::default(), false);
+        assert!(acts.contains(&Act::Menu(MenuReq::Slice, x, view::WAVE.cy())));
+        assert!(l.menu(&MenuReq::Slice).find("Delete").is_some());
+        l.pick(&MenuReq::Slice, Cmd::Root(36), 0.0, 0.0);
+        l.pick(&MenuReq::Slice, Cmd::ToggleReverse, 0.0, 0.0);
+        assert_eq!(l.pick(&MenuReq::Slice, Cmd::Rename, 1.0, 2.0), vec![Act::TypeIn(SLICE_NAME_ID.into(), 1.0, 2.0)]);
+        l.typed(SLICE_NAME_ID, "Snare");
+        assert_eq!(l.state().slices[2].name(), "Snare");
         let st = l.state();
         assert_eq!((st.slices[2].root, st.slices[2].reversed()), (36, true));
         assert_eq!(l.shared.kit.lock().unwrap().as_ref().unwrap().keys[36], Some(2));
@@ -1700,7 +1768,7 @@ mod tests {
         let kit = l.shared.kit.lock().unwrap().clone().unwrap();
         a.note_on(Some(&kit), 61, 1.0, None);
         assert_eq!(a.sounding().count(), 2, "both decks play");
-        l.edit_ext(|e| e.layer = 1);
+        l.edit_ext(|e| e.b_on = false);
         let kit = l.shared.kit.lock().unwrap().clone().unwrap();
         b.note_on(Some(&kit), 61, 1.0, None);
         assert_eq!(b.sounding().count(), 1, "deck A alone");

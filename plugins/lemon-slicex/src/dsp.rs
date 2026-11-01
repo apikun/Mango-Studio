@@ -116,15 +116,15 @@ pub struct Block {
     pub mod_y: f32,
     pub smooth: bool,
     pub beat: f64,
-    /// The pad's X fades from deck A to deck B.
-    pub crossfade: bool,
-    /// The master volume as a gain.
+    /// The master volume as a gain, and the master levels of the randomness and the LFOs.
     pub master: f32,
+    pub rand_level: f32,
+    pub lfo_level: f32,
 }
 
 impl Default for Block {
     fn default() -> Self {
-        Block { cents: 0.0, attack_ms: 0.0, decay_ms: 4.0, declick: true, to_end: false, mod_x: 0.5, mod_y: 0.5, smooth: false, beat: 0.5, crossfade: false, master: 1.0 }
+        Block { cents: 0.0, attack_ms: 0.0, decay_ms: 4.0, declick: true, to_end: false, mod_x: 0.5, mod_y: 0.5, smooth: false, beat: 0.5, master: 1.0, rand_level: 1.0, lfo_level: 1.0 }
     }
 }
 
@@ -136,8 +136,9 @@ struct Voice {
     key: u8,
     id: Option<i32>,
     slice: usize,
-    /// The deck the slice is of: 0 = A, 1 = B.
+    /// The deck the slice is of: 0 = A, 1 = B, and the gain its layering gives it.
     deck: u8,
+    layer_gain: f32,
     art: usize,
     /// Frames into the slice (sample frames).
     pos: f64,
@@ -177,6 +178,12 @@ fn source(a: &Artic, target: Target, s: Source, t: f64, v: &Voice, b: &Block, mx
 }
 
 fn modulate(a: &Artic, t: f64, v: &Voice, b: &Block, mx: f32, my: f32) -> Mods {
+    // The master levels of the randomness and the LFOs scale what those sources add.
+    let level = |s: Source| match s {
+        Source::Lfo => b.lfo_level,
+        Source::Rand => b.rand_level,
+        _ => 1.0,
+    };
     // A source's value as it moves a target: ENV, VEL, MOD and RAND run 0..1 (the pad's and RAND's from the middle),
     // the LFO -1..1.
     let signed = |tg: Target, s: Source| -> f32 {
@@ -187,11 +194,11 @@ fn modulate(a: &Artic, t: f64, v: &Voice, b: &Block, mx: f32, my: f32) -> Mods {
             Source::ModX | Source::ModY | Source::Rand => (x - 0.5) * 2.0,
         }
     };
-    let sum = |tg: Target| -> f32 { crate::ext::ALL_SOURCES.iter().map(|&s| a.amount(tg, s) * signed(tg, s)).sum() };
+    let sum = |tg: Target| -> f32 { crate::ext::ALL_SOURCES.iter().map(|&s| a.amount(tg, s) * level(s) * signed(tg, s)).sum() };
     // The volume scales: each source with an amount takes that share of the volume (its value) and leaves the rest.
     let mut gain = 1.0f32;
     for &s in &crate::ext::ALL_SOURCES {
-        let amt = a.amount(Target::Vol, s);
+        let amt = a.amount(Target::Vol, s) * level(s);
         if amt == 0.0 {
             continue;
         }
@@ -262,40 +269,51 @@ impl Engine {
         std::mem::take(&mut self.ended)
     }
 
-    /// Starts the voices for `key`: the slice it plays on each deck the layering lets sound; keys without a slice are
-    /// silent.
+    /// Starts the voices for `key`: the slice it plays on each deck that sounds; with both, the layering mode and the
+    /// crossfade curve give each its gain. Keys without a slice are silent.
     pub fn note_on(&mut self, kit: Option<&Kit>, key: u8, velocity: f32, id: Option<i32>) {
         let Some(kit) = kit else { return };
+        let ext = &kit.ext;
         let a = kit.keys.get(usize::from(key)).copied().flatten();
         let b = kit.b.as_ref().and_then(|d| {
-            let s = if kit.ext.same_deck { a } else { d.keys.get(usize::from(key)).copied().flatten() };
+            let s = if ext.same_deck { a } else { d.keys.get(usize::from(key)).copied().flatten() };
             s.filter(|&i| usize::from(i) < d.spans.len())
         });
-        let (a, b) = match kit.ext.layer {
-            1 => (a, None),
-            2 => (None, b),
-            _ => (a, b),
+        let (a, b) = (a.filter(|_| ext.a_on), b.filter(|_| ext.b_on));
+        self.clock += 1;
+        // A number for the note: a hash of the note's count.
+        let h = (self.clock as u32).wrapping_mul(0x9e37_79b9) ^ u32::from(key).wrapping_mul(0x85eb_ca6b);
+        let rand = ((h.wrapping_mul(0x2c1b_3c6d) >> 8) as f32) / (1u32 << 24) as f32;
+        let (ga, gb) = if a.is_some() && b.is_some() {
+            let x = match ext.layer {
+                2 => velocity,
+                3 => self.mx,
+                4 => self.my,
+                5 => rand,
+                6 => (self.clock % 2) as f32,
+                _ => 0.5,
+            };
+            ext.layer_gains(x)
+        } else {
+            (1.0, 1.0)
         };
-        for (deck, slice) in [(0u8, a), (1u8, b)] {
+        for (deck, slice, g) in [(0u8, a, ga), (1u8, b, gb)] {
             if let Some(slice) = slice {
-                self.start(kit, deck, key, slice, velocity, id);
+                self.start(kit, deck, key, slice, velocity, id, rand, g);
             }
         }
     }
 
-    fn start(&mut self, kit: &Kit, deck: u8, key: u8, slice: u16, velocity: f32, id: Option<i32>) {
+    #[allow(clippy::too_many_arguments)]
+    fn start(&mut self, kit: &Kit, deck: u8, key: u8, slice: u16, velocity: f32, id: Option<i32>, rand: f32, layer_gain: f32) {
         if self.voices.len() >= VOICES
             && let Some(i) = (0..self.voices.len()).min_by_key(|&i| self.voices[i].age)
         {
             let v = self.voices.remove(i);
             self.ended.push((v.key, v.id));
         }
-        self.clock += 1;
         let art = usize::from(kit.ext.art_of(usize::from(slice))).min(ARTICS - 1);
-        // A number for the note: a hash of the note's count.
-        let h = (self.clock as u32).wrapping_mul(0x9e37_79b9) ^ u32::from(key).wrapping_mul(0x85eb_ca6b);
-        let rand = ((h.wrapping_mul(0x2c1b_3c6d) >> 8) as f32) / (1u32 << 24) as f32;
-        self.voices.push(Voice { key, id, slice: usize::from(slice), deck, art, pos: 0.0, gain: velocity.clamp(0.0, 1.0), rand, t: 0.0, filt: [[[0.0; 2]; 3]; 2], release: None, age: self.clock });
+        self.voices.push(Voice { key, id, slice: usize::from(slice), deck, layer_gain, art, pos: 0.0, gain: velocity.clamp(0.0, 1.0), rand, t: 0.0, filt: [[[0.0; 2]; 3]; 2], release: None, age: self.clock });
     }
 
     /// The note ends: its voices fade out (over the volume envelope's release when it shapes the volume).
@@ -351,8 +369,7 @@ impl Engine {
             let (att, dec) = (b.attack_ms / 1000.0 * sr, b.decay_ms / 1000.0 * sr);
             let click = if b.declick { DECLICK_S * sr } else { 0.0 };
             let frames = s.frames();
-            // The pad's X fades between the decks.
-            let fade = if !b.crossfade || kit.b.is_none() { 1.0 } else if v.deck == 0 { 1.0 - mx } else { mx };
+            let fade = v.layer_gain;
             let art = &kit.ext.artic[v.art.min(ARTICS - 1)];
             let end = if b.to_end { frames } else { span.next };
             let len = end.saturating_sub(span.start) as f64;

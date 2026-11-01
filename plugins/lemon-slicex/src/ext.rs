@@ -184,8 +184,30 @@ impl Artic {
     }
 }
 
-/// Which decks sound: both (`All`), or one.
-pub const LAYERS: [&str; 3] = ["All", "A", "B"];
+/// How the two decks' regions on one key layer: the layering modes (the original's list).
+pub const LAYERS: [&str; 7] = ["All", "All (gain compensated)", "Velocity-mapped", "Modulation X-mapped", "Modulation Y-mapped", "Random", "Cycle"];
+
+/// The crossfade curves between layered regions, in the order of their buttons.
+pub const FADES: [&str; 5] = ["None", "Linear", "Balanced curve", "Unbalanced curve", "Adding"];
+
+impl Ext {
+    /// The gains of deck A's and deck B's regions of a key when both play, for position `x` (0..1) along the mode's
+    /// source (velocity, the pad, a random number) and the crossfade curve.
+    pub fn layer_gains(&self, x: f32) -> (f32, f32) {
+        let x = x.clamp(0.0, 1.0);
+        match self.layer {
+            0 => (1.0, 1.0),
+            1 => (std::f32::consts::FRAC_1_SQRT_2, std::f32::consts::FRAC_1_SQRT_2),
+            _ => match self.fade {
+                0 => if x < 0.5 { (1.0, 0.0) } else { (0.0, 1.0) },
+                1 => (1.0 - x, x),
+                2 => ((x * std::f32::consts::FRAC_PI_2).cos(), (x * std::f32::consts::FRAC_PI_2).sin()),
+                3 => ((1.0 - x).powi(3), x.powi(3)),
+                _ => ((2.0 * (1.0 - x)).min(1.0), (2.0 * x).min(1.0)),
+            },
+        }
+    }
+}
 
 /// The whole addition to the saved state.
 #[derive(Clone, Debug, PartialEq)]
@@ -197,15 +219,21 @@ pub struct Ext {
     pub mod_x: f32,
     pub mod_y: f32,
     pub smooth: bool,
-    /// Layering: which decks sound (`LAYERS`), whether deck B plays the slice with deck A's number (SAME DECK), and
-    /// whether the pad's X fades from A to B.
+    /// Layering: the mode (`LAYERS`), whether deck B plays the slice with deck A's number (SAME DECK), the crossfade
+    /// curve (`FADES`), and which decks sound.
     pub layer: u8,
     pub same_deck: bool,
-    pub crossfade: bool,
+    pub fade: u8,
+    pub a_on: bool,
+    pub b_on: bool,
     /// The second deck's saved slicer state and sample path (empty = no second loop).
     pub deck_b: Vec<u8>,
-    /// The master volume as a gain, 0..1.25 (1 = as recorded).
+    /// The master volume as a gain, 0..1.25 (1 = as recorded), and the master levels of the randomness and the LFOs.
     pub master: f32,
+    pub rand_level: f32,
+    pub lfo_level: f32,
+    /// A loop loaded into deck A is dumped to the piano roll at once.
+    pub auto_dump: bool,
     /// What the window shows (`view::arrange`): 0 everything, 1 without the audio editor, 2 without the region
     /// settings, 3 only the master panel; and whether the keyboard shows.
     pub view: u8,
@@ -222,9 +250,14 @@ impl Default for Ext {
             smooth: true,
             layer: 0,
             same_deck: true,
-            crossfade: false,
+            fade: 0,
+            a_on: true,
+            b_on: true,
             deck_b: Vec::new(),
             master: 1.0,
+            rand_level: 1.0,
+            lfo_level: 1.0,
+            auto_dump: false,
             view: 0,
             keys: true,
         }
@@ -274,7 +307,7 @@ impl Ext {
         o.b(u8::from(self.smooth));
         o.b(self.layer);
         o.b(u8::from(self.same_deck));
-        o.b(u8::from(self.crossfade));
+        o.b(self.fade);
         for a in &self.artic {
             o.b(a.mode);
             o.b(a.slope);
@@ -303,6 +336,11 @@ impl Ext {
         o.f(self.master);
         o.b(self.view);
         o.b(u8::from(self.keys));
+        o.f(self.rand_level);
+        o.f(self.lfo_level);
+        o.b(u8::from(self.auto_dump));
+        o.b(u8::from(self.a_on));
+        o.b(u8::from(self.b_on));
         o.0
     }
 
@@ -312,7 +350,7 @@ impl Ext {
             return None;
         }
         let mut i = In(b, 4);
-        let mut x = Ext { mod_x: i.f()?, mod_y: i.f()?, smooth: i.b()? != 0, layer: i.b()?.min(2), same_deck: i.b()? != 0, crossfade: i.b()? != 0, ..Ext::default() };
+        let mut x = Ext { mod_x: i.f()?, mod_y: i.f()?, smooth: i.b()? != 0, layer: i.b()?.min(6), same_deck: i.b()? != 0, fade: i.b()?.min(4), ..Ext::default() };
         for a in &mut x.artic {
             a.mode = i.b()?.min(FILTER_OFF);
             a.slope = i.b()?.clamp(1, 3);
@@ -335,6 +373,11 @@ impl Ext {
         x.master = i.f().map_or(1.0, |m| m.clamp(0.0, 1.25));
         x.view = i.b().map_or(0, |v| v.min(3));
         x.keys = i.b().is_none_or(|k| k != 0);
+        x.rand_level = i.f().map_or(1.0, |v| v.clamp(0.0, 1.0));
+        x.lfo_level = i.f().map_or(1.0, |v| v.clamp(0.0, 1.0));
+        x.auto_dump = i.b().is_some_and(|b| b != 0);
+        x.a_on = i.b().is_none_or(|b| b != 0);
+        x.b_on = i.b().is_none_or(|b| b != 0);
         Some(x)
     }
 
@@ -360,7 +403,10 @@ mod tests {
         let mut x = Ext::default();
         x.mod_x = 0.25;
         x.layer = 2;
-        x.crossfade = true;
+        x.fade = 3;
+        x.b_on = false;
+        x.auto_dump = true;
+        x.lfo_level = 0.25;
         x.artic[3].mode = 1;
         x.artic[3].slope = 3;
         x.artic[3].cut = 0.4;
@@ -376,8 +422,8 @@ mod tests {
         assert_eq!(Ext::parse(&b), Some(x.clone()));
         assert_eq!(x.art_of(5), 3);
         assert_eq!(x.art_of(2), 0);
-        assert!(Ext::parse(&b[..b.len() - 6]).is_some_and(|e| e.master == 1.0), "an older state has no master volume");
-        assert!(Ext::parse(&b[..b.len() - 11]).is_none(), "cut short");
+        assert!(Ext::parse(&b[..b.len() - 17]).is_some_and(|e| e.master == 1.0), "an older state has no master volume");
+        assert!(Ext::parse(&b[..b.len() - 22]).is_none(), "cut short");
         assert!(Ext::parse(b"nope").is_none());
     }
 

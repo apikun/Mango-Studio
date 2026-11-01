@@ -222,9 +222,9 @@ impl LemonSlicex {
     fn block(&self) -> dsp::Block {
         let v = self.params.values();
         let (mod_x, mod_y) = self.params.pad();
-        let (smooth, crossfade, master) = self.params.ext.try_read().map_or((true, false, 1.0), |e| (e.smooth, e.crossfade, e.master));
+        let (smooth, master, rand_level, lfo_level) = self.params.ext.try_read().map_or((true, 1.0, 1.0, 1.0), |e| (e.smooth, e.master, e.rand_level, e.lfo_level));
         let beat = 60.0 / self.shared.tempo().unwrap_or(120.0);
-        dsp::Block { cents: f64::from(v.pitch), attack_ms: f64::from(v.attack), decay_ms: f64::from(v.decay), declick: v.declick, to_end: v.to_end, mod_x, mod_y, smooth, beat, crossfade, master }
+        dsp::Block { cents: f64::from(v.pitch), attack_ms: f64::from(v.attack), decay_ms: f64::from(v.decay), declick: v.declick, to_end: v.to_end, mod_x, mod_y, smooth, beat, master, rand_level, lfo_level }
     }
 }
 

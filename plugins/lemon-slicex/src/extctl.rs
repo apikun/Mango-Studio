@@ -51,14 +51,18 @@ pub enum Ctl {
     /// The modulation pad and its smoothing switch.
     Pad,
     Smooth,
-    /// Layering: which decks sound, SAME DECK and the crossfade.
+    /// Layering: the mode, SAME DECK and the crossfade curve (0..4).
     Layer(u8),
     SameDeck,
-    Crossfade,
+    Crossfade(u8),
+    /// AUTO-DUMP.
+    AutoDump,
     /// Opens a loop into deck A (0) or B (1).
     LoadDeck(u8),
     /// The master volume fader, and the pad's two axes as knobs.
     Master,
+    RandLvl,
+    LfoLvl,
     PadX,
     PadY,
     /// The toolbar: play the chosen slice, stop it.
@@ -84,7 +88,7 @@ pub enum Ctl {
 impl Ctl {
     /// Whether it is a knob (a vertical drag moves it).
     pub fn is_knob(self) -> bool {
-        matches!(self, Ctl::Cut | Ctl::Res | Ctl::CutEnv | Ctl::Amt | Ctl::Att | Ctl::Dec | Ctl::Sus | Ctl::Rel | Ctl::LfoRate | Ctl::Master | Ctl::PadX | Ctl::PadY)
+        matches!(self, Ctl::Cut | Ctl::Res | Ctl::CutEnv | Ctl::Amt | Ctl::Att | Ctl::Dec | Ctl::Sus | Ctl::Rel | Ctl::LfoRate | Ctl::Master | Ctl::RandLvl | Ctl::LfoLvl | Ctl::PadX | Ctl::PadY)
     }
 
     /// Whether a click flips it or picks it (a button).
@@ -100,6 +104,8 @@ impl Ctl {
             Ctl::Rel => "REL",
             Ctl::LfoRate => "SPEED",
             Ctl::Master => "VOLUME",
+            Ctl::RandLvl => "RANDOMNESS",
+            Ctl::LfoLvl => "LFO",
             Ctl::PadX => "Pad X",
             Ctl::PadY => "Pad Y",
             _ => "",
@@ -137,6 +143,8 @@ pub fn get(x: &Ext, s: &Sel, c: Ctl) -> f32 {
         Ctl::Cut => a.cut,
         Ctl::Res => a.res,
         Ctl::Master => x.master / 1.25,
+        Ctl::RandLvl => x.rand_level,
+        Ctl::LfoLvl => x.lfo_level,
         Ctl::PadX => x.mod_x,
         Ctl::PadY => x.mod_y,
         Ctl::CutEnv => bipolar(a.amount(Target::Cut, Source::Env)),
@@ -159,6 +167,8 @@ pub fn set(x: &mut Ext, s: &Sel, c: Ctl, n: f32) {
         Ctl::Cut => a.cut = n,
         Ctl::Res => a.res = n,
         Ctl::Master => x.master = n * 1.25,
+        Ctl::RandLvl => x.rand_level = n,
+        Ctl::LfoLvl => x.lfo_level = n,
         Ctl::PadX => x.mod_x = n,
         Ctl::PadY => x.mod_y = n,
         Ctl::CutEnv => a.set_amount(Target::Cut, Source::Env, n * 2.0 - 1.0),
@@ -182,6 +192,8 @@ pub fn text(x: &Ext, s: &Sel, c: Ctl) -> String {
         Ctl::Cut => pct(a.cut),
         Ctl::Res => pct(a.res),
         Ctl::Master => pct(x.master),
+        Ctl::RandLvl => pct(x.rand_level),
+        Ctl::LfoLvl => pct(x.lfo_level),
         Ctl::PadX => pct(x.mod_x),
         Ctl::PadY => pct(x.mod_y),
         Ctl::CutEnv => pct(a.amount(Target::Cut, Source::Env)),
@@ -206,6 +218,7 @@ pub fn default_norm(c: Ctl, s: &Sel) -> f32 {
         Ctl::Cut => d.cut,
         Ctl::Res => d.res,
         Ctl::Master => 0.8,
+        Ctl::RandLvl | Ctl::LfoLvl => 1.0,
         Ctl::PadX | Ctl::PadY => 0.5,
         Ctl::CutEnv | Ctl::Amt => {
             let v = if c == Ctl::Amt { d.amount(s.tgt, s.src) } else { 0.0 };
