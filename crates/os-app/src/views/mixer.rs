@@ -986,13 +986,11 @@ fn centre_bar(ui: &mut Ui, x: f32, y: f32, half: f32, value: f32) {
     let main = ui.t.brand_sel(os_theme::design::lemon::MAIN);
     let col = if hov { main.shade(0.12) } else { main };
     let at = r.x + 1.0 + value.clamp(0.0, 1.0) * (r.w - 2.0);
-    let (a, b) = (x.min(at), x.max(at));
-    // A bar at least as long as it is thick, so a value next to the centre still shows as a pill.
-    let (a, b) = if b - a < h - 2.0 { (at - (h - 2.0) / 2.0, at + (h - 2.0) / 2.0) } else { (a, b) };
-    let (a, b) = (a.max(r.x + 1.0), b.min(r.right() - 1.0));
-    if b - a >= 1.0 {
-        ui.c.fill_rrect(Rect::new(a, r.y + 1.0, b - a, h - 2.0), (h - 2.0) / 2.0, col);
-    }
+    // From the centre to the value, each end rounded by the same half-thickness: at the centre a round dot, and it
+    // grows from there without a jump.
+    let hw = (h - 2.0) / 2.0;
+    let (a, b) = ((x.min(at) - hw).max(r.x + 1.0), (x.max(at) + hw).min(r.right() - 1.0));
+    ui.c.fill_rrect(Rect::new(a, r.y + 1.0, (b - a).max(1.0), h - 2.0), hw, col);
 }
 
 /// Reverse polarity (⇕), lit when on.
