@@ -31,7 +31,7 @@ pub const ROW_MIN: f32 = 16.0;
 pub const ROW_MAX: f32 = 280.0;
 pub const ROW_STEP: f32 = 6.0;
 /// Title strip of a clip incl. its top border (spec: ui/playlist.md §2).
-pub const TITLE_H: f32 = 15.0;
+pub const TITLE_H: f32 = 12.0;
 /// Marker lane under the ruler, when the arrangement has time markers (§1).
 pub const MARKER_H: f32 = 17.0;
 /// Edge grab zone for resizing (OS choice, §3).

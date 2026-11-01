@@ -964,7 +964,7 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
 
     ui.c.push_clip(inner.intersect(&g.grid));
     // Type icon (✕ when muted) and name; a narrow clip shows only its strip.
-    let (ix, iy) = (inner.x + 3.0, inner.y + 2.0);
+    let (ix, iy) = (inner.x + 3.0, inner.y + 1.0);
     let ic = dim(text);
     if r.w >= 12.0 {
         if c.muted {
@@ -972,7 +972,7 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
             ui.c.line(ix + 7.0, iy + 1.0, ix, iy + 8.0, 1.2, ic);
         } else {
             // On whole pixels: a partial repaint draws it exactly as a full one (smooth scrolling stops between them).
-            icons::draw(ui.c, kind_icon(kind), Rect::new((ix - 0.5).round(), iy.round(), 10.0, 10.0), ic);
+            icons::draw(ui.c, kind_icon(kind), Rect::new((ix - 0.5).round(), iy.round(), 9.0, 9.0), ic);
         }
     }
     if r.w > 16.0 {
@@ -987,7 +987,7 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
                 name.push_str(&format!(" ({:+.1} dB)", db));
             }
         }
-        ui.c.text_clip(Font::new(12), inner.x + 14.0, inner.y - 1.0, inner.w - 16.0, ic, &name);
+        ui.c.text_clip(Font::new(10), inner.x + 13.0, inner.y - 1.0, inner.w - 15.0, ic, &name);
     }
     // Content.
     let content = if c.muted { dim(text).with_alpha(90) } else { dim(cc(t, NOTE)) };
