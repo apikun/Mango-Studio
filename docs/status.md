@@ -78,8 +78,8 @@ clicking it does nothing. The full, item-by-item roadmap lives on the
   its default and minimum to maximum), remove an initial value read from a file
 - Not yet in the parameter menu: Edit events, and Init song with this position on a plugin parameter
 - VST2 shells (one file offering several plugins); a VST2 plugin's state is saved in the layout FL Studio's projects use
-- On Windows, a plugin that crashes is stopped (its slot passes the sound through) instead of closing
-  Lemon Studio
+- A plugin that crashes is stopped (its slot passes the sound through) instead of closing Lemon Studio. On macOS
+  and Linux this is new, and on macOS a crash in a plugin's editor still closes Lemon Studio
 - Not yet: 32-bit plugins, and Intel-only plugins on Apple silicon (they need a bridge)
 
 ## 🚧 Plugin delay compensation
@@ -359,7 +359,9 @@ and Touch controller. Kept with the program's settings, not the project. Which w
   period); a device that refuses exclusive mode plays in shared mode, and the page says why
 - ASIO® on Windows, output only: the installed drivers are in Settings > Audio's Output device list; the master plays
   to the driver's first two outputs, and Show ASIO panel opens the driver's own settings
-- ALSA (and PipeWire / PulseAudio through it) on Linux
+- On Linux: the sound server (PulseAudio, or PipeWire through pipewire-pulse), ALSA directly, or JACK (Settings > Audio
+  ▸ Mode ▸ JACK: a JACK client at the server's rate and buffer length, its ports connected to the system's; with no
+  JACK server running it plays as in shared mode)
 - Core Audio on macOS
 - Output device, sample rate and buffer length in Settings > Audio
 - Auto close (Settings > Audio): the output closes while another program is in front, and a playing song pauses

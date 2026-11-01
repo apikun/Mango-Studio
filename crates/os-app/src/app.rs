@@ -1055,6 +1055,9 @@ pub struct State {
     pub rack_roll_view: bool,
     /// Channel shown in the plugin window, and where that window is.
     pub plugin_channel: usize,
+    /// The plugin window was moved by hand: it reopens there instead of next to the rack (spec: ui/channel-rack.md
+    /// "Left click").
+    pub plugin_moved: bool,
     pub plugin_pos: (f32, f32),
     pub selected_channel: usize,
     pub selected_mixer: u16,
@@ -1278,6 +1281,8 @@ pub struct App {
     pub pressed: Option<Action>,
     /// A button pressed and not released yet (`acts_on_release`).
     pub(crate) armed: Option<Action>,
+    /// Where that press was: its window comes to the front at the release, as the button acts (`mouse_down`).
+    raise_at: Option<(f32, f32)>,
     /// A toolbar button right-pressed and not released yet: (its hit, what the release over it runs).
     pub(crate) armed_right: Option<(Action, Action)>,
     hover_rect: Option<Rect>,
@@ -1461,6 +1466,7 @@ impl App {
                 rack: Default::default(),
                 rack_roll_view: false,
                 plugin_channel: 0,
+                plugin_moved: false,
                 plugin_pos: (560.0, 260.0),
                 selected_channel: 0,
                 selected_mixer: 1,
@@ -1560,6 +1566,7 @@ impl App {
             hover: None,
             pressed: None,
             armed: None,
+            raise_at: None,
             armed_right: None,
             hover_rect: None,
             damage: Damage::Full,
@@ -5125,10 +5132,14 @@ impl App {
                 .collect(),
             // Windows devices: shared or exclusive mode (spec: audio/wasapi-low-latency.md 4.2). Linux: the sound server,
             // or an ALSA device directly.
-            MODE => vec![
-                PItem::new(MODE_SHARED, Cmd::Audio(Set::Mode(false))).mark(Mark::Radio(!cfg.exclusive)),
-                PItem::new(MODE_EXCLUSIVE, Cmd::Audio(Set::Mode(true))).mark(Mark::Radio(cfg.exclusive)),
-            ],
+            MODE => [
+                PItem::new(MODE_SHARED, Cmd::Audio(Set::Mode(false))).mark(Mark::Radio(!cfg.exclusive && !cfg.jack)),
+                PItem::new(MODE_EXCLUSIVE, Cmd::Audio(Set::Mode(true))).mark(Mark::Radio(cfg.exclusive && !cfg.jack)),
+            ]
+            .into_iter()
+            // Linux: as a client of the JACK server (spec: audio/linux-output.md "JACK").
+            .chain(cfg!(target_os = "linux").then(|| PItem::new(views::settings::MODE_JACK, Cmd::Audio(Set::Jack)).mark(Mark::Radio(cfg.jack))))
+            .collect(),
             // Under an ASIO driver: the driver's own, then what it takes, once it has opened (spec: audio/devices.md,
             // "Sample rate and buffer length under ASIO"). In exclusive mode: the rates the device runs at itself
             // (audio/wasapi-low-latency.md 4.4).
@@ -6359,7 +6370,15 @@ impl App {
                 return;
             }
         }
-        self.raise_under_mouse();
+        // A button that acts on its release brings its window to the front then too: raised at the press, the window
+        // showed in front of what the button was about to change for as long as the button was held (the channel
+        // name button over an open plugin window hid it only after the rack had come over it).
+        if action.as_ref().is_some_and(|a| self.acts_on_release(a)) {
+            self.raise_at = Some((x, y));
+        } else {
+            self.raise_at = None;
+            self.raise_under_mouse();
+        }
         if let Some(a) = action {
             if self.acts_on_release(&a) {
                 self.armed = Some(a);
@@ -6373,6 +6392,11 @@ impl App {
     /// Clicking any part of a child window brings it to the front (spec: ui/channel-rack.md §5).
     fn raise_under_mouse(&mut self) {
         let (x, y) = self.mouse;
+        self.raise_at_point(x, y);
+    }
+
+    /// The window at (`x`, `y`) to the front, the keyboard to it; a press on the empty workspace takes it from all.
+    fn raise_at_point(&mut self, x: f32, y: f32) {
         if let Some(w) = self.top_hit(x, y).and_then(|h| h.win) {
             if self.state.z.last() != Some(&w) {
                 self.state.raise(w);
@@ -6924,6 +6948,10 @@ impl App {
         // A held nudge ends with the button (spec: ui/tempo-tapper.md §6).
         if crate::tapper::nudge_flag().swap(0, std::sync::atomic::Ordering::Relaxed) != 0 {
             self.damage_win(Win::Tapper);
+        }
+        // The pressed button's window comes to the front, before the button acts (it may close the window).
+        if let Some((x, y)) = self.raise_at.take() {
+            self.raise_at_point(x, y);
         }
         // An armed button acts if the release is over it (`acts_on_release`).
         if let Some(a) = self.armed.take() {
@@ -8908,7 +8936,10 @@ impl App {
                     }
                 }
                 let pos = match win {
-                    Win::Plugin => s.plugin_pos,
+                    Win::Plugin => {
+                        s.plugin_moved = true;
+                        s.plugin_pos
+                    }
                     Win::Perf => s.perf.pos,
                     Win::Tapper => s.tapper.pos,
                     Win::Touch => s.touch.pos,
@@ -9037,7 +9068,7 @@ impl App {
             s.pending_open = Some(i);
             self.sampler_failed.retain(|&r| r != i);
         } else {
-            if !s.shown(Win::Plugin) {
+            if !s.shown(Win::Plugin) && !s.plugin_moved {
                 let r = views::rack::rect(s);
                 let to = crate::win_clamp::inside(
                     Rect::new(r.right() + 8.0, r.y, views::channel_win::SIZE.0, views::channel_win::SIZE.1),
@@ -14823,7 +14854,7 @@ mod tests {
         eprintln!("driver | block | rate | tick | ahead min / mean / max (frames) | mean ms | driver latency | longest gap ms | load | dropouts");
         for &b in &buffers {
             for _ in 0..runs {
-                AudioCfg { asio: true, device: Some(driver.clone()), rate: None, buffer: Some(b), exclusive: false, input: None }.apply();
+                AudioCfg { asio: true, device: Some(driver.clone()), rate: None, buffer: Some(b), exclusive: false, input: None, jack: false }.apply();
                 app.transport.reopen();
                 let t0 = Instant::now();
                 let info = loop {
@@ -23161,5 +23192,21 @@ mod tests {
         assert_eq!(pl::clips(&app.state)[ci].fade_in_tension(), 0.0, "double click reset tension to 0.0");
 
         let _ = std::fs::remove_file(&wav);
+    }
+
+    /// The channel window opens next to the rack until it is moved by hand, and where it was moved after that (spec:
+    /// ui/channel-rack.md "Left click").
+    #[test]
+    fn channel_window_reopens_where_it_was_moved() {
+        let mut app = App::new(None);
+        app.add_clip_channel(ChannelKind::Automation);
+        let row = app.state.project.channels.len() - 1;
+        assert!(app.state.shown(Win::Plugin), "an automation clip's channel window opens");
+        let beside = app.state.plugin_pos;
+        app.state.hide(Win::Plugin);
+        app.state.plugin_moved = true;
+        app.state.plugin_pos = (beside.0 + 120.0, beside.1 + 40.0);
+        app.open_channel_window(row);
+        assert_eq!(app.state.plugin_pos, (beside.0 + 120.0, beside.1 + 40.0), "the channel window reopens where it was moved");
     }
 }
