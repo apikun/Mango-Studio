@@ -12,21 +12,32 @@
 //! real-time thread may take without blocking (`RLIMIT_RTTIME`): past the soft cap (a project too heavy to render in
 //! time spins its feeder) the kernel sends SIGXCPU, and the handler puts every promoted thread back to normal priority
 //! instead of letting the hard cap kill the program.
+//!
+//! The handler runs only when the thread returns from the kernel. Time the kernel spends on a thread's behalf counts
+//! too (a page fault that has to free memory first, after a long idle on a full machine), and can run past the hard cap
+//! before the handler ever runs: the program was killed that way. So a watchdog at normal priority (`watch`) also reads
+//! how long each promoted thread has run since it last waited, and demotes it from outside well before the hard cap.
 
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::Once;
+use std::time::{Duration, Instant};
 
 /// The priority asked for (rtkit allows up to its `MaxRealtimePriority`, 20 by default).
 const PRIORITY: i32 = 20;
 /// RLIMIT_RTTIME, µs: the soft cap demotes (SIGXCPU), the hard one is rtkit's own maximum (it refuses more).
 const RTTIME_SOFT: u64 = 100_000;
 const RTTIME_HARD: u64 = 200_000;
+/// The watchdog: how often it looks, and the CPU time since a thread last waited at which it demotes it. A thread may
+/// have run up to one period more than it reads (it waited just after the last look), and runs on until the next look:
+/// 120 + 20 + 20 ms stays under the hard cap.
+const WATCH_EVERY: std::time::Duration = std::time::Duration::from_millis(20);
+const WATCH_LIMIT_NS: u64 = 120_000_000;
 
 /// The promoted threads (kernel thread ids), for the SIGXCPU handler; 0 = free. A slot whose thread ended is taken
 /// again (`remember`).
 static PROMOTED: [AtomicI32; 64] = [const { AtomicI32::new(0) }; 64];
 static COUNT: AtomicUsize = AtomicUsize::new(0);
-/// Threads put back to normal priority by the SIGXCPU handler.
+/// Threads put back to normal priority by the SIGXCPU handler or the watchdog.
 static DEMOTED: AtomicUsize = AtomicUsize::new(0);
 
 /// How many threads were promoted, and how many of them demoted since (`demote_all`).
@@ -59,7 +70,12 @@ pub fn promote(tid: i32) -> Result<(), String> {
         return Err("not in tests".into());
     }
     static HANDLER: Once = Once::new();
-    HANDLER.call_once(install_handler);
+    HANDLER.call_once(|| {
+        install_handler();
+        // Started from a thread that may be real-time already: the reset-on-fork flag leaves the watchdog at normal
+        // priority.
+        let _ = std::thread::Builder::new().name("rt watchdog".into()).spawn(watch);
+    });
     // Again at every promotion: the kernel raises the soft cap by a second at each SIGXCPU, which would leave the hard
     // one to kill the program next time.
     cap_rttime();
@@ -137,10 +153,91 @@ extern "C" fn demote_all(_: libc::c_int) {
     for slot in &PROMOTED {
         let t = slot.load(Ordering::Acquire);
         if t != 0 && is_realtime(t) {
-            // SAFETY: a system call, safe in a signal handler.
-            // With the reset-on-fork flag rtkit set: an unprivileged process may not clear it (EPERM).
-            unsafe { libc::sched_setscheduler(t, libc::SCHED_OTHER | libc::SCHED_RESET_ON_FORK, &normal) };
-            DEMOTED.fetch_add(1, Ordering::AcqRel);
+            demote(t, &normal);
+        }
+    }
+}
+
+fn demote(t: i32, normal: &libc::sched_param) {
+    // SAFETY: a system call, safe in a signal handler.
+    // With the reset-on-fork flag rtkit set: an unprivileged process may not clear it (EPERM).
+    unsafe { libc::sched_setscheduler(t, libc::SCHED_OTHER | libc::SCHED_RESET_ON_FORK, normal) };
+    DEMOTED.fetch_add(1, Ordering::AcqRel);
+}
+
+/// Thread `tid`'s waits so far (its voluntary context switches) and its CPU time in ns, from `/proc`.
+fn waits_and_cpu(tid: i32) -> Option<(u64, u64)> {
+    let status = std::fs::read_to_string(format!("/proc/self/task/{tid}/status")).ok()?;
+    let waits = status.lines().find_map(|l| l.strip_prefix("voluntary_ctxt_switches:"))?.trim().parse().ok()?;
+    let sched = std::fs::read_to_string(format!("/proc/self/task/{tid}/schedstat")).ok()?;
+    let cpu = sched.split_whitespace().next()?.parse().ok()?;
+    Some((waits, cpu))
+}
+
+/// What the watchdog knows of one promoted thread.
+#[derive(Clone, Copy)]
+struct Watched {
+    tid: i32,
+    /// Its waits and CPU time (ns) when it was last seen to have waited.
+    waits: u64,
+    cpu: u64,
+    /// Real-time at the last look.
+    rt: bool,
+    /// Taken back to normal priority: since when it has stayed calm (none of its runs over `CALM_RUN_NS`).
+    calm_since: Option<Instant>,
+    /// How long it must stay calm to be promoted again: `CALM_FIRST`, doubled at each promotion again up to `CALM_MAX`.
+    calm_for: Duration,
+}
+
+/// A demoted thread is promoted again after this long calm, the first time.
+const CALM_FIRST: Duration = Duration::from_secs(5);
+const CALM_MAX: Duration = Duration::from_secs(80);
+/// Calm: no run between two waits longer than this.
+const CALM_RUN_NS: u64 = 20_000_000;
+
+/// The watchdog's loop: per promoted thread, its waits and its CPU time when it was last seen to have waited; one
+/// still real-time that has used `WATCH_LIMIT_NS` since is demoted. A demoted one (by the watchdog or the SIGXCPU
+/// handler) that then stays calm is promoted again, so one stall (a page fault after a long idle) does not leave the
+/// audio at normal priority for the rest of the session.
+fn watch() {
+    let normal = libc::sched_param { sched_priority: 0 };
+    let fresh = |tid: i32| Watched { tid, waits: 0, cpu: 0, rt: false, calm_since: None, calm_for: CALM_FIRST };
+    let mut seen: [Watched; 64] = [fresh(0); 64];
+    loop {
+        std::thread::sleep(WATCH_EVERY);
+        let now = Instant::now();
+        for (slot, w) in PROMOTED.iter().zip(seen.iter_mut()) {
+            let t = slot.load(Ordering::Acquire);
+            let Some((waits, cpu)) = (t != 0).then(|| waits_and_cpu(t)).flatten() else { continue };
+            if w.tid != t {
+                *w = Watched { waits, cpu, ..fresh(t) };
+            }
+            let run = if w.waits != waits {
+                (w.waits, w.cpu) = (waits, cpu);
+                0
+            } else {
+                cpu.saturating_sub(w.cpu)
+            };
+            if is_realtime(t) {
+                w.rt = true;
+                if run >= WATCH_LIMIT_NS {
+                    demote(t, &normal);
+                    eprintln!("Audio: a real-time thread ran {} ms without waiting: normal priority", run / 1_000_000);
+                    (w.rt, w.calm_since) = (false, Some(now));
+                }
+                continue;
+            }
+            if w.rt {
+                // Demoted since the last look (the SIGXCPU handler).
+                (w.rt, w.calm_since) = (false, Some(now));
+            }
+            let Some(since) = w.calm_since else { continue };
+            if run > CALM_RUN_NS {
+                w.calm_since = Some(now);
+            } else if now.duration_since(since) >= w.calm_for && promote(t).is_ok() {
+                eprintln!("Audio: a real-time thread calm for {} s: real-time priority again", w.calm_for.as_secs());
+                (w.rt, w.calm_since, w.calm_for) = (true, None, (w.calm_for * 2).min(CALM_MAX));
+            }
         }
     }
 }
@@ -203,6 +300,46 @@ mod tests {
             is_realtime(tid())
         });
         assert!(!h.join().unwrap(), "demoted");
+    }
+
+    /// With no SIGXCPU before the hard cap (the soft cap raised to it, as when the kernel works on the thread's behalf
+    /// past it), the watchdog demotes a spinning real-time thread; failing, the test program is killed.
+    #[test]
+    #[ignore]
+    fn the_watchdog_demotes_before_the_hard_cap() {
+        enable_in_tests();
+        let h = std::thread::spawn(|| {
+            promote(tid()).expect("real-time priority");
+            let lim = libc::rlimit { rlim_cur: RTTIME_HARD, rlim_max: RTTIME_HARD };
+            unsafe { libc::setrlimit(libc::RLIMIT_RTTIME, &lim) };
+            let t0 = Instant::now();
+            while t0.elapsed() < Duration::from_millis(1000) {
+                std::hint::spin_loop();
+            }
+            is_realtime(tid())
+        });
+        assert!(!h.join().unwrap(), "demoted");
+    }
+
+    /// A real-time thread the watchdog demoted gets its priority back once it has stayed calm.
+    #[test]
+    #[ignore]
+    fn a_demoted_thread_that_stays_calm_is_promoted_again() {
+        enable_in_tests();
+        let h = std::thread::spawn(|| {
+            promote(tid()).expect("real-time priority");
+            let t0 = Instant::now();
+            while t0.elapsed() < Duration::from_millis(400) {
+                std::hint::spin_loop();
+            }
+            assert!(!is_realtime(tid()), "demoted");
+            let t0 = Instant::now();
+            while t0.elapsed() < CALM_FIRST + Duration::from_secs(1) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            is_realtime(tid())
+        });
+        assert!(h.join().unwrap(), "promoted again");
     }
 
     /// Deadlines met by a thread working like the audio feeder at 256 frames (48 kHz: a 5.33 ms period, 1.5 ms of work
