@@ -1983,6 +1983,7 @@ mod win32 {
     use windows_sys::Win32::UI::Controls::Dialogs::{GetOpenFileNameW, GetSaveFileNameW, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR, OFN_OVERWRITEPROMPT, OPENFILENAMEW};
     use windows_sys::Win32::UI::Controls::WM_MOUSELEAVE;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
+    use windows_sys::Win32::UI::Shell::{DragAcceptFiles, DragFinish, DragQueryFileW, HDROP};
     use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
     use super::{Act, Btn, Logic, Mods};
@@ -2078,6 +2079,7 @@ mod win32 {
                 Box::into_raw(win) as *const c_void,
             );
             slot.store(hwnd as isize, Ordering::Release);
+            DragAcceptFiles(hwnd, 1);
             SetTimer(hwnd, TIMER, 50, None);
             Handle(hwnd as isize, slot, shared)
         }
@@ -2118,6 +2120,19 @@ mod win32 {
                 WM_ERASEBKGND => 1,
                 WM_TIMER | WM_CHANGED => {
                     w.poll();
+                    0
+                }
+                WM_DROPFILES => {
+                    // A file dropped on the window (from Explorer, or the browser through the app) opens as the load button's does.
+                    let drop = wp as HDROP;
+                    let mut buf = vec![0u16; 1024];
+                    let n = DragQueryFileW(drop, 0, buf.as_mut_ptr(), buf.len() as u32) as usize;
+                    DragFinish(drop);
+                    if n > 0 {
+                        let acts = w.logic.load(&String::from_utf16_lossy(&buf[..n]));
+                        w.act(acts);
+                        w.invalidate();
+                    }
                     0
                 }
                 WM_LBUTTONDOWN | WM_LBUTTONDBLCLK | WM_RBUTTONDOWN | WM_RBUTTONDBLCLK | WM_MBUTTONDOWN => {
@@ -2428,6 +2443,7 @@ mod gui {
         let sh = shared.clone();
         let wake = slot.clone();
         let link = Peer::register(parent as u64, vec![PageIcon::Sample], now, move || px::notify(&wake));
+        link.accept_drops();
         let peer = link.clone();
         let thread = px::spawn(parent, size, slot, move |win| {
             let Ok(canvas) = Canvas::new(full.0, full.1, scale) else { return };
@@ -2484,7 +2500,12 @@ mod gui {
                         let acts = self.logic.wheel(x / self.scale, y / self.scale, notches, self.mods());
                         self.act(acts);
                     }
-                    Input::Key { .. } | Input::Drop { .. } => {}
+                    Input::Drop { path } => {
+                        let acts = self.logic.load(&path);
+                        self.act(acts);
+                        self.dirty = true;
+                    }
+                    Input::Key { .. } => {}
                 }
                 if self.dirty && self.win.idle() {
                     self.paint();
@@ -2503,6 +2524,11 @@ mod gui {
 
         fn poll(&mut self) {
             self.logic.tick();
+            // A sample dropped on the window (from the browser) opens as the load button's file would.
+            for path in self.link.take_dropped() {
+                let acts = self.logic.load(&path);
+                self.act(acts);
+            }
             self.logic.vals.expire();
             self.dirty = true;
             if self.logic.hint != self.last_hint {

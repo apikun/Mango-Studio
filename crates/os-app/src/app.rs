@@ -4626,6 +4626,11 @@ impl App {
             self.load_theme_file(&path);
             return;
         }
+        // A sample dropped on a plugin window that takes files (Mango Slicex) goes into it.
+        #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+        if matches!(ext.as_str(), "wav" | "mp3" | "flac" | "ogg" | "aif" | "aiff" | "m4a" | "aac") && self.sample_to_plugin_window(&path.to_string_lossy()) {
+            return;
+        }
         let (x, y) = self.mouse;
         if self.top_hit(x, y).and_then(|h| h.win) == Some(Win::ChannelRack) {
             self.sample_to_rack(path.to_string_lossy().into_owned(), y);
@@ -4752,7 +4757,7 @@ impl App {
     }
 
     /// The mouse pointer's screen position (physical px).
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     fn pointer_on_screen() -> Option<(i32, i32)> {
         #[cfg(windows)]
         {
@@ -4760,12 +4765,12 @@ impl App {
             let mut pt = POINT { x: 0, y: 0 };
             (unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt) } != 0).then_some((pt.x, pt.y))
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         crate::plugin_window::pointer()
     }
 
     /// The hosted key whose plugin window is under the mouse pointer (docked or detached).
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     pub(crate) fn plugin_window_under_cursor(&self) -> Option<usize> {
         let (x, y) = Self::pointer_on_screen()?;
         self.plugins.row_at_screen(x, y)
@@ -4774,7 +4779,7 @@ impl App {
     /// A browser sample released over a hosted plugin window (it sits above the main window, which keeps the mouse
     /// capture during the drag): the plugin gets the file as if it came from Explorer (on macOS only Lemon Sampler takes
     /// it, through its state). Returns whether it was one.
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     pub(crate) fn sample_to_plugin_window(&mut self, path: &str) -> bool {
         let Some((x, y)) = Self::pointer_on_screen() else { return false };
         let Some(row) = self.plugins.row_at_screen(x, y) else { return false };
