@@ -1062,13 +1062,12 @@ fn fader(ui: &mut Ui, s: &State, n: u16, f: &FrameInfo, mx: f32, y0: f32, track_
         // The bar is the fader: its rounded top, as the logo's bars end, is where it is held; no separate cap.
         let r = 6.0;
         let bar = Rect::new(mx - r, hy - r, 2.0 * r, (track_y1 - 1.0 - (hy - r)).max(2.0 * r));
-        let (top, bottom_c) = (t.brand_sel(os_theme::design::lemon::HIGHLIGHT), t.brand_sel(os_theme::design::lemon::MAIN));
-        // Full mango on the selected strip and while held; softer on the others, a little brighter under the pointer.
+        let main = t.brand_sel(os_theme::design::lemon::MAIN);
+        // Flat mango: full on the selected strip and while held; softer on the others, a little brighter under the pointer.
         let held = f.fader_drag == Some(n);
-        let (top, bottom_c) = if selected || held { (top, bottom_c) } else { (top.mix(ui.t.s(0x141618), 0.38), bottom_c.mix(ui.t.s(0x141618), 0.32)) };
+        let col = if selected || held { main } else { main.mix(ui.t.s(0x141618), 0.35) };
         let lift = if held { 0.07 } else if hov { 0.12 } else { 0.0 };
-        let (top, bottom_c) = (top.shade(lift), bottom_c.shade(lift));
-        ui.c.fill_rect_gradient(bar, top, bottom_c, r);
+        ui.c.fill_rrect(bar, r, col.shade(lift));
     } else {
         if selected {
             ui.c.fill_rect(Rect::new(mx - 1.0, hy, 2.0, track_y1 - hy), ui.t.a(0x8ec63a));
