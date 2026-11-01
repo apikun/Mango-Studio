@@ -218,9 +218,8 @@ fn fader(ui: &mut Ui, id: &str, cx: f32, caption: &str) {
     let y = fader_y(ui.m.norm(id));
     let held = st.pressed;
     let lift = if held { 0.07 } else if st.hover { 0.12 } else { 0.0 };
-    let (hi, lo) = (brand::HIGHLIGHT.shade(lift), brand::MAIN.shade(lift));
     let bar = Rect::new(cx - 6.0, y - 6.0, 12.0, (bot_y - 1.0 - (y - 6.0)).max(12.0));
-    ui.c.fill_rect_gradient(bar, hi, lo, 6.0);
+    ui.c.fill_rrect(bar, 6.0, brand::MAIN.shade(lift));
     inst::caption(ui.c, ui.t, cx, FADER_BOT + 14.0, caption, false);
     ui.hit(hr, target);
 }
