@@ -391,7 +391,10 @@ fn sine_wav(path: &std::path::Path, tones: &[(f64, f64)], amp: f32) -> PathBuf {
         let mut phase = 0.0f64;
         for _ in 0..(RATE * secs) as usize {
             phase += std::f64::consts::TAU * hz / RATE;
-            all.push((f64::from(amp) * phase.sin()) as f32);
+            let v = (f64::from(amp) * phase.sin()) as f32;
+            // The wav's samples interleave: the frame is the sample twice (the pair's average is the sample).
+            all.push(v);
+            all.push(v);
         }
     }
     let mut f = std::fs::File::create(path).expect("the test's wav opens");
@@ -448,7 +451,16 @@ mod tests {
         assert_eq!(n.iter().map(|x| x.key).collect::<Vec<_>>(), [57, 69], "A2 then A3: {n:?}");
         assert!((110..=122).contains(&n[0].length), "0.6 s is 115 ticks: {}", n[0].length);
         assert!(melody(&[0.0; 44100], 44100, 96, 120.0).is_empty(), "silence sings nothing");
-        let noise: Vec<f32> = (0..44100).map(|i| ((i as u32).wrapping_mul(2_654_435_761) >> 8) as f32 / 8_388_608.0 - 1.0).collect();
+        // The noise is a xorshift's stream: a hash of the count is a sawtooth, and the tracker reads its pitch.
+        let mut st = 0x9E37_79B9u32;
+        let noise: Vec<f32> = (0..44100)
+            .map(|_| {
+                st ^= st << 13;
+                st ^= st >> 17;
+                st ^= st << 5;
+                (st >> 8) as f32 / 8_388_608.0 - 1.0
+            })
+            .collect();
         assert!(melody(&noise, 44100, 96, 120.0).is_empty(), "noise sings nothing");
     }
 
