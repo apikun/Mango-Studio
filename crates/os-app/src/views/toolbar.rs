@@ -763,16 +763,12 @@ fn song_pos(ui: &mut Ui, c: &Ctx) {
     let hx = range.map(|len| a.x(crate::song_pos::handle_x(pos, len).round()));
     let y = |v: f32| a.y(v);
     if lemon {
+        // A bar like the mixer's: a rounded trough with the position as a flat mango fill, its rounded end the handle.
         let x0 = a.x(390.0);
-        ui.c.fill_rrect(Rect::new(x0, y(60.0), 180.0, 4.0), 2.0, t.sunken_dark);
-        match hx {
-            Some(hx) => {
-                use os_theme::design::lemon as brand;
-                ui.c.fill_rrect(Rect::new(x0, y(60.0), hx - x0, 4.0), 2.0, t.brand_lit(brand::MAIN));
-                ui.c.fill_rrect(Rect::new(hx - 6.0, y(55.0), 12.0, 14.0), 3.0, t.button);
-                ui.c.fill_rect(Rect::new(hx - 1.0, y(58.0), 2.0, 8.0), t.brand_lit(brand::MAIN));
-            }
-            None => ui.c.fill_rect(a.r(Rect::new(394.0, 58.0, 2.0, 8.0)), t.button),
+        ui.c.fill_rrect(Rect::new(x0, y(57.0), 180.0, 10.0), 5.0, t.sunken_dark);
+        if let Some(hx) = hx {
+            use os_theme::design::lemon as brand;
+            ui.c.fill_rrect(Rect::new(x0 + 1.0, y(58.0), (hx - x0 + 4.0).clamp(8.0, 178.0), 8.0), 4.0, t.brand_lit(brand::MAIN));
         }
     } else {
         // Classic: the measured colours (§1).
