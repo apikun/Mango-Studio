@@ -491,7 +491,7 @@ fn picker(ui: &mut Ui, s: &State, p: Rect) {
             ui.c.fill_rect_gradient(row, ui.t.s(0x2a2d2e).shade(k), ui.t.s(0x232627).shade(k), 0.0);
         }
         if src == cur && !filled {
-            ui.c.stroke_rrect(row.inset(0.5), if lemon { lk::r_btn(ui.t) } else { 0.0 }, 1.0, ui.t.a(0xa8e44a));
+            ui.c.stroke_rrect(row.inset(0.5), if lemon { lk::r_btn(ui.t) } else { 0.0 }, 1.0, Color::rgb(0x8c8c8c));
         }
         let ic = Color::rgb(if filled { TITLE_TEXT } else { 0xa6aaab });
         icons::draw(ui.c, kind_icon(pl::source_kind(s, src)), Rect::new(row.x + 4.0, title.cy() - 6.0, 12.0, 12.0), ic);
@@ -1007,7 +1007,8 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
                 }
             }
             (PickKind::Automation, ClipSource::Channel(ch)) => {
-                let col = if c.muted { content } else { dim(cc(t, CURVE)) };
+                // As FL's: a thin line in a pale tint of the clip's colour over a lighter fill.
+                let col = if c.muted { content } else { dim(body.mix(Color::rgb(0xffffff), 0.55)) };
                 curve(ui, s, g, i, c, ch, body_at, dim(body), col);
             }
             _ => {}
@@ -1351,8 +1352,8 @@ fn curve(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip, ch: u16, edges: 
     let mut area = pts.clone();
     area.push((x1, body.bottom()));
     area.push((x0, body.bottom()));
-    ui.c.fill_polygon(&area, bg.shade(0.07));
-    ui.c.polyline(&pts, 2.25, col);
+    ui.c.fill_polygon(&area, bg.mix(Color::rgb(0xffffff), 0.12));
+    ui.c.polyline(&pts, 1.25, col);
     // Points and tension handles while the mouse is over the clip (§8).
     if s.playlist.hover_clip == Some(i) {
         for (k, p) in a.points.iter().enumerate() {
