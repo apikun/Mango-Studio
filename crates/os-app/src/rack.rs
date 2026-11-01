@@ -1419,7 +1419,8 @@ fn value_groups(s: &State, knob: Option<KnobId>, auto: Option<(u32, String, f64)
     let mut v = vec![
         PItem::head("Automation"),
         crate::events::menu_item(auto.as_ref(), None),
-        PItem::new("Edit automation in a window", Cmd::Nothing).off(),
+        // A second event editor window (Lemon Studio's design, ui/event-editor.md §3a).
+        crate::events::window_item(auto.as_ref(), None),
         PItem::new("Edit automation in piano roll", Cmd::Nothing).off(),
         init,
         delete,
