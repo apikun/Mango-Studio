@@ -364,6 +364,7 @@ pub fn builtin() -> Vec<Available> {
     static DRUMSAMPLER: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static SLICER: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static SFXR: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static SLICEX: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static WAVETABLE: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static SOUNDFONT: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     let mut v = linked(&LIB, &lemon_sampler::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, LEMON_SAMPLER);
@@ -401,6 +402,8 @@ pub fn builtin() -> Vec<Available> {
     v.extend(linked(&FLEX, &mango_flex::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, MANGO_FLEX));
     // The sampler (a recreation of FL's DirectWave): a program of zones, each one sample and where it plays.
     v.extend(linked(&DIRECTWAVE, &mango_directwave::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango DirectWave"));
+    // The sliced-loop sampler (a recreation of FL's Slicex): articulators, two decks, a sample editor.
+    v.extend(linked(&SLICEX, &lemon_slicex::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Slicex"));
     // The pad drum sampler (a recreation of FL's FPC): sixteen pads in two banks, each one or more velocity
     // layers of samples, each on its own key.
     v.extend(linked(&DRUMSAMPLER, &lemon_drum_sampler::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Drum Sampler"));
@@ -956,7 +959,27 @@ impl Plugins {
     /// so only Lemon Sampler rows load it (through their state). Returns whether the plugin got the file.
     #[cfg(target_os = "macos")]
     pub fn drop_file(&mut self, row: usize, _x: i32, _y: i32, path: &str, sampler: bool) -> bool {
-        sampler && self.load_sample(row, path)
+        self.drop_on_link(row, path) || sampler && self.load_sample(row, path)
+    }
+
+    /// The hosted row whose plugin window is at screen point (x, y).
+    #[cfg(target_os = "linux")]
+    pub fn row_at_screen(&self, x: i32, y: i32) -> Option<usize> {
+        self.hosted.iter().find(|(_, h)| h.window.as_ref().and_then(|f| f.screen_rect()).is_some_and(|[l, t, r, b]| x >= l && x < r && y >= t && y < b)).map(|(&r, _)| r)
+    }
+
+    /// Hands file `path` to row `row`'s plugin through the host link, when that plugin takes dropped files (Mango Slicex
+    /// does). False when it does not.
+    #[cfg(all(not(windows), plugin_windows))]
+    pub fn drop_on_link(&self, row: usize, path: &str) -> bool {
+        self.hosted.get(&row).and_then(|h| h.link.as_ref()).is_some_and(|l| l.drop_file(path))
+    }
+
+    /// Drops file `path` on row `row`'s plugin window: a plugin that takes files through the host link gets it, a Lemon
+    /// Sampler row loads it through its state. Returns whether the plugin got the file.
+    #[cfg(target_os = "linux")]
+    pub fn drop_file(&mut self, row: usize, _x: i32, _y: i32, path: &str, sampler: bool) -> bool {
+        self.drop_on_link(row, path) || sampler && self.load_sample(row, path)
     }
 
     /// Closes every window and drops every instance (a new or opened project).

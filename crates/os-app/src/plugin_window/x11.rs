@@ -492,6 +492,13 @@ impl FrameWindow {
         expose();
     }
 
+    /// The frame's rectangle on the X screen (physical px): left, top, right, bottom.
+    pub fn screen_rect(&self) -> Option<[i32; 4]> {
+        let g = self.f.conn.c.get_geometry(self.f.win).ok()?.reply().ok()?;
+        let (x, y) = self.f.to_screen(0.0, 0.0);
+        Some([x, y, x + i32::from(g.width), y + i32::from(g.height)])
+    }
+
     /// A point of the editor (logical px from its top-left) on the screen (screen px): where a menu the plugin asked
     /// for opens (spec: plugins/vst3-hosting.md §9).
     pub fn editor_to_screen(&self, x: f32, y: f32) -> (i32, i32) {
