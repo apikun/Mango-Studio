@@ -980,7 +980,9 @@ fn centre_bar(ui: &mut Ui, x: f32, y: f32, half: f32, value: f32) {
     let h = if half >= 12.0 { 10.0 } else { 8.0 };
     let r = Rect::new(x - half, y - h / 2.0, 2.0 * half, h);
     let hov = ui.hovering(r.outset(4.0));
-    ui.c.fill_rrect(r, h / 2.0, ui.t.s(0x141618));
+    // Lighter than the faders' trough with a rim, so it shows on the dark foot of the strip too.
+    ui.c.fill_rrect(r.outset(1.0), h / 2.0 + 1.0, Color::rgb(0x050505));
+    ui.c.fill_rrect(r, h / 2.0, Color::rgb(0x3a3d41));
     let main = ui.t.brand_sel(os_theme::design::lemon::MAIN);
     let col = if hov { main.shade(0.12) } else { main };
     let at = r.x + 1.0 + value.clamp(0.0, 1.0) * (r.w - 2.0);
