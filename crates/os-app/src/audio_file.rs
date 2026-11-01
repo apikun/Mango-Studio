@@ -391,7 +391,7 @@ fn sine_wav(path: &std::path::Path, tones: &[(f64, f64)], amp: f32) -> PathBuf {
         let mut phase = 0.0f64;
         for _ in 0..(RATE * secs) as usize {
             phase += std::f64::consts::TAU * hz / RATE;
-            all.push((amp * phase.sin()) as f32);
+            all.push((f64::from(amp) * phase.sin()) as f32);
         }
     }
     let mut f = std::fs::File::create(path).expect("the test's wav opens");
@@ -402,7 +402,6 @@ fn sine_wav(path: &std::path::Path, tones: &[(f64, f64)], amp: f32) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     fn test_app() -> App {
         let mut app = App::new(None);
