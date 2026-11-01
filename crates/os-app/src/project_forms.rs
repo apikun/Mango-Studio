@@ -23,6 +23,8 @@ pub enum Form {
     Export(Box<crate::export_form::ExportForm>),
     /// Import MIDI data (`crate::midi_file`).
     Midi(Box<crate::midi_file::MidiForm>),
+    /// Import audio data (`crate::audio_file`): what the file becomes.
+    Audio(Box<crate::audio_file::AudioForm>),
 }
 
 /// The parts of a form that take clicks (`dialog::DHit::Form`); Cancel and the caption's × are the dialog's own.
@@ -126,6 +128,9 @@ impl App {
         if matches!(top(self), Some(Form::Midi(_))) {
             return self.midi_form_click(h);
         }
+        if matches!(top(self), Some(Form::Audio(_))) {
+            return self.audio_form_click(h);
+        }
         let Some(Form::Rename(f)) = top(self) else { return None };
         match h {
             FHit::Field(0) => f.focus = 0,
@@ -173,6 +178,9 @@ impl App {
         if matches!(top(self), Some(Form::Midi(_))) {
             return self.midi_form_key(key);
         }
+        if matches!(top(self), Some(Form::Audio(_))) {
+            return self.audio_form_key(key);
+        }
         match key {
             Key::Named(NamedKey::Escape) => return Some(Reply::Button(Answer::Cancel)),
             Key::Named(NamedKey::Enter) => return self.form_accept(),
@@ -201,6 +209,7 @@ impl App {
             Form::Save(f) => self.save_form_closed(*f, reply),
             Form::Export(f) => self.export_form_closed(*f, reply),
             Form::Midi(f) => self.midi_form_closed(*f, reply),
+            Form::Audio(f) => self.audio_form_closed(*f, reply),
             Form::Rename(f) => {
                 if reply != Reply::Button(Answer::Ok) {
                     return;

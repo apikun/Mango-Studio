@@ -541,12 +541,26 @@ fn top(app: &mut App) -> Option<&mut MidiForm> {
     }
 }
 
-fn file_name(path: &Path) -> String {
+pub(crate) fn file_name(path: &Path) -> String {
     path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned())
 }
 
 fn stem(path: &Path) -> String {
     path.file_stem().map_or_else(|| "MIDI file".to_string(), |n| n.to_string_lossy().into_owned())
+}
+
+/// The audio import's channel's name: the file's stem, or "Audio file" where it has none (`crate::audio_file`).
+pub(crate) fn stem_of_audio(path: &Path) -> String {
+    path.file_stem().map_or_else(|| "Audio file".to_string(), |n| n.to_string_lossy().into_owned())
+}
+
+/// The audio import's placement (`crate::audio_file`): one part becomes one channel in pattern `n`, as the MIDI
+/// import's own parts do (the 8-bit's channel is a 3x Osc whose state is squares, the monk's a Mango Monk; no mixer
+/// tracks are set and no signatures come with a melody).
+pub(crate) fn place_audio(s: &mut State, part: Part, name: &str, instrument: Instrument, n: u16) {
+    let imp = Imported { parts: vec![part], ..Imported::default() };
+    let o = Options { instrument, mixer: false, ..Options::default() };
+    place(s, imp, &o, name, n);
 }
 
 /// The channels' notes go into pattern `n` with the import's control points and signature markers, the markers into
