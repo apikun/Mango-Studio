@@ -66,8 +66,8 @@ const FILTER_PANEL: Rect = edges(162.0, 316.0, 186.0, 322.0);
 const GRAPH: Rect = edges(324.0, 652.0, 148.0, 282.0);
 const KNOB_BAR: Rect = edges(322.0, 654.0, 286.0, 322.0);
 /// The toolbar and the info strip under the middle panel, and the wave.
-pub const BPM_BOX: Rect = edges(130.0, 188.0, 381.0, 397.0);
-pub const BEATS_BOX: Rect = edges(486.0, 540.0, 381.0, 397.0);
+pub const BPM_BOX: Rect = edges(130.0, 188.0, 372.0, 397.0);
+pub const BEATS_BOX: Rect = edges(486.0, 540.0, 372.0, 397.0);
 const DECK_A: Rect = edges(196.0, 214.0, 382.0, 398.0);
 const DECK_B: Rect = edges(216.0, 234.0, 382.0, 398.0);
 /// The wave panel: the scroll bar row, the wave, the row of switches (with the chosen slice's name, key and reverse
@@ -815,9 +815,19 @@ fn glyph(ui: &mut Ui, r: Rect, g: Gl, ink: Color) {
     let ic = |ui: &mut Ui, i: &os_ui::tabler::TablerIcon| ui.c.icon(i, Rect::new(cx - hs, cy - hs, 2.0 * hs, 2.0 * hs), ink);
     use os_ui::tabler as tb;
     match g {
-        Gl::Loop => ic(ui, &tb::REPEAT),
-        Gl::Play => ui.c.fill_polygon(&[(cx - 4.0, cy - 6.0), (cx - 4.0, cy + 6.0), (cx + 6.0, cy)], ink),
-        Gl::Stop => ui.c.fill_rect(Rect::new(cx - 5.0, cy - 5.0, 10.0, 10.0), ink),
+        Gl::Loop => {
+            // An infinity symbol: a lemniscate.
+            let pts: Vec<(f32, f32)> = (0..=40)
+                .map(|i| {
+                    let a = i as f32 / 40.0 * std::f32::consts::TAU;
+                    let d = 1.0 + a.sin() * a.sin();
+                    (cx + 8.0 * a.cos() / d, cy + 8.0 * a.sin() * a.cos() / d)
+                })
+                .collect();
+            ui.c.polyline(&pts, 1.8, ink);
+        }
+        Gl::Play => ui.c.fill_polygon(&[(cx - 3.0, cy - 4.5), (cx - 3.0, cy + 4.5), (cx + 4.5, cy)], ink),
+        Gl::Stop => ui.c.fill_rect(Rect::new(cx - 3.5, cy - 3.5, 7.0, 7.0), ink),
         Gl::File => ic(ui, &tb::DEVICE_FLOPPY),
         Gl::Format => ic(ui, &tb::FILE),
         Gl::Edit => ic(ui, &tb::CUT),
@@ -981,9 +991,21 @@ fn icon_button(ui: &mut Ui, r: Rect, t: Target, g: Gl, menu: bool, enabled: bool
 fn toolbar(ui: &mut Ui, look: &Look) {
     ui.c.fill_rect(edges(6.0, 654.0, 326.0, 370.0), Color::rgb(0x394258));
     let has = look.frames > 0;
-    icon_button(ui, LOOP, Target::Ext(Ctl::Loop), Gl::Loop, false, false, false);
-    icon_button(ui, PLAY, Target::Ext(Ctl::PlaySlice), Gl::Play, false, has, false);
-    icon_button(ui, STOP, Target::Ext(Ctl::Stop), Gl::Stop, false, has, false);
+    // The transport: one flat group of three, its icons bright whether or not a loop is loaded.
+    let group = edges(28.0, 104.0, TB_Y, TB_Y + TB_H);
+    ui.c.fill_rrect(group, 3.0, BTN_FACE);
+    ui.c.stroke_rrect(group.inset(0.5), 3.0, 1.0, BTN_EDGE);
+    for x in [53.0, 79.0] {
+        ui.c.fill_rect(Rect::new(x, TB_Y + 2.0, 1.0, TB_H - 4.0), BTN_EDGE);
+    }
+    for (r, c, g) in [(LOOP, Ctl::Loop, Gl::Loop), (PLAY, Ctl::PlaySlice, Gl::Play), (STOP, Ctl::Stop, Gl::Stop)] {
+        let t = Target::Ext(c);
+        if ui.hover(r, &t) {
+            ui.c.fill_rect(r.inset(1.0), BTN_FACE.shade(0.14));
+        }
+        glyph(ui, r, g, Color::rgb(0xf2f4f8));
+        ui.hit(r, t);
+    }
     // The menus; the ones that do something already are lit up, the rest wait for the sample editor.
     for (i, g) in MENU_GLYPHS.iter().enumerate() {
         icon_button(ui, menu_cell(i), Target::Ext(Ctl::Menu(i as u8)), *g, true, true, false);
@@ -1005,35 +1027,43 @@ fn info_field(ui: &mut Ui, x: f32, cap: &str, text: &str, w: f32) {
     ui.c.text_clip(LABEL, x, 383.0, w, LIGHT, text);
 }
 
-fn value_box(ui: &mut Ui, r: Rect, t: Target, text: &str, enabled: bool) {
-    let mut st = ui.state(r, &t);
-    st.disabled = !enabled;
-    lemon::field(ui.c, r, st);
-    ui.c.text_center(SMALL.bold(), r, if !enabled { INK_DIM } else if st.hover { brand::TEXT } else { brand::MAIN }, text);
+/// A value on the info strip, as plain text (the original has no field behind it): light with a loop loaded, dim without.
+fn value_text(ui: &mut Ui, r: Rect, t: Target, text: &str, enabled: bool) {
+    let hov = enabled && ui.hover(r, &t);
+    let ink = if !enabled { Color::rgb(0x59627a) } else if hov { Color::rgb(0xffffff) } else { LIGHT };
+    ui.c.text(LABEL, r.x, 374.0, ink, text);
     ui.hit(r, t);
 }
 
 fn info(ui: &mut Ui, look: &Look) {
+    let dim = Color::rgb(0x6d7791);
     ui.c.fill_rect(edges(6.0, 654.0, 370.0, 402.0), Color::rgb(0x333b50));
     let has = look.frames > 0;
-    info_field(ui, 12.0, "SAMPLERATE", &if has { format!("{} Hz", look.rate) } else { String::new() }, 70.0);
-    ui.c.text(Font::new(8).bold(), 84.0, 372.0, SOFT.with_alpha(180), "FORMAT");
-    if has {
-        ui.c.text(LABEL, 84.0, 383.0, LIGHT, "32");
-        // Stereo: two small cassettes.
-        ui.c.stroke_rrect(Rect::new(104.0, 384.0, 10.0, 8.0), 1.5, 1.0, SOFT);
-    }
-    ui.c.text(Font::new(8).bold(), BPM_BOX.x, 372.0, SOFT.with_alpha(180), "TEMPO");
-    value_box(ui, BPM_BOX, Target::Bpm, &format!("{:.3}", look.state.bpm()), has);
-    ui.c.text(Font::new(8).bold(), 196.0, 372.0, SOFT.with_alpha(180), "DECK");
+    let cap = Font::new(8).bold();
+    ui.c.text(cap, 12.0, 372.0, dim, "SAMPLERATE");
+    ui.c.text(LABEL, 12.0, 383.0, if has { LIGHT } else { Color::rgb(0x59627a) }, &if has { format!("{} Hz", look.rate) } else { "44100 Hz".into() });
+    ui.c.text(cap, 84.0, 372.0, dim, "FORMAT");
+    let ink = if has { LIGHT } else { Color::rgb(0x59627a) };
+    ui.c.text(LABEL, 84.0, 383.0, ink, "32");
+    // The stereo icon after it: two small squares joined by a bar over them.
+    let (sx, sy) = (104.0, 384.0);
+    ui.c.fill_rect(Rect::new(sx, sy, 12.0, 1.6), ink);
+    ui.c.fill_rect(Rect::new(sx, sy, 1.6, 8.0), ink);
+    ui.c.fill_rect(Rect::new(sx + 10.4, sy, 1.6, 8.0), ink);
+    ui.c.stroke_rrect(Rect::new(sx - 1.0, sy + 4.5, 4.0, 4.0), 0.5, 1.2, ink);
+    ui.c.stroke_rrect(Rect::new(sx + 9.0, sy + 4.5, 4.0, 4.0), 0.5, 1.2, ink);
+    ui.c.text(cap, BPM_BOX.x, 372.0, dim, "TEMPO");
+    value_text(ui, BPM_BOX, Target::Bpm, &if has { format!("{:.3}", look.state.bpm()) } else { String::new() }, has);
+    ui.c.text(cap, 196.0, 372.0, dim, "DECK");
     let x = look.ext;
     let (a_on, b_on) = (x.a_on, x.b_on);
     tab(ui, DECK_A, Target::Ext(Ctl::DeckToggle(0)), "A", a_on, false);
     tab(ui, DECK_B, Target::Ext(Ctl::DeckToggle(1)), "B", b_on, look.decks[1].is_empty());
-    let name = if look.decks[0].is_empty() { "(no loop)".to_string() } else { look.decks[0].clone() };
-    info_field(ui, 250.0, "TITLE", &name, 226.0);
-    ui.c.text(Font::new(8).bold(), BEATS_BOX.x, 372.0, SOFT.with_alpha(180), "LENGTH / SEL");
-    value_box(ui, BEATS_BOX, Target::Beats, &format!("{:.2}", look.state.beats()), has);
+    let name = look.decks[0].clone();
+    ui.c.text(cap, 250.0, 372.0, dim, "TITLE");
+    ui.c.text_clip(LABEL, 250.0, 383.0, 226.0, LIGHT, &name);
+    ui.c.text(cap, BEATS_BOX.x, 372.0, dim, "LENGTH / SEL");
+    value_text(ui, BEATS_BOX, Target::Beats, &if has { format!("{:.2}", look.state.beats()) } else { String::new() }, has);
     for (i, g) in SWITCH_GLYPHS.iter().enumerate() {
         let r = switch_cell(i);
         glyph(ui, r, *g, Color::rgb(0x707a92));
