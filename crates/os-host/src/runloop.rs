@@ -9,11 +9,42 @@
 //! `timer-support` and `posix-fd-support`; both backends register here, and the app calls [`dispatch`] on every UI tick.
 //!
 //! Everything lives on the UI thread (registration happens from plugin calls made there), so the callbacks need not be
-//! `Send`. A callback may register or remove entries, its own included.
+//! `Send`. A callback may register or remove entries, its own included. A plugin call made on another thread (an editor
+//! that may hang joining its window, attached off the UI thread) hands its registration over with [`on_ui`]; the UI
+//! thread runs it on its next [`dispatch`].
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::{Mutex, OnceLock};
+use std::thread::ThreadId;
 use std::time::{Duration, Instant};
+
+/// The thread that dispatches: the UI thread, as the app names it at its start ([`mark_ui_thread`]).
+static UI: OnceLock<ThreadId> = OnceLock::new();
+/// Work other threads handed to the UI thread ([`on_ui`]), run at its next [`dispatch`].
+static HANDED: Mutex<Vec<Box<dyn FnOnce() + Send>>> = Mutex::new(Vec::new());
+
+/// Names the calling thread the UI thread, the one that calls [`dispatch`] (the app, once, at its start).
+pub fn mark_ui_thread() {
+    UI.get_or_init(|| std::thread::current().id());
+}
+
+/// Whether this is the UI thread (any thread while none was named: registration is then made where it is called, as it
+/// always was).
+pub fn on_ui_thread() -> bool {
+    UI.get().is_none_or(|t| *t == std::thread::current().id())
+}
+
+/// Runs `f` on the UI thread at its next [`dispatch`] (at once when called there), and wakes the UI.
+pub fn on_ui(f: impl FnOnce() + Send + 'static) {
+    if on_ui_thread() {
+        return f();
+    }
+    if let Ok(mut h) = HANDED.lock() {
+        h.push(Box::new(f));
+    }
+    crate::wake();
+}
 
 /// Identifies a registered descriptor or timer.
 pub type Token = u64;
@@ -90,12 +121,13 @@ pub fn remove(token: Token) -> bool {
     })
 }
 
-/// Anything registered: the app ticks at frame rate while it is, so editors stay responsive.
+/// Anything registered or handed over: the app ticks at frame rate while it is, so editors stay responsive.
 pub fn active() -> bool {
-    LOOP.with(|l| {
-        let l = l.borrow();
-        !l.fds.is_empty() || !l.timers.is_empty()
-    })
+    HANDED.lock().is_ok_and(|h| !h.is_empty())
+        || LOOP.with(|l| {
+            let l = l.borrow();
+            !l.fds.is_empty() || !l.timers.is_empty()
+        })
 }
 
 fn registered(token: Token) -> bool {
@@ -105,8 +137,14 @@ fn registered(token: Token) -> bool {
     })
 }
 
-/// UI thread: runs the callbacks of ready descriptors and due timers. Never blocks.
+/// UI thread: runs what other threads handed over, then the callbacks of ready descriptors and due timers. Never blocks.
 pub fn dispatch() {
+    // Only the UI thread runs what other threads handed over (a dispatch on another thread leaves it queued).
+    let handed: Vec<Box<dyn FnOnce() + Send>> =
+        if on_ui_thread() { HANDED.lock().map(|mut h| std::mem::take(&mut *h)).unwrap_or_default() } else { Vec::new() };
+    for f in handed {
+        f();
+    }
     let watched: Vec<(Token, i32, u32, FdCall)> =
         LOOP.with(|l| l.borrow().fds.iter().map(|f| (f.token, f.fd, f.flags, f.call.clone())).collect());
     if !watched.is_empty() {
@@ -232,5 +270,29 @@ mod tests {
             libc::close(r);
             libc::close(w);
         }
+    }
+
+    /// A registration made on another thread is handed to the UI thread and takes effect there, at its next dispatch.
+    #[test]
+    fn registrations_from_other_threads_run_on_the_ui_thread() {
+        mark_ui_thread();
+        let me = std::thread::current().id();
+        assert!(on_ui_thread());
+        let ran: std::sync::Arc<Mutex<Option<ThreadId>>> = Default::default();
+        let r = ran.clone();
+        std::thread::spawn(move || {
+            assert!(!on_ui_thread());
+            on_ui(move || *r.lock().unwrap() = Some(std::thread::current().id()));
+        })
+        .join()
+        .unwrap();
+        assert!(active(), "something waits for the UI thread");
+        assert_eq!(*ran.lock().unwrap(), None, "not before the UI thread dispatches");
+        // A dispatch on any other thread leaves it queued (the run loop's own state is the UI thread's).
+        std::thread::spawn(dispatch).join().unwrap();
+        assert!(active(), "still queued after another thread's dispatch");
+        assert_eq!(*ran.lock().unwrap(), None);
+        dispatch();
+        assert_eq!(*ran.lock().unwrap(), Some(me), "run on the UI thread");
     }
 }

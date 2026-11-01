@@ -1,5 +1,4 @@
 // Copyright (C) 2026 ItsAlphaNeon
-// Copyright (C) 2026 thacer13
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
@@ -27,7 +26,7 @@ fn module(name: &str) -> Option<Arc<Module>> {
 }
 
 fn sampler() -> Option<(Arc<Module>, os_host::SharedPlugin)> {
-    let m = module("Lemon Sampler")?;
+    let m = module("Mango Sampler")?;
     let p = m.clone().create(&m.plugins()[0].id).expect("create");
     Some((m, p))
 }
@@ -84,16 +83,16 @@ fn finds_bundles_and_single_file_modules() {
 
 #[test]
 fn lists_instrument_and_effect_classes() {
-    let Some(m) = module("Lemon Sampler") else { return };
+    let Some(m) = module("Mango Sampler") else { return };
     let d = &m.plugins()[0];
     assert_eq!(m.plugins().len(), 1);
-    assert_eq!(d.name, "Lemon Sampler");
+    assert_eq!(d.name, "Mango Sampler");
     assert!(d.is_instrument(), "{:?}", d.features);
     // Its FUID string spells "OpenStudioSamplr" in hex (the module lays the GUID out so that it reads in order).
     assert_eq!(d.uid(), "vst3:4F70656E53747564696F53616D706C72");
     assert!(!d.vendor.is_empty() && !d.version.is_empty());
-    assert_eq!(d.path, bundle("Lemon Sampler").unwrap());
-    let Some(eq) = module("Lemon Parametric EQ") else { return };
+    assert_eq!(d.path, bundle("Mango Sampler").unwrap());
+    let Some(eq) = module("Mango Parametric EQ") else { return };
     assert!(eq.plugins()[0].is_effect(), "{:?}", eq.plugins()[0].features);
 }
 
@@ -243,7 +242,7 @@ fn host_objects_follow_the_interfaces() {
 /// An effect in a mixer slot: the default EQ passes the sound through; the main level raises it.
 #[test]
 fn hosts_an_effect() {
-    let Some(m) = module("Lemon Parametric EQ") else { return };
+    let Some(m) = module("Mango Parametric EQ") else { return };
     let shared = m.clone().create(&m.plugins()[0].id).unwrap();
     let mut p = shared.lock().unwrap();
     assert!(p.activate(48000));
@@ -273,7 +272,7 @@ fn automation_is_sample_accurate() {
     use os_engine::HostedEffect;
     use os_host::Plugin as _;
     use vst3_sys::vst::{IParamValueQueue, IParameterChanges};
-    let Some(m) = module("Lemon Parametric EQ") else { return };
+    let Some(m) = module("Mango Parametric EQ") else { return };
     let mut p = Plugin::new(&m, &m.plugins()[0].id).unwrap();
     assert!(p.activate(48000));
     let index = (0..p.param_count()).find(|&i| p.param_info(i).is_some_and(|i| i.name == "Main level")).expect("main level") as u32;
@@ -323,8 +322,7 @@ fn engine_plays_a_pattern() {
         assert!(p.activate(48000));
     }
     let ch = os_model::Channel {
-        id: os_model::Id::NONE,
-        index: 0, kind: os_model::ChannelKind::Plugin, name: None, plugin: Some("Lemon Sampler".into()), plugin_state: None, color: None,
+        index: 0, kind: os_model::ChannelKind::Plugin, name: None, plugin: Some("Mango Sampler".into()), plugin_state: None, color: None,
         enabled: true, volume: 0.78125, pan: 0.0, pitch_cents: 0, mixer_track: 0, sample_path: None,
         layer_children: vec![], envelopes: Default::default(), rack: Default::default(), misc: Default::default(), sound: Default::default(),
     };
@@ -358,8 +356,7 @@ fn mono_portamento_glides_through_the_tuning_expression() {
     }
     let misc = os_model::ChannelMisc { mono: true, porta: true, slide: 1.0, ..Default::default() };
     let ch = os_model::Channel {
-        id: os_model::Id::NONE,
-        index: 0, kind: os_model::ChannelKind::Plugin, name: None, plugin: Some("Lemon Sampler".into()), plugin_state: None, color: None,
+        index: 0, kind: os_model::ChannelKind::Plugin, name: None, plugin: Some("Mango Sampler".into()), plugin_state: None, color: None,
         enabled: true, volume: 0.78125, pan: 0.0, pitch_cents: 0, mixer_track: 0, sample_path: None,
         layer_children: vec![], envelopes: Default::default(), rack: Default::default(), misc, sound: Default::default(),
     };
@@ -1112,7 +1109,7 @@ mod window {
     #[test]
     #[ignore = "shows an offscreen window"]
     fn editor_shots() {
-        for (name, setup) in [("Lemon Sampler", true), ("Lemon Parametric EQ", false)] {
+        for (name, setup) in [("Mango Sampler", true), ("Mango Parametric EQ", false)] {
             let Some(m) = module(name) else { continue };
             let shared = m.clone().create(&m.plugins()[0].id).unwrap();
             let mut p = shared.lock().unwrap();

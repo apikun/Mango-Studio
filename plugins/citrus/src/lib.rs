@@ -110,8 +110,8 @@ impl Default for CitrusParams {
             edit: Mutex::new(None),
             previews: Mutex::new(Vec::new()),
             playing: [AtomicU64::new(0), AtomicU64::new(0)],
-            mod_x: FloatParam::new("Mod A", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 }),
-            mod_y: FloatParam::new("Mod B", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 }),
+            mod_x: FloatParam::new("Mod X", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 }),
+            mod_y: FloatParam::new("Mod Y", 0.0, FloatRange::Linear { min: -1.0, max: 1.0 }),
         }
     }
 }
@@ -275,7 +275,7 @@ impl CitrusPlugin {
 
 impl Plugin for CitrusPlugin {
     const NAME: &'static str = "Citrus";
-    const VENDOR: &'static str = "Lemon Studio";
+    const VENDOR: &'static str = "Mango Studio";
     const URL: &'static str = "";
     const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
@@ -395,7 +395,7 @@ impl Plugin for CitrusPlugin {
 
 impl ClapPlugin for CitrusPlugin {
     const CLAP_ID: &'static str = "org.openstudio.citrus";
-    const CLAP_DESCRIPTION: Option<&'static str> = Some("Lemon Studio's six-operator synthesizer");
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("Mango Studio's six-operator synthesizer");
     const CLAP_MANUAL_URL: Option<&'static str> = None;
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::Instrument, ClapFeature::Synthesizer, ClapFeature::Stereo];

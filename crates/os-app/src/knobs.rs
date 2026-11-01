@@ -382,20 +382,9 @@ impl State {
 
     /// The hint-bar text of a knob at its current value.
     pub fn knob_text(&self, id: KnobId) -> String {
-        match id {
-            KnobId::Strum(k) => self.strum.set.text(k, u32::from(self.project.ppq.max(4))),
-            KnobId::Arp(k) => self.arp.set.text(k),
-            KnobId::PianoDlg(k) => self.piano_dlg.text(k, u32::from(self.project.ppq.max(4))),
-            KnobId::AutoLfo(row, k) => k.text(self.clip_lfo(row).unwrap_or(&os_model::clip_lfo::ClipLfo::default())),
-            _ => self.knob_text_at(id, self.knob(id)).unwrap_or_default(),
-        }
-    }
-
-    /// The hint-bar text of knob `id` at position `n` (0..1), whatever it holds now; `None` for the dialog knobs, whose
-    /// text comes from their settings.
-    pub fn knob_text_at(&self, id: KnobId, n: f32) -> Option<String> {
+        let n = self.knob(id);
         let bipolar = (n - 0.5) * 2.0;
-        Some(match id {
+        match id {
             KnobId::MasterVol => {
                 // The gain is the level curve of stored / 12800 (spec: audio/mixer.md "Main volume").
                 let g = os_dsp::level::curve(n / 0.8);
@@ -431,8 +420,11 @@ impl State {
                     _ => format!("{band} width: {n:.2}"),
                 }
             }
-            KnobId::Strum(_) | KnobId::Arp(_) | KnobId::PianoDlg(_) | KnobId::AutoLfo(..) => return None,
-        })
+            KnobId::Strum(k) => self.strum.set.text(k, u32::from(self.project.ppq.max(4))),
+            KnobId::Arp(k) => self.arp.set.text(k),
+            KnobId::PianoDlg(k) => self.piano_dlg.text(k, u32::from(self.project.ppq.max(4))),
+            KnobId::AutoLfo(row, k) => k.text(self.clip_lfo(row).unwrap_or(&os_model::clip_lfo::ClipLfo::default())),
+        }
     }
 }
 
@@ -447,22 +439,19 @@ impl crate::app::App {
                 self.hint = Cow::Owned(s.knob_text(id));
             }
             Control::Fader(t) => {
+                crate::history::fader(s, t, false);
                 let v = os_model::MixerTrack::new(t).volume.unwrap_or(0.8);
-                crate::control::knob_edit(s, crate::history::MIXER_VOLUME, crate::control::command::Region::Track(t), |s| {
-                    if let Some(m) = crate::mixer::track_mut(s, t) {
-                        m.volume = Some(v);
-                        s.piano.dirty = true;
-                    }
-                });
+                if let Some(m) = crate::mixer::track_mut(s, t) {
+                    m.volume = Some(v);
+                    s.piano.dirty = true;
+                }
                 self.hint = Cow::Owned(crate::mixer::level_text("Volume", v));
             }
             Control::ChanPitch(row) => {
-                crate::control::edit(s, "Channel pitch", crate::control::command::Region::Channel(row), |s| {
-                    if let Some(ch) = s.project.channels.get_mut(row) {
-                        ch.pitch_cents = 0;
-                        s.piano.dirty = true;
-                    }
-                });
+                if let Some(ch) = s.project.channels.get_mut(row) {
+                    ch.pitch_cents = 0;
+                    s.piano.dirty = true;
+                }
             }
             Control::Slider(label) => {
                 if let Some(sl) = crate::prefs::find_slider(label) {

@@ -32,6 +32,15 @@ impl Sample {
     pub fn frames(&self) -> usize {
         self.left.len()
     }
+
+    /// Reversed audio sample (both stereo channels mirrored).
+    pub fn reversed(&self) -> Self {
+        let mut left = self.left.clone();
+        left.reverse();
+        let mut right = self.right.clone();
+        right.reverse();
+        Sample { rate: self.rate, left, right }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -100,7 +109,8 @@ pub fn load_shared(path: &Path) -> Result<Arc<Sample>, SampleError> {
     Ok(s)
 }
 
-/// Decodes a WAV (PCM or Vorbis-in-WAV) / FLAC / Ogg Vorbis / WavPack / MP3 / AIFF file.
+/// Decodes a WAV (PCM or Vorbis-in-WAV) / FLAC / Ogg Vorbis / WavPack / MP3 / AIFF / AAC (in MP4 or an ADTS stream)
+/// file.
 pub fn load(path: &Path) -> Result<Sample, SampleError> {
     let bytes = std::fs::read(path).map_err(|source| SampleError::Io { path: path.to_owned(), source })?;
     let decode_err = |message: String| SampleError::Decode { path: path.to_owned(), message };
@@ -112,45 +122,8 @@ pub fn load(path: &Path) -> Result<Sample, SampleError> {
         }
         return Ok(s);
     }
-    if let Some(audio) = wavpack_audio_first(&bytes) {
-        return decode(audio.to_vec(), Some("wv")).map_err(decode_err);
-    }
     let ext = path.extension().and_then(|e| e.to_str());
     decode(bytes, ext).map_err(decode_err)
-}
-
-/// The frames of a WavPack packet whose blocks all have magnitude 0 (flag bits 18 to 22): digital silence, which
-/// the WavPack decoder refuses in some encoders' files, kept as that many frames of silence. `None` for any other.
-fn wavpack_quiet_frames(p: &[u8]) -> Option<usize> {
-    let (mut pos, mut frames) = (0, None);
-    while pos < p.len() {
-        if p.get(pos..pos + 4)? != b"wvpk" {
-            return None;
-        }
-        let word = |at: usize| p.get(pos + at..pos + at + 4).and_then(|b| b.try_into().ok()).map(u32::from_le_bytes);
-        if (word(24)? >> 18) & 0x1f != 0 {
-            return None;
-        }
-        frames = Some(word(20)? as usize);
-        pos += word(4)? as usize + 8;
-    }
-    frames.filter(|&n| n > 0)
-}
-
-/// A WavPack file whose first blocks hold no audio (a block carrying only the original RIFF header, its flags all 0,
-/// as in many sample packs): the WavPack reader takes the stream's rate, channels and depth from the first block, so
-/// those blocks are dropped and the rest decoded. `None` for any other file.
-fn wavpack_audio_first(b: &[u8]) -> Option<&[u8]> {
-    let mut pos = 0;
-    while b.get(pos..pos + 4)? == b"wvpk" {
-        let size = u32::from_le_bytes(b.get(pos + 4..pos + 8)?.try_into().ok()?) as usize + 8;
-        let samples = u32::from_le_bytes(b.get(pos + 20..pos + 24)?.try_into().ok()?);
-        if samples != 0 {
-            return (pos > 0).then(|| &b[pos..]);
-        }
-        pos += size;
-    }
-    None
 }
 
 /// The length of the audio file at `path`: its frames and their rate. Read from the file's headers where they give it
@@ -165,13 +138,7 @@ pub fn length(path: &Path) -> Option<(u64, u32)> {
 
 /// The length the file's headers give, without decoding it.
 fn header_length(path: &Path) -> Option<(u64, u32)> {
-    let mut file = std::fs::File::open(path).ok()?;
-    // A WavPack file that starts with a block without audio: that block's format is not the stream's.
-    let mut head = [0u8; 24];
-    if file.read_exact(&mut head).is_ok() && &head[..4] == b"wvpk" && head[20..24] == [0; 4] {
-        return None;
-    }
-    file.rewind().ok()?;
+    let file = std::fs::File::open(path).ok()?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
@@ -180,7 +147,15 @@ fn header_length(path: &Path) -> Option<(u64, u32)> {
     let format = probe().probe(&hint, mss, FormatOptions::default(), MetadataOptions::default()).ok()?;
     let track = format.default_track(TrackType::Audio)?;
     let rate = track.codec_params.as_ref()?.audio()?.sample_rate.filter(|&r| r > 0)?;
-    Some((track.num_frames?, rate))
+    // An MP4's length is its edit's run, when it carries one and it fits what the headers count (the priming the edit
+    // skips is in there).
+    let mp4 = format.format_info().short_name == "isomp4";
+    let frames = if mp4 {
+        std::fs::read(path).ok().and_then(|b| mp4_edit(&b)).map(|e| e.frames(rate).1 as u64).filter(|&f| f > 0 && track.num_frames.is_some_and(|n| f <= n)).unwrap_or(track.num_frames?)
+    } else {
+        track.num_frames?
+    };
+    Some((frames, rate))
 }
 
 /// A WAV file whose `fmt ` tag is one of the Vorbis-ACM tags: the `data` chunk holds a
@@ -297,10 +272,93 @@ fn mp3_info_frame(b: &[u8]) -> Option<usize> {
     (xing || vbri).then_some(if mpeg1 { 1152 } else { 576 })
 }
 
+/// An MP4 file's first edit (`elst`) entry: how much of the decoded audio the edit skips and how long it runs, each
+/// in its own timescale (the skip in the track's media, the run in the movie's). What hides an AAC decoder's priming:
+/// an ffmpeg-made file skips its 1024 leading frames with it.
+#[derive(Clone, Copy, Debug)]
+struct Mp4Edit {
+    skip: f64,
+    skip_timescale: f64,
+    duration: f64,
+    duration_timescale: f64,
+}
+
+impl Mp4Edit {
+    /// The edit in frames at `rate`: the frames dropped in front and the frames the content runs.
+    fn frames(&self, rate: u32) -> (usize, usize) {
+        let rate = rate as f64;
+        (
+            (self.skip * rate / self.skip_timescale.max(1.0)).max(0.0) as usize,
+            (self.duration * rate / self.duration_timescale.max(1.0)).max(0.0) as usize,
+        )
+    }
+}
+
+/// The child atoms of an ISO BMFF container body: (id, body) pairs, a 32-bit size with a 64-bit one after it when the
+/// 32-bit is 1, the last atom running to the end when the size is 0. `None` when an atom runs past the body.
+fn mp4_atoms(body: &[u8]) -> Option<Vec<(&[u8], &[u8])>> {
+    let mut out = Vec::new();
+    let mut rest = body;
+    while rest.len() >= 8 {
+        let (head, size) = match u32::from_be_bytes(rest[..4].try_into().ok()?) {
+            0 => (8, rest.len()),
+            1 => (16, u64::from_be_bytes(rest.get(8..16)?.try_into().ok()?) as usize),
+            n => (8, n as usize),
+        };
+        if size < head || size > rest.len() {
+            return None;
+        }
+        out.push((&rest[4..8], &rest[head..size]));
+        rest = &rest[size..];
+    }
+    Some(out)
+}
+
+/// The `id` atom of an ISO BMFF container body, when it has exactly one.
+fn mp4_child<'a>(body: &'a [u8], id: &[u8]) -> Option<&'a [u8]> {
+    mp4_atoms(body)?.into_iter().find(|(a, _)| *a == id).map(|(_, b)| b)
+}
+
+/// The timescale of a versioned full atom's body (an `mvhd` or `mdhd`): after version, flags and the creation and
+/// modification dates, a 32-bit one in version 0 and a 64-bit one in version 1.
+fn mp4_timescale(body: &[u8]) -> Option<f64> {
+    Some(match body.first()? {
+        0 => u32::from_be_bytes(body.get(12..16)?.try_into().ok()?) as f64,
+        _ => u64::from_be_bytes(body.get(20..28)?.try_into().ok()?) as f64,
+    })
+}
+
+/// The first edit of the MP4 file in `b`: the `elst` of its first `trak` that has one, the media's timescale from its
+/// `mdhd` and the movie's from `mvhd`. `None` when the file isn't an MP4 or carries no edit to apply.
+fn mp4_edit(b: &[u8]) -> Option<Mp4Edit> {
+    if mp4_child(b, b"ftyp").is_none() {
+        return None;
+    }
+    let moov = mp4_child(b, b"moov")?;
+    let movie = mp4_child(moov, b"mvhd").and_then(mp4_timescale).unwrap_or(0.0);
+    for (id, trak) in mp4_atoms(moov)?.into_iter() {
+        if id != b"trak" {
+            continue;
+        }
+        let media = mp4_child(trak, b"mdia").and_then(|m| mp4_child(m, b"mdhd")).and_then(mp4_timescale).unwrap_or(0.0);
+        let Some(elst) = mp4_child(trak, b"edts").and_then(|e| mp4_child(e, b"elst")) else { continue };
+        let be32 = |at: usize| Some(u32::from_be_bytes(elst.get(at..at + 4)?.try_into().ok()?) as f64);
+        let be64 = |at: usize| Some(u64::from_be_bytes(elst.get(at..at + 8)?.try_into().ok()?) as f64);
+        let (duration, skip) = match elst.first()? {
+            0 => (be32(8)?, be32(12)? as i32 as f64),
+            _ => (be64(8)?, be64(16)? as i64 as f64),
+        };
+        return (skip >= 0.0).then_some(Mp4Edit { skip, skip_timescale: media, duration, duration_timescale: movie });
+    }
+    None
+}
+
 fn decode(bytes: Vec<u8>, ext: Option<&str>) -> Result<Sample, String> {
     // MP3 plays every decoded frame, the encoder's info frame as silence in front (spec: audio/sampler.md, the table
     // of formats; audio/sample-formats.md).
     let info_frame = mp3_info_frame(&bytes);
+    // The MP4 edit is read before the stream eats the bytes.
+    let edit = mp4_edit(&bytes);
     let mss = MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
     let mut hint = Hint::new();
     if let Some(ext) = ext {
@@ -317,7 +375,6 @@ fn decode(bytes: Vec<u8>, ext: Option<&str>) -> Result<Sample, String> {
         .and_then(|p| p.audio())
         .ok_or("no audio codec parameters")?;
     let mp3 = format.format_info().short_name == "mp3";
-    let wavpack = format.format_info().short_name == "wavpack";
     let mut decoder = codecs()
         .make_audio_decoder(params, &AudioDecoderOptions::default().gapless(!mp3))
         .map_err(|e| e.to_string())?;
@@ -338,13 +395,7 @@ fn decode(bytes: Vec<u8>, ext: Option<&str>) -> Result<Sample, String> {
         }
         let audio = match decoder.decode(&packet) {
             Ok(a) => a,
-            Err(SymError::DecodeError(_)) => {
-                if let Some(n) = wavpack.then(|| wavpack_quiet_frames(&packet.data)).flatten() {
-                    left.resize(left.len() + n, 0.0);
-                    right.resize(right.len() + n, 0.0);
-                }
-                continue;
-            }
+            Err(SymError::DecodeError(_)) => continue,
             Err(e) => return Err(e.to_string()),
         };
         rate = audio.spec().rate();
@@ -358,6 +409,18 @@ fn decode(bytes: Vec<u8>, ext: Option<&str>) -> Result<Sample, String> {
     }
     if rate == 0 {
         return Err("no audio decoded".into());
+    }
+    let mut left = left;
+    let mut right = right;
+    // An MP4 edit hides an AAC decoder's priming: drop the frames it skips and keep the frames it runs, when the
+    // decode really holds them both.
+    if let Some(edit) = edit {
+        let (skip, frames) = edit.frames(rate);
+        if frames > 0 && skip + frames <= left.len() {
+            let _ = (left.drain(..skip), right.drain(..skip));
+            left.truncate(frames);
+            right.truncate(frames);
+        }
     }
     Ok(Sample { rate, left, right })
 }
@@ -725,31 +788,6 @@ impl SampleLibrary {
 mod tests {
     use super::*;
 
-    /// `tests/data/empty_first_block.wv`: 0.1 s of a 441 Hz sine at 44.1 kHz, mono 16-bit (made with ffmpeg), behind a
-    /// first block that holds only a RIFF header, its flags all 0, as in many sample packs' WavPack files.
-    #[test]
-    fn wavpack_with_an_empty_first_block_decodes() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/empty_first_block.wv");
-        let s = load(&path).expect("decodes");
-        assert_eq!((s.frames(), s.rate), (4410, 44100));
-        let peak = s.left.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-        assert!(peak > 0.1, "peak {peak}");
-        let crossings = s.left.windows(2).filter(|w| w[0] <= 0.0 && w[1] > 0.0).count();
-        assert!((43..=45).contains(&crossings), "{crossings} upward zero crossings");
-        assert_eq!(length(&path), Some((4410, 44100)));
-    }
-
-    /// `tests/data/quiet_tail.wv`: 0.1 s of a 441 Hz sine at 44.1 kHz, mono 16-bit (made with ffmpeg), then a block of
-    /// 0.1 s of silence (magnitude 0) that the WavPack decoder refuses: it stays, as silence.
-    #[test]
-    fn wavpack_silence_the_decoder_refuses_stays() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/quiet_tail.wv");
-        let s = load(&path).expect("decodes");
-        assert_eq!((s.frames(), s.rate), (8820, 44100));
-        assert!(s.left[..4410].iter().any(|v| v.abs() > 0.1));
-        assert!(s.left[4410..].iter().chain(&s.right[4410..]).all(|&v| v == 0.0));
-    }
-
     /// `tests/data/click_sine.mp3` (made with ffmpeg + LAME, 64 kbit/s mono, ID3v2 tag, LAME info frame): 0.3 s at
     /// 44.1 kHz, a 10-frame click of 0.9 at frame 4410, then a 440 Hz sine of 0.25 from frame 8820.
     #[test]
@@ -768,6 +806,25 @@ mod tests {
         assert_eq!(s.frames() % 1152, 0, "length {}", s.frames());
         assert!(s.frames() >= 1152 + 1105 + 13230, "length {}", s.frames());
         let tail = &s.left[9000 + 2257..12000 + 2257];
+        let rms = (tail.iter().map(|v| v * v).sum::<f32>() / tail.len() as f32).sqrt();
+        assert!((rms - 0.25 / 2f32.sqrt()).abs() < 0.02, "sine rms {rms}");
+    }
+
+    /// `tests/data/click_sine.m4a` (made with ffmpeg's AAC, 96 kbit/s mono, the decoder's priming hidden by an edit):
+    /// the same source as the MP3 above.
+    #[test]
+    fn m4a_decodes_in_time_and_level() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/click_sine.m4a");
+        let s = load(&path).expect("m4a decodes");
+        assert_eq!(s.rate, 44100);
+        assert_eq!(s.left, s.right, "mono is duplicated");
+        let peak = (0..s.frames()).max_by(|&a, &b| s.left[a].abs().total_cmp(&s.left[b].abs())).unwrap();
+        // The edit skipped the priming: nothing before the click but the AAC's own pre-echo, the click where it was
+        // encoded, and the edit's run, not the decode padded to whole AAC frames.
+        assert!(s.left[..4000].iter().all(|&v| v == 0.0), "the priming is skipped");
+        assert!((4410 - 30..4410 + 30).contains(&peak), "click at {peak}");
+        assert_eq!(s.frames(), 13230, "length {}", s.frames());
+        let tail = &s.left[9000..12000];
         let rms = (tail.iter().map(|v| v * v).sum::<f32>() / tail.len() as f32).sqrt();
         assert!((rms - 0.25 / 2f32.sqrt()).abs() < 0.02, "sine rms {rms}");
     }
@@ -820,6 +877,8 @@ mod tests {
         assert_eq!(rate, 44100);
         assert!((13230..=13230 + 2 * 1152).contains(&frames), "about 0.3 s: {frames}");
         assert_eq!(length(Path::new("Z:/no such folder/none.wav")), None);
+        let m4a = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/click_sine.m4a");
+        assert_eq!(length(&m4a), Some((13230, 44100)), "the edit's run");
     }
 
     /// A RIFF chunk: id, little-endian length, body, a pad byte after an odd length.
@@ -967,5 +1026,18 @@ mod tests {
         assert!(lib.get(placeholder).is_none() && lib.failures.iter().any(|(k, _)| k == placeholder), "no folder: not found");
         drop(first);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn sample_reversed_mirrors_channels() {
+        let s = Sample {
+            rate: 44100,
+            left: vec![0.1, 0.2, 0.3, 0.4],
+            right: vec![0.9, 0.8, 0.7, 0.6],
+        };
+        let rev = s.reversed();
+        assert_eq!(rev.rate, 44100);
+        assert_eq!(rev.left, vec![0.4, 0.3, 0.2, 0.1]);
+        assert_eq!(rev.right, vec![0.6, 0.7, 0.8, 0.9]);
     }
 }

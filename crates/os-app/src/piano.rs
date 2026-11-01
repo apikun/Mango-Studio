@@ -47,6 +47,51 @@ impl Tool {
     }
 }
 
+/// A note's type: a plain note, a slide note (flags bit 0x0008: it makes no sound and glides the channel's sounding
+/// voices) or a note with its own portamento switch (byte 19, value 16; spec: flp/events/patterns.md note flags,
+/// audio/note-rules.md). The Draw and Paint tools make new notes of the type the Note properties menu chose, a held
+/// new note cycles through the three (crate::hold).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NoteType {
+    #[default]
+    Plain,
+    Slide,
+    Porta,
+}
+
+impl NoteType {
+    /// The type after `periods` whole periods of a hold: plain, slide, porta, then over again.
+    pub fn after(periods: u32) -> NoteType {
+        [NoteType::Plain, NoteType::Slide, NoteType::Porta][(periods % 3) as usize]
+    }
+
+    /// Note `n`'s type.
+    #[cfg(test)]
+    pub fn of(n: &Note) -> NoteType {
+        if n.slide() {
+            NoteType::Slide
+        } else if n.porta() {
+            NoteType::Porta
+        } else {
+            NoteType::Plain
+        }
+    }
+
+    pub fn apply(self, n: &mut Note) {
+        n.set_slide(self == NoteType::Slide);
+        n.set_porta(self == NoteType::Porta);
+    }
+
+    /// The name in menus and messages: "a slide note".
+    pub fn label(self) -> &'static str {
+        match self {
+            NoteType::Plain => "plain",
+            NoteType::Slide => "slide",
+            NoteType::Porta => "portamento",
+        }
+    }
+}
+
 /// What a tool drag draws over the grid.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Overlay {
@@ -58,6 +103,82 @@ pub enum Overlay {
     Slice(u32),
     /// Playback tool: the scrub line (ticks).
     Scrub(f32),
+}
+
+/// How note pitch is displayed on notes in the grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NoteDisplay {
+    #[default]
+    Name,
+    Number,
+    None,
+}
+
+/// Key labels displayed on the vertical piano keyboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeyLabels {
+    #[default]
+    AllWhite,
+    RootOnly,
+    None,
+}
+
+/// Piano roll scale highlighting (Alt+H; off at first, as in FL Studio).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScaleHighlight {
+    pub root: u8,
+    pub scale_idx: usize,
+    pub enabled: bool,
+    /// Notes drawn in the grid land on notes of the scale (while the highlighting is on).
+    pub snap: bool,
+    /// How the scale menu names its black notes.
+    pub names: ScaleNames,
+}
+
+/// The Scale highlighting menu's black-note naming: as Settings has it, as flats, or the way the scale's key is
+/// usually written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScaleNames {
+    #[default]
+    Default,
+    BlackNotes,
+    Automatic,
+}
+
+impl ScaleHighlight {
+    /// Whether the menu names black notes with flats.
+    pub fn flats(&self) -> bool {
+        match self.names {
+            ScaleNames::Default => crate::prefs::index(&crate::prefs::BLACK_NOTES) == 1,
+            ScaleNames::BlackNotes => true,
+            // Keys written with flats: F, Bb, Eb, Ab, Db for a major scale, D, G, C, F, Bb, Eb for a minor one.
+            ScaleNames::Automatic => {
+                let minor = crate::chords::entry(self.scale_idx).is_some_and(|e| e.name.starts_with("Minor"));
+                let tonic = if minor { (self.root + 3) % 12 } else { self.root };
+                matches!(tonic, 1 | 3 | 5 | 8 | 10)
+            }
+        }
+    }
+
+    /// `key` moved to the nearest note of the scale (the lower one on a tie) when notes snap to it; else as it is.
+    pub fn snapped(&self, key: i32) -> i32 {
+        if !(self.enabled && self.snap) {
+            return key;
+        }
+        (0..=6).flat_map(|d| [key - d, key + d]).find(|&k| (0..=TOP_KEY).contains(&k) && crate::chords::in_scale(self.root, self.scale_idx, k)).unwrap_or(key)
+    }
+}
+
+impl Default for ScaleHighlight {
+    fn default() -> Self {
+        ScaleHighlight {
+            root: 0,
+            scale_idx: crate::chords::FIRST_SCALE,
+            enabled: false,
+            snap: true,
+            names: ScaleNames::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +197,8 @@ pub struct PianoState {
     /// The last note clicked or edited in the event panel: new notes take its controls (velocity, pan, release, cutoff,
     /// resonance, fine pitch, repeat, colour), as FL does; `None` = the defaults.
     pub last_controls: Option<Note>,
+    /// The type new notes are drawn as (the Note properties menu): a plain note, a slide note or a portamento one.
+    pub note_type: NoteType,
     /// The project changed since the playing engine last got it (notes, steps, mixer, channel
     /// settings, tempo); `App::tick` sends it to the transport.
     pub dirty: bool,
@@ -115,6 +238,12 @@ pub struct PianoState {
     pub was_shown: Option<bool>,
     /// The magnet button's setting (spec: ui/piano-snap.md): a program setting, kept in the user folder (crate::snap).
     pub snap: crate::snap::EditorSnap,
+    /// Note pitch display mode on note bodies (name, MIDI number, or none).
+    pub note_display: NoteDisplay,
+    /// Note name display on the vertical piano roll keys (all white keys, root keys, or none).
+    pub key_labels: KeyLabels,
+    /// Scale highlighting / key helpers settings.
+    pub scale_highlight: ScaleHighlight,
     sel: Vec<usize>,
     sel_key: (u16, u16),
 }
@@ -128,6 +257,7 @@ impl Default for PianoState {
             bar_span: None,
             last_len: 0,
             last_controls: None,
+            note_type: NoteType::Plain,
             dirty: false,
             held: None,
             typed: Vec::new(),
@@ -147,6 +277,9 @@ impl Default for PianoState {
             split_click: None,
             was_shown: None,
             snap: crate::snap::EditorSnap::default(),
+            note_display: NoteDisplay::default(),
+            key_labels: KeyLabels::default(),
+            scale_highlight: ScaleHighlight::default(),
             sel: Vec::new(),
             sel_key: (0, 0),
         }
@@ -166,6 +299,10 @@ impl PianoState {
         self.sel_key = (pattern, channel);
         self.sel = sel;
         self.range = None;
+    }
+
+    pub fn has_selection(&self) -> bool {
+        !self.sel.is_empty() || self.range.is_some()
     }
 
     pub fn clear_selection(&mut self) {
@@ -590,17 +727,26 @@ pub fn rescale(s: &mut State, from: u16, to: u16) {
     }
 }
 
-/// Add a note with the defaults of a step (patterns.md) at `tick`/`key`; returns its index.
+/// Add a note with the defaults of a step (patterns.md) at `tick`/`key`; returns its index. The note takes the type
+/// chosen in the Note properties menu (after the last note's controls, whose colour would clear the portamento switch).
 pub fn add_note(s: &mut State, channel: u16, tick: u32, key: i32) -> usize {
     let ppq = u32::from(s.project.ppq.max(4));
     let length = if s.piano.last_len > 0 { s.piano.last_len } else { ppq / 2 };
+    let key = s.piano.scale_highlight.snapped(key.clamp(0, TOP_KEY));
     let mut note = Note { length, key: key.clamp(0, TOP_KEY) as u16, ..Note::step(channel, tick) };
     if let Some(t) = s.piano.last_controls {
         copy_controls(&t, &mut note);
     }
+    s.piano.note_type.apply(&mut note);
     let p = pattern_mut(s);
     p.notes.push(note);
     p.notes.len() - 1
+}
+
+/// Step edit and the like write plain notes whatever the Note properties menu chose: slides are drawn, not played in.
+pub fn make_plain(n: &mut Note) {
+    n.set_slide(false);
+    n.set_porta(false);
 }
 
 /// "Monophonic painting in piano roll" (spec: ui/settings-choices.md "Miscellaneous: seven more checks"): with the
@@ -917,6 +1063,56 @@ mod tests {
         assert_eq!((to.velocity, to.pan, to.release, to.mod_x, to.mod_y, to.fine_pitch, to.repeat), (33, 10, 90, 200, 7, 130, 3));
         assert_eq!(to.group, 0x05, "the colour comes along, the mute does not");
         assert_eq!((to.position, to.length, to.key, to.channel), (96, 48, 72, 1));
+    }
+
+    /// The Note properties menu's choice: added notes take its type, and the last note's controls (its colour above
+    /// all) do not clear the type again.
+    #[test]
+    fn new_notes_take_the_chosen_type() {
+        use super::*;
+        let mut a = app();
+        let s = &mut a.state;
+        assert_eq!(s.piano.note_type, NoteType::Plain, "plain by default");
+        let plain = add_note(s, 4, 0, 60);
+        assert_eq!(NoteType::of(&notes(s)[plain]), NoteType::Plain);
+        s.piano.note_type = NoteType::Slide;
+        let slide = add_note(s, 4, 24, 62);
+        assert_eq!(notes(s)[slide].flags & Note::SLIDE, Note::SLIDE, "a slide note");
+        assert!(!notes(s)[slide].porta(), "and no portamento switch");
+        s.piano.note_type = NoteType::Porta;
+        let last = notes(s)[slide];
+        s.piano.last_controls = Some(last);
+        let porta = add_note(s, 4, 48, 64);
+        assert!(notes(s)[porta].porta(), "the note's own portamento switch, over the last note's colour");
+        assert!(!notes(s)[porta].slide());
+        // Back to plain: neither mark again.
+        s.piano.note_type = NoteType::Plain;
+        let back = add_note(s, 4, 72, 65);
+        assert_eq!(NoteType::of(&notes(s)[back]), NoteType::Plain);
+    }
+
+    /// A Draw-tool click draws the Note properties menu's type: a slide note where slide is picked.
+    #[test]
+    fn drawn_notes_take_the_chosen_type() {
+        use super::*;
+        use crate::app::Win;
+        use os_ui::Canvas;
+        let Ok(mut c) = Canvas::new(1920, 1080, 1.0) else { return };
+        let mut a = app();
+        a.state.z = vec![Win::PianoRoll];
+        a.paint(&mut c, None);
+        let g = a.piano_geom().expect("piano roll shown");
+        let (lo, hi) = g.visible_keys();
+        let key = (lo + hi) / 2;
+        let (x, y) = (g.x_of(2.0 * g.step as f32) + 5.0, g.y_of(key) + g.row / 2.0);
+        a.state.piano.note_type = NoteType::Slide;
+        a.mouse_move(x, y);
+        a.mouse_down();
+        a.mouse_up();
+        let ns = notes(&a.state).to_vec();
+        assert_eq!(ns.len(), 1);
+        assert_eq!(ns[0].flags & Note::SLIDE, Note::SLIDE, "the drawn note is a slide note");
+        assert_eq!(i32::from(ns[0].key), key);
     }
 
     #[test]

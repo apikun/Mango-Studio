@@ -1,5 +1,4 @@
 // Copyright (C) 2026 ItsAlphaNeon
-// Copyright (C) 2026 thacer13
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
@@ -48,30 +47,37 @@ pub fn native_first() -> bool {
     os_native::prefer_native()
 }
 
-/// Whether a channel or slot holding file id `id` is one a built-in Lemon recreation plays (3x Osc, Sytrus, Fruity Slicer, the
-/// parametric EQ, Edison, Love Philter, Maximus, FPC, and the effects of `plugins::FL_RECREATIONS`).
+/// Whether a channel or slot holding file id `id` is one a built-in Lemon recreation plays (3x Osc, Sytrus, the
+/// parametric EQ, Edison, Love Philter, Maximus, and the effects of `plugins::FL_RECREATIONS`).
 pub fn has_recreation(id: &str) -> bool {
-    [crate::osc3::FILE_NAME, crate::citrus::FILE_NAME, crate::slicer::FILE_NAME, crate::plugins::EQ_FILE_NAME, crate::plugins::EDISON_FILE_NAME, crate::plugins::LOVE_PHILTER_FILE_NAME, crate::plugins::MAXIMUS_FILE_NAME, crate::drums::FILE_NAME]
+    [crate::osc3::FILE_NAME, crate::citrus::FILE_NAME, crate::plugins::EQ_FILE_NAME, crate::plugins::EDISON_FILE_NAME, crate::plugins::LOVE_PHILTER_FILE_NAME, crate::plugins::MAXIMUS_FILE_NAME]
         .iter()
         .any(|n| id.eq_ignore_ascii_case(n))
         || crate::plugins::recreation_of(id).is_some()
 }
 
+/// Built-in plugins with no FL plugin of their own to be saved as: the effects (`plugins::LINKED_EFFECTS`) and Mango
+/// Wavetable and Mango Font. They are saved wrapped, as their built-in CLAP instrument.
+fn wrapped_builtin(d: &Descriptor) -> bool {
+    crate::plugins::LINKED_EFFECTS.contains(&d.name.as_str())
+        || matches!(d.name.as_str(), crate::plugins::MANGO_WAVETABLE | crate::plugins::MANGO_SOUNDFONT)
+}
+
 /// Whether a hosted plugin is saved inside the wrapper: CLAP, VST3 and VST2 plugins from plugin files, and the built-in
-/// effects that have no file plugin of their own to be saved as (`plugins::LINKED_EFFECTS`).
+/// plugins that have no file plugin of their own to be saved as (`wrapped_builtin`).
 pub fn is_wrapped(d: &Descriptor) -> bool {
     #[cfg(test)]
     if WRAP_BUILTINS.with(|w| w.get()) {
         return matches!(d.format, Format::Clap | Format::Vst3 | Format::Vst2);
     }
-    matches!(d.format, Format::Clap | Format::Vst3 | Format::Vst2) && (!is_builtin(d) || crate::plugins::LINKED_EFFECTS.contains(&d.name.as_str()))
+    matches!(d.format, Format::Clap | Format::Vst3 | Format::Vst2) && (!is_builtin(d) || wrapped_builtin(d))
 }
 
 /// The project-file identity of a hosted plugin with its saved state. A built-in effect with no file plugin of its own
 /// (`plugins::LINKED_EFFECTS`) names its CLAP bundle in the per-user CLAP folder, where `bundle-plugins --install` puts
 /// it: the wrapper takes the format from the file's extension, and another host can find the bundle there.
 pub fn plugin_ref(d: &Descriptor, state: Vec<u8>) -> PluginRef {
-    let path = if is_builtin(d) && crate::plugins::LINKED_EFFECTS.contains(&d.name.as_str()) {
+    let path = if is_builtin(d) && wrapped_builtin(d) {
         let file = format!("{}.clap", d.name);
         os_clap::standard_dirs().into_iter().next().map_or_else(|| file.clone().into(), |dir| dir.join(&file))
     } else {
@@ -203,13 +209,12 @@ pub fn wrapped_slot(s: &SlotPlugin) -> Option<PluginRef> {
 }
 
 /// The input ports a mixer slot's wrapped plugin is saved with: its main and first auxiliary input bus, each the number
-/// of a track's input counted from 1, 0 for none (spec: audio/sidechain.md "Hosted plugins' input buses"). A Vocodex
-/// slot (played by Lemon Vocoder) feeds its sidechain bus the input its carrier selector names, or else its modulator
-/// selector's (spec: plugins/lemon-vocoder.md §1).
+/// of a track's input counted from 1, 0 for none (spec: audio/sidechain.md "Hosted plugins' input buses").
 pub fn slot_ports(project: &Project, track: usize, slot: usize) -> (usize, usize) {
     let Some(s) = project.mixer.iter().find(|m| usize::from(m.index) == track).and_then(|m| m.slots.get(slot)?.as_ref()) else {
         return (0, 0);
     };
+    // A Vocodex slot (played by Mango Vocoder) feeds its sidechain bus the input its carrier selector names.
     if s.name.eq_ignore_ascii_case(crate::plugins::VOCODEX_FILE_NAME) {
         let routing = os_engine::effects::vocoder::Settings::from_state(&s.state).unwrap_or_default().routing();
         return (0, routing.key_input());
@@ -260,11 +265,13 @@ fn same_file(a: &std::path::Path, b: &str) -> bool {
 /// [`switched_format`]).
 pub fn find(list: &[Available], r: &PluginRef) -> Option<usize> {
     let format = Format::parse(&r.format);
+    // A built-in plugin saved under an earlier name ("Lemon Limiter") is found by its name now.
+    let name = crate::plugins::current_name(&r.name);
     let tests: [&dyn Fn(&Descriptor) -> bool; 4] = [
         &|d| !r.id.is_empty() && Some(d.format) == format && d.id.eq_ignore_ascii_case(&r.id),
         &|d| !r.path.is_empty() && same_file(&d.path, &r.path) && d.name == r.name,
-        &|d| Some(d.format) == format && d.name == r.name,
-        &|d| d.name == r.name,
+        &|d| Some(d.format) == format && d.name == name,
+        &|d| d.name == name,
     ];
     tests.iter().find_map(|t| list.iter().position(|a| t(&a.desc)))
 }
@@ -613,9 +620,61 @@ mod tests {
     use crate::app::App;
     use crate::plugins::{fx_key, LEMON_EQ, LEMON_SAMPLER};
 
+    #[test]
+    fn mango_font_is_listed_as_a_builtin_sampler_and_wrapped_for_projects() {
+        let plugin = crate::plugins::builtin()
+            .into_iter()
+            .find(|plugin| plugin.desc.name == crate::plugins::MANGO_SOUNDFONT)
+            .expect("built-in Mango Font");
+
+        assert!(is_builtin(&plugin.desc));
+        assert!(is_wrapped(&plugin.desc));
+        assert_eq!(crate::plugin_db::category(&plugin.desc), "Sampler");
+        assert!(plugin_ref(&plugin.desc, Vec::new()).path.ends_with("Mango Font.clap"));
+    }
+
     /// A hosted plugin channel and a mixer slot plugin are saved as wrapped plugins holding their identity and state,
     /// and the reopened project hosts them again with that state; a second save keeps working on the saved file
     /// (spec: flp/events/plugins.md). The built-in Lemon plugins stand in for third-party plugins.
+    /// Mango Wavetable (from battlemountain2's fork) plays a note, and a project keeps its sound: saved, reopened, the
+    /// channel hosts it again with the same state and the same sound.
+    #[test]
+    fn mango_wavetable_plays_and_keeps_its_sound_through_a_save() {
+        let path = std::env::temp_dir().join(format!("mango-wavetable-{}.flp", std::process::id()));
+        let mut app = App::new(None);
+        app.state.project = crate::app::test_project();
+        (app.state.file, app.state.path) = (None, None);
+        app.plugins.available = crate::plugins::builtin();
+        let row = crate::app::add_plugin_channel(&mut app.state.project, crate::plugins::MANGO_WAVETABLE);
+        app.plugins.create(row, app.plugins.index_of(crate::plugins::MANGO_WAVETABLE).expect("built in")).unwrap();
+        app.state.hosted_rows.push(row);
+        assert!(app.plugins.set_param_named(row, "Cutoff", 1500.0));
+        assert!(app.plugins.set_param_named(row, "Unison Voices", 5.0));
+        app.plugins.hosted[&row].plugin.lock().unwrap().idle();
+        let sound = |plugins: &crate::plugins::Plugins| {
+            let instrument = plugins.hosted[&row].plugin.clone() as os_engine::SharedInstrument;
+            let mut instrument = instrument.lock().unwrap();
+            instrument.reset();
+            instrument.note_on(0, 60, 0.8);
+            let (mut left, mut right) = (vec![0.0; 4800], vec![0.0; 4800]);
+            instrument.process(48000, &mut left, &mut right);
+            assert!(left.iter().any(|v| v.abs() > 0.005), "it sounds");
+            left
+        };
+        let before = sound(&app.plugins);
+        let state = app.plugins.state(row).unwrap();
+        app.save_to(path.clone());
+        assert!(app.state.message.as_deref().is_some_and(|m| m.starts_with("Saved") && !m.contains("not stored")), "{:?}", app.state.message);
+        let mut reopened = App::new(None);
+        reopened.plugins.available = crate::plugins::builtin();
+        reopened.open(path.clone());
+        reopened.sync_wrapped();
+        let _ = std::fs::remove_file(&path);
+        assert!(reopened.state.hosted_rows.contains(&row), "{:?}", reopened.state.message);
+        assert_eq!(reopened.plugins.state(row), Some(state));
+        assert_eq!(before, sound(&reopened.plugins));
+    }
+
     #[test]
     fn hosted_plugins_save_and_reopen() {
         WRAP_BUILTINS.with(|w| w.set(true));
@@ -633,7 +692,7 @@ mod tests {
         let mut fl = lemon_parametric_eq_2::params::default_state();
         lemon_parametric_eq_2::params::set_field(&mut fl, 1, -600);
         let eq = lemon_parametric_eq_2::params::plugin_state_from_fl(&fl);
-        a.state.project.mixer[3].slots[2] = Some(SlotPlugin { id: os_model::Id::NONE, name: LEMON_EQ.into(), state: Vec::new() });
+        a.state.project.mixer[3].slots[2] = Some(SlotPlugin { name: LEMON_EQ.into(), state: Vec::new() });
         a.plugins.create_effect(3, 2, a.plugins.effect_index(LEMON_EQ).unwrap(), Some(&eq)).unwrap();
         a.save_to(path.clone());
         assert!(a.state.message.as_deref().is_some_and(|m| m.starts_with("Saved") && !m.contains("not stored")), "{:?}", a.state.message);
@@ -916,7 +975,7 @@ mod tests {
         assert!(a.state.message.as_deref().is_some_and(|m| m.starts_with("Saved")), "{:?}", a.state.message);
         let saved = os_flp::project::load(&os_flp::FlpFile::parse(&std::fs::read(&path).unwrap()).unwrap()).unwrap();
         let _ = std::fs::remove_file(&path);
-        assert_eq!(saved.mixer[2].slots[1], Some(SlotPlugin { id: os_model::Id::NONE, name: "Fruity Balance".into(), state: vec![9, 8, 7, 6] }));
+        assert_eq!(saved.mixer[2].slots[1], Some(SlotPlugin { name: "Fruity Balance".into(), state: vec![9, 8, 7, 6] }));
         assert_eq!(a.state.project.mixer[2].slots[1], saved.mixer[2].slots[1]);
     }
 
@@ -937,10 +996,10 @@ mod tests {
         a.state.project.channels[harmor].plugin_state = Some(vec![1, 2, 3]);
         let sytrus = crate::app::add_plugin_channel(&mut a.state.project, "Sytrus");
         a.state.project.channels[sytrus].plugin_state = Some(vec![4]);
-        a.state.project.mixer[2].slots[1] = Some(SlotPlugin { id: os_model::Id::NONE, name: "Fruity Balance".into(), state: vec![5, 6] });
-        a.state.project.mixer[3].slots[0] = Some(SlotPlugin { id: os_model::Id::NONE, name: "Gross Beat".into(), state: vec![7, 8, 9] });
+        a.state.project.mixer[2].slots[1] = Some(SlotPlugin { name: "Fruity Balance".into(), state: vec![5, 6] });
+        a.state.project.mixer[3].slots[0] = Some(SlotPlugin { name: "Gross Beat".into(), state: vec![7, 8, 9] });
         // A file id in another case than the folder name (files store `Fruity slicer`).
-        a.state.project.mixer[4].slots[0] = Some(SlotPlugin { id: os_model::Id::NONE, name: "fruity balance".into(), state: vec![] });
+        a.state.project.mixer[4].slots[0] = Some(SlotPlugin { name: "fruity balance".into(), state: vec![] });
         let (balance, gross, lower) = (fx_key(2, 1), fx_key(3, 0), fx_key(4, 0));
 
         a.host_native();
@@ -967,10 +1026,10 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert_eq!((saved.channels[harmor].plugin.as_deref(), saved.channels[harmor].plugin_state.as_deref()), (Some("Harmor"), Some(&[11, 12][..])));
         assert_eq!((saved.channels[sytrus].plugin.as_deref(), saved.channels[sytrus].plugin_state.as_deref()), (Some("Sytrus"), Some(&[4][..])));
-        assert_eq!(saved.mixer[2].slots[1], Some(SlotPlugin { id: os_model::Id::NONE, name: "Fruity Balance".into(), state: vec![13] }));
-        assert_eq!(saved.mixer[3].slots[0], Some(SlotPlugin { id: os_model::Id::NONE, name: "Gross Beat".into(), state: vec![7, 8, 9] }));
+        assert_eq!(saved.mixer[2].slots[1], Some(SlotPlugin { name: "Fruity Balance".into(), state: vec![13] }));
+        assert_eq!(saved.mixer[3].slots[0], Some(SlotPlugin { name: "Gross Beat".into(), state: vec![7, 8, 9] }));
         // The file's own spelling of the id is kept; the instance's state (its defaults) is written.
-        assert_eq!(saved.mixer[4].slots[0], Some(SlotPlugin { id: os_model::Id::NONE, name: "fruity balance".into(), state: vec![0, 0] }));
+        assert_eq!(saved.mixer[4].slots[0], Some(SlotPlugin { name: "fruity balance".into(), state: vec![0, 0] }));
     }
 
     /// The hidden "real native plugins" toggle: a 3x Osc channel and a parametric EQ slot played by the Open
@@ -992,7 +1051,7 @@ mod tests {
         a.state.project.channels[row].plugin_state = Some(osc_file.clone());
         let mut eq_file = lemon_parametric_eq_2::params::default_state();
         lemon_parametric_eq_2::params::set_field(&mut eq_file, 1, -600);
-        a.state.project.mixer[2].slots[1] = Some(SlotPlugin { id: os_model::Id::NONE, name: EQ_FILE_NAME.into(), state: eq_file.clone() });
+        a.state.project.mixer[2].slots[1] = Some(SlotPlugin { name: EQ_FILE_NAME.into(), state: eq_file.clone() });
         let slot = fx_key(2, 1);
         let builtin_at = |a: &App, key| a.plugins.descriptor(key).is_some_and(|d| is_builtin(&d));
         let native_at = |a: &App, key| a.plugins.descriptor(key).is_some_and(|d| d.format == Format::Native);
@@ -1068,9 +1127,9 @@ mod tests {
             path: format!("C:/Plugins/{file}"),
             state: eq.clone(),
         };
-        let slot = |r: &PluginRef| Some(SlotPlugin { id: os_model::Id::NONE, name: WRAPPER.into(), state: wrapper::encode(None, r) });
-        a.state.project.mixer[2].slots[0] = slot(&saved_as("vst2", LEMON_EQ, "Lemon EQ.dll"));
-        a.state.project.mixer[3].slots[0] = slot(&saved_as("clap", LEMON_EQ, "Lemon EQ.clap"));
+        let slot = |r: &PluginRef| Some(SlotPlugin { name: WRAPPER.into(), state: wrapper::encode(None, r) });
+        a.state.project.mixer[2].slots[0] = slot(&saved_as("vst2", LEMON_EQ, "Mango EQ.dll"));
+        a.state.project.mixer[3].slots[0] = slot(&saved_as("clap", LEMON_EQ, "Mango EQ.clap"));
         let row = crate::app::add_plugin_channel(&mut a.state.project, WRAPPER);
         a.state.project.channels[row].plugin_state = Some(wrapper::encode(None, &saved_as("vst2", "Nowhere", "Nowhere.dll")));
         a.sync_wrapped();

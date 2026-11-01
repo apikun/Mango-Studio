@@ -1,4 +1,5 @@
 // Copyright (C) 2026 ItsAlphaNeon
+// Copyright (C) 2026 Artig3nce
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
@@ -54,7 +55,7 @@ pub fn cols(s: &State) -> Cols {
     let mix_off = if s.rack.show_mixer { 0.0 } else { rk::MIX_W };
     let name_w = (rk::NAME_W * s.rack.name_pct as f32 / 100.0).round();
     let dx = name_w - rk::FL_NAME_W - mix_off;
-    Cols { name_x: 108.0 - mix_off, name_w, dx, slot_x: 200.0 + dx, step_x: 217.0 + dx, loop_w: if rk::loop_boxes(s) { rk::LOOP_W } else { 0.0 } }
+    Cols { name_x: 108.0 - mix_off, name_w, dx, slot_x: 200.0 + dx, step_x: 217.0 + dx, loop_w: if s.rack.loop_mode { rk::LOOP_W } else { 0.0 } }
 }
 
 /// Width of a window showing one step (§5: W = 259 + 16·(n − 1) in the default layout).
@@ -64,7 +65,7 @@ pub fn base_w(s: &State) -> f32 {
 }
 
 /// Smallest width (Lemon Studio's; FL's is 4 steps, §5): four beats of the project's signature, and never under the
-/// default 16 steps, below which the title bar's right group runs into the speaker and the "Instrument rack" title.
+/// default 16 steps, below which the title bar's right group runs into the speaker and the "Channel rack" title.
 pub fn min_w(s: &State) -> f32 {
     let steps = (4 * rk::beat_steps(s)).max(16);
     base_w(s) + STEP_W * (steps - 1) as f32
@@ -264,26 +265,27 @@ pub fn paint(ui: &mut Ui, s: &State, f: &FrameInfo) {
     let c = cols(s);
     let lemon = super::lemon(ui);
     let hv = crate::high_visibility::on();
-    // Frame (§1). Lemon (spec: ui/lemon-design.md §5): one rounded outlined panel.
+    // Frame (§1). Lemon (spec: ui/lemon-design.md §5): one rounded outlined panel. The rack is one flat colour
+    // throughout (title bar, rows panel and insert strip share the theme's dark `rack_inset`); the `display_edge`
+    // rim is the only line drawn over it.
     if lemon {
-        lk::outlined(ui.c, win, lk::r_panel(t), t.window_border, t.window_body);
+        lk::outlined(ui.c, win, lk::r_panel(t), t.rack_inset, t.rack_inset);
     } else {
-        ui.c.fill_rect(win, t.window_border);
-        let body = win.inset(1.0);
-        ui.c.fill_rect(body, t.window_body);
-        ui.c.fill_rect(Rect::new(body.x, body.y, body.w, 1.0), t.window_title_hi);
+        ui.c.fill_rect(win, t.rack_inset);
+        ui.c.fill_rect(win.inset(1.0), t.rack_inset);
     }
-    ui.hit(win, Action::RackArea, "Instrument rack");
+    super::display_edge(ui.c, t, win, if lemon { lk::r_panel(t) } else { 0.0 });
+    ui.hit(win, Action::RackArea, "Channel rack");
     let bar = Rect::span(x + 1.0, x + w - 1.0, y + 1.0, y + 29.0);
-    ui.hit(bar, Action::WinDrag(Win::ChannelRack), "Instrument rack - drag to move");
+    ui.hit(bar, Action::WinDrag(Win::ChannelRack), "Channel rack - drag to move");
     title_bar(ui, s, win, c, f);
 
     // Rows panel (§1, §3).
     let inner = panel(win);
     if lemon {
-        lk::outlined(ui.c, inner.outset(1.0), lk::r_btn(t), t.rack_inset_border, t.rack_inset);
+        lk::outlined(ui.c, inner.outset(1.0), lk::r_btn(t), t.rack_inset, t.rack_inset);
     } else {
-        ui.c.fill_rect(inner.outset(1.0), t.rack_inset_border);
+        ui.c.fill_rect(inner.outset(1.0), t.rack_inset);
         ui.c.fill_rect(inner, t.rack_inset);
     }
     let view_h = inner.h;
@@ -319,7 +321,7 @@ pub fn paint(ui: &mut Ui, s: &State, f: &FrameInfo) {
         if p.zipped {
             // A zipped row: a 7 px bar in the name column (§17).
             let zr = Rect::new(nb.x, ry + 1.0, nb.w, 7.0);
-            ui.hit(Rect::new(zr.x, zr.y - 2.0, zr.w, rk::ZIP_H), Action::ChannelSelect(i), "Collapsed channel - Alt+U expands all");
+            ui.hit(Rect::new(zr.x, zr.y - 2.0, zr.w, rk::ZIP_H), Action::ChannelSelect(i), "Zipped channel - Alt+U unzips all");
             let col = ch.color.map(rgb).unwrap_or(t.name_button);
             ui.c.fill_rrect(zr, 2.0, if focused { col.shade(0.2) } else { col });
             if selected {
@@ -419,18 +421,8 @@ pub fn paint(ui: &mut Ui, s: &State, f: &FrameInfo) {
         let step_area = Rect::span(step_x0 - 1.0, steps_right, rows_clip.y, rows_clip.bottom());
         if s.rack_roll_view || !plain_steps(notes, ch.index) {
             let block = Rect::span(step_x0 - 2.0, steps_right + 2.0, ry - 2.0, ry + 28.0);
-            // Show complete piano roll preview unticked: the preview follows the steps, showing the visible bars' notes.
-            let grid = (!s.rack.opts.contains(rk::COMPLETE_PREVIEW)).then(|| (step_x0 - sx, STEP_W / per_step.max(1) as f32));
-            mini_roll(ui, block, notes, ch.index, per_step, &bars, focused, grid);
+            mini_roll(ui, block, notes, ch.index, per_step, &bars, focused);
             ui.hit(block.intersect(&rows_clip), Action::RackRoll(i), "Piano roll preview - click to open the Piano roll");
-            // Show a mute button on the piano roll preview (§17, on by default): the LED's switch at the preview's left
-            // end (Lemon Studio's design: a speaker, struck through while the channel is muted).
-            if s.rack.opts.contains(rk::PREVIEW_MUTE) {
-                let mb = Rect::new(block.x + 4.0, block.cy() - 7.0, 14.0, 14.0);
-                let hov = ui.hit(mb.intersect(&rows_clip), Action::ChannelEnable(i), "Mute / solo  (shift/ctrl+)0..9");
-                let col = if hov { ui.t.tx(0xffffff) } else if ch.enabled { t.glyph } else { t.glyph.shade(-0.3) };
-                ui.c.icon(if ch.enabled { &os_ui::tabler::VOLUME } else { &os_ui::tabler::VOLUME_OFF }, mb, col);
-            }
         } else {
             let row_len = rk::row_len(s, i);
             ui.c.push_clip(step_area);
@@ -442,8 +434,8 @@ pub fn paint(ui: &mut Ui, s: &State, f: &FrameInfo) {
             }
             ui.c.pop_clip();
         }
-        // Loop length box (§15), also with loop mode off while Always show advanced controls is ticked.
-        if rk::loop_boxes(s) {
+        // Loop length box (§15).
+        if s.rack.loop_mode {
             let lb = Rect::new(steps_right + 10.0, ry + 2.0, 24.0, 22.0);
             let has = notes.iter().any(|n| n.channel == ch.index);
             let lhov = ui.hit(lb, Action::RackLoopBox(i), "Set loop point");
@@ -454,10 +446,8 @@ pub fn paint(ui: &mut Ui, s: &State, f: &FrameInfo) {
                 ui.c.fill_rect_gradient(lb.inset(1.0), t.rack_row_box.shade(-0.04), t.rack_row_box, 2.5);
             }
             let tc = if !has { t.text_dim.shade(-0.3) } else if lhov { t.glyph } else { t.text_dim.shade(0.08) };
-            // Advanced looping's words ("Beat") take a smaller font to fit.
-            let txt = rk::loop_box_text(s, i);
-            let font = if rk::advanced(s) { Font::new(10) } else { Font::new(13) };
-            ui.c.text_center(font, lb, tc, &txt);
+            let txt = rk::row_len(s, i).to_string();
+            ui.c.text_center(Font::new(13), lb, tc, &txt);
         }
     }
     ui.c.pop_clip();
@@ -555,10 +545,7 @@ fn title_bar(ui: &mut Ui, s: &State, win: Rect, c: Cols, f: &FrameInfo) {
     let sc = if pat_playing { ui.t.h(0xffa53a) } else if shov { ui.t.tx(0xffffff) } else { t.glyph };
     icons::draw(ui.c, Icon::Speaker, Rect::new(x + 215.0 + c.dx, y + 7.0, 15.0, 15.0), sc);
     ui.c.push_clip(Rect::span(x + 236.0 + c.dx, r - 165.0, y, y + 29.0));
-    // The window's name; "Instruments" where the full one does not fit before the swing knob.
-    let (tf, tx) = (Font::new(17), x + 236.0 + c.dx);
-    let name = if tx + ui.c.text_width(tf, "Instrument rack") <= r - 165.0 { "Instrument rack" } else { "Instruments" };
-    ui.c.text(tf, tx, y + 5.0, t.text, name);
+    ui.c.text(Font::new(17), x + 236.0 + c.dx, y + 5.0, t.text, "Channel rack");
     ui.c.pop_clip();
     // Swing knob with its halo (§7); a non-zero swing draws an orange arc.
     let kx = r - 149.5;
@@ -612,7 +599,7 @@ fn title_bar(ui: &mut Ui, s: &State, win: Rect, c: Cols, f: &FrameInfo) {
     // Graph editor (§7, §14): blue outline when on.
     let gx = r - 58.0;
     let gr = Rect::new(gx - 9.5, y + 5.0, 19.0, 19.0);
-    let ghov = ui.hit(gr, Action::RackGraph, "Step parameters (Ctrl+K)");
+    let ghov = ui.hit(gr, Action::RackGraph, "Graph editor (Ctrl+K)");
     let blue = ui.t.a(0x40a8e0);
     let gc = if lemon {
         if s.rack.graph_open {
@@ -740,8 +727,8 @@ fn graph_editor(ui: &mut Ui, s: &State, sx: f32, first: u32, shown: u32) {
     }
     ui.c.pop_clip();
     let hint = match ch {
-        Some(_) => format!("Step parameters: {} - click / drag to set (left or right button)", tab.label()),
-        None => "Step parameters".into(),
+        Some(_) => format!("Graph editor: {} - click / drag to set (left or right button)", tab.label()),
+        None => "Graph editor".into(),
     };
     ui.hit(bars, Action::RackGraphArea, hint);
     // Tab row.
@@ -759,11 +746,8 @@ fn graph_editor(ui: &mut Ui, s: &State, sx: f32, first: u32, shown: u32) {
 }
 
 /// Mini piano roll of one channel (§6) in `block` (one 30 px row): the pattern's whole length spans the block,
-/// whatever the step scroll (§23). `bars`: the pattern's bars in ticks, the last ending at its length. `grid`: with
-/// Show complete piano roll preview unticked (§17), the x of tick 0 and the pixels per tick of the steps, so the
-/// preview shows the notes of the bars in view, under their steps.
-#[allow(clippy::too_many_arguments)]
-fn mini_roll(ui: &mut Ui, block: Rect, notes: &[os_model::Note], ch: u16, per_step: u32, bars: &[(u32, u32)], focused: bool, grid: Option<(f32, f32)>) {
+/// whatever the step scroll (§23). `bars`: the pattern's bars in ticks, the last ending at its length.
+fn mini_roll(ui: &mut Ui, block: Rect, notes: &[os_model::Note], ch: u16, per_step: u32, bars: &[(u32, u32)], focused: bool) {
     // (separator, fill) for odd and even bars.
     let shades = if focused {
         [(ui.t.s(0x040709), ui.t.s(0x111416)), (ui.t.s(0x000002), ui.t.s(0x0a0d0f))]
@@ -771,12 +755,8 @@ fn mini_roll(ui: &mut Ui, block: Rect, notes: &[os_model::Note], ch: u16, per_st
         [(ui.t.s(0x0a0d0f), ui.t.s(0x171a1c)), (ui.t.s(0x030608), ui.t.s(0x101315))]
     };
     let end = bars.last().map_or(1, |b| b.1).max(1);
-    let (x0, scale) = grid.unwrap_or((block.x, block.w / end as f32));
-    let x_of = |tick: u32| x0 + tick as f32 * scale;
-    ui.c.push_clip(block);
-    if grid.is_some() {
-        ui.c.fill_rect(block, shades[0].1);
-    }
+    let scale = block.w / end as f32;
+    let x_of = |tick: u32| block.x + tick as f32 * scale;
     for (k, &(a, b)) in bars.iter().enumerate() {
         let span = Rect::span(x_of(a).round(), x_of(b).round(), block.y, block.bottom());
         let (sep, fill) = shades[k % 2];
@@ -787,6 +767,7 @@ fn mini_roll(ui: &mut Ui, block: Rect, notes: &[os_model::Note], ch: u16, per_st
     let lo = mine.iter().map(|n| n.key).min().unwrap_or(60);
     let hi = mine.iter().map(|n| n.key).max().unwrap_or(60);
     let range = f32::from((hi - lo).max(1));
+    ui.c.push_clip(block);
     for n in mine {
         let nx = x_of(n.position);
         let len = if n.length == 0 { per_step } else { n.length };
@@ -805,10 +786,9 @@ fn row_knob(ui: &mut Ui, cx: f32, cy: f32, value: f32) {
     os_ui::kit::knob(ui.c, ui.t, cx, cy, 7.5, value, false, os_ui::kit::KnobLook::Row, os_ui::kit::State::hover(hov));
 }
 
-/// Enable LED (§3: ring r 5, green ball).
+/// Enable LED: the small round LED of the mixer and the playlist (after FL's).
 fn rack_led(ui: &mut Ui, cx: f32, cy: f32, on: bool) {
-    let hov = ui.hovering(Rect::new(cx - 6.0, cy - 6.0, 12.0, 12.0));
-    os_ui::kit::led(ui.c, ui.t, cx, cy, 5.0, os_ui::kit::State::hover(hov).with_on(on));
+    super::led_small(ui, cx, cy, on);
 }
 
 /// The small green padlock of a locked channel (§10); dimmed when the channel is muted.
@@ -844,7 +824,7 @@ fn add_button(ui: &mut Ui, x: f32, w: f32, bottom: f32) {
 }
 
 pub fn insert_name(track: u16) -> String {
-    if track == 0 { "Master".into() } else { format!("Bus {track}") }
+    if track == 0 { "Master".into() } else { format!("Insert {track}") }
 }
 
 /// The Advanced fill dialog (§22), drawn above everything while open.

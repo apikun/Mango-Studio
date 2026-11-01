@@ -1,4 +1,5 @@
 // Copyright (C) 2026 ItsAlphaNeon
+// Copyright (C) 2026 Artig3nce
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
@@ -296,6 +297,14 @@ pub fn led(c: &mut Canvas, t: &Palette, cx: f32, cy: f32, radius: f32, st: State
     }
 }
 
+/// A round LED: the Lemon skin's in a circle (`lemon::led_round`); the Citrus skin's LED is round already.
+pub fn led_round(c: &mut Canvas, t: &Palette, cx: f32, cy: f32, radius: f32, st: State) {
+    if lemon::on(t) {
+        return lemon::led_round(c, t, cx, cy, radius, st);
+    }
+    led(c, t, cx, cy, radius, st)
+}
+
 /// Square check mark / tick (menus).
 pub fn tick(c: &mut Canvas, r: Rect, col: Color) {
     c.polyline(&[(r.x + 3.0, r.cy()), (r.x + r.w * 0.42, r.bottom() - 3.0), (r.right() - 3.0, r.y + 3.0)], 1.8, col);
@@ -510,19 +519,22 @@ pub fn row_highlight(c: &mut Canvas, t: &Palette, r: Rect) {
     c.fill_rect(r, t.menu_pop_hi);
 }
 
-/// Tooltip bubble: dark, rounded, name line and optional caption line. `at` = top-left; kept inside `bounds`.
+/// Tooltip bubble: dark, rounded, name line and optional caption line. `at` = top-left; kept inside `bounds`, its
+/// width at most the bounds' (a line too long for it is cut, as the hint bar cuts its own).
 pub fn tooltip(c: &mut Canvas, t: &Palette, at: (f32, f32), name: &str, caption: &str, bounds: Rect) -> Rect {
     let (nf, cf) = (Font::new(17), Font::new(14));
-    let w = (c.text_width(nf, name).max(if caption.is_empty() { 0.0 } else { c.text_width(cf, caption) }) + 18.0).round();
+    let w = (c.text_width(nf, name).max(if caption.is_empty() { 0.0 } else { c.text_width(cf, caption) }) + 18.0)
+        .round()
+        .clamp(20.0, (bounds.w - 8.0).max(20.0));
     let h = if caption.is_empty() { 26.0 } else { 46.0 };
     let x = at.0.min(bounds.right() - w - 4.0).max(bounds.x + 4.0);
     let y = if at.1 + h > bounds.bottom() { at.1 - h - 24.0 } else { at.1 };
     let b = Rect::new(x, y, w, h);
     c.fill_rrect(b.outset(1.0), 7.0, Color::rgb(0).with_alpha(90));
     c.fill_rrect(b, 6.0, t.s(0x090909).with_alpha(245));
-    c.text(nf, b.x + 9.0, b.y + 3.0, t.tx(0xffffff), name);
+    c.text_clip(nf, b.x + 9.0, b.y + 3.0, w - 18.0, t.tx(0xffffff), name);
     if !caption.is_empty() {
-        c.text(cf, b.x + 9.0, b.y + 24.0, t.text_dim, caption);
+        c.text_clip(cf, b.x + 9.0, b.y + 24.0, w - 18.0, t.text_dim, caption);
     }
     b
 }

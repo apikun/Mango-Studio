@@ -135,8 +135,8 @@ impl LemonLimiter {
 }
 
 impl Plugin for LemonLimiter {
-    const NAME: &'static str = "Lemon Limiter";
-    const VENDOR: &'static str = "Lemon Studio";
+    const NAME: &'static str = "Mango Limiter";
+    const VENDOR: &'static str = "Mango Studio";
     const URL: &'static str = "";
     const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
@@ -215,7 +215,7 @@ impl Plugin for LemonLimiter {
 
 impl ClapPlugin for LemonLimiter {
     const CLAP_ID: &'static str = "org.openstudio.lemon-limiter";
-    const CLAP_DESCRIPTION: Option<&'static str> = Some("Lemon Studio's limiter, compressor and noise gate");
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("Mango Studio's limiter, compressor and noise gate");
     const CLAP_MANUAL_URL: Option<&'static str> = None;
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Limiter, ClapFeature::Compressor, ClapFeature::Gate, ClapFeature::Stereo];

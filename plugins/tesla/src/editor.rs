@@ -1395,7 +1395,7 @@ impl Logic {
                 t(&mut m, "Declick in all regions", "", ToolCmd::DeclickInRegions, regions);
                 t(&mut m, "Declick out all regions", "", ToolCmd::DeclickOutRegions, regions);
                 m.head("Sequencing", Cmd::None);
-                m.add(item("Send to arranger as audio clip").shortcut("Shift+C").enabled(has), Cmd::Send(false));
+                m.add(item("Send to playlist as audio clip").shortcut("Shift+C").enabled(has), Cmd::Send(false));
                 m.add(item("Send to selected channel").enabled(has), Cmd::Send(true));
             }
             MenuId::Regions => {
@@ -1727,7 +1727,7 @@ impl Logic {
         self.hint = match (ok, channel) {
             (true, false) => "Sent to the playlist".into(),
             (true, true) => "Sent to the selected channel".into(),
-            (false, _) => "Sending needs Lemon Studio".into(),
+            (false, _) => "Sending needs Mango Studio".into(),
         };
     }
 
@@ -1848,7 +1848,7 @@ impl Logic {
 }
 
 fn about() -> String {
-    format!("Tesla {}: Lemon Studio's audio editor and recorder", env!("CARGO_PKG_VERSION"))
+    format!("Tesla {}: Mango Studio's audio editor and recorder", env!("CARGO_PKG_VERSION"))
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -2255,7 +2255,7 @@ mod win32 {
                 *o = c;
             }
         }
-        let filter: Vec<u16> = if save.is_some() { "WAV files\0*.wav\0\0" } else { "Audio files\0*.wav;*.flac;*.ogg;*.wv;*.aif;*.aiff;*.mp3\0All files\0*.*\0\0" }
+        let filter: Vec<u16> = if save.is_some() { "WAV files\0*.wav\0\0" } else { "Audio files\0*.wav;*.flac;*.ogg;*.wv;*.aif;*.aiff;*.mp3;*.m4a;*.aac\0All files\0*.*\0\0" }
             .encode_utf16()
             .collect();
         let title = pw::wide(if save.is_some() { "Save sample as" } else { "Load sample" });
@@ -2606,7 +2606,7 @@ mod gui {
             let d = rfd::FileDialog::new();
             match save {
                 Some(name) => d.set_title("Save sample as").set_file_name(name).add_filter("WAV files", &["wav"]).save_file(),
-                None => d.set_title("Load sample").add_filter("Audio files", &["wav", "flac", "ogg", "wv", "aif", "aiff", "mp3"]).pick_file(),
+                None => d.set_title("Load sample").add_filter("Audio files", &["wav", "flac", "ogg", "wv", "aif", "aiff", "mp3", "m4a", "aac"]).pick_file(),
             }
         });
         path.flatten().map(|p| p.to_string_lossy().into_owned())

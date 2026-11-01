@@ -167,7 +167,7 @@ mod tests {
         app.plugins.available = crate::plugins::builtin();
         let r = sampler_row(&app);
         app.plugin_tick();
-        assert!(app.state.hosted_rows.contains(&r), "Lemon Sampler hosts the row");
+        assert!(app.state.hosted_rows.contains(&r), "Mango Sampler hosts the row");
         let keep_disk = |app: &App| {
             let st = app.plugins.state(r).expect("state");
             let json = if st.first() == Some(&b'{') { &st[..] } else { &st[8..] };

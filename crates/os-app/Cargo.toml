@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "lemonstudio"
+name = "mangostudio"
 path = "src/main.rs"
 
 [dependencies]
@@ -25,14 +25,39 @@ os-vst2.workspace = true
 os-paths.workspace = true
 os-smf.workspace = true
 lemon-sampler = { path = "../../plugins/lemon-sampler", features = ["linked"] }
-soundfont-player = { path = "../../plugins/soundfont-player", features = ["linked"] }
 lemon-parametric-eq-2 = { path = "../../plugins/lemon-parametric-eq-2", features = ["linked"] }
 lemon-3x-osc = { path = "../../plugins/lemon-3x-osc", features = ["linked"] }
 citrus = { path = "../../plugins/citrus", features = ["linked"] }
-lemon-drum-sampler = { path = "../../plugins/lemon-drum-sampler", features = ["linked"] }
+lemon-kick = { path = "../../plugins/lemon-kick", features = ["linked"] }
+lemon-pluck = { path = "../../plugins/lemon-pluck", features = ["linked"] }
+lemon-mini = { path = "../../plugins/lemon-mini", features = ["linked"] }
+lemon-dx = { path = "../../plugins/lemon-dx", features = ["linked"] }
+lemon-autogun = { path = "../../plugins/lemon-autogun", features = ["linked"] }
+lemon-drums = { path = "../../plugins/lemon-drums", features = ["linked"] }
+lemon-keys = { path = "../../plugins/lemon-keys", features = ["linked"] }
+lemon-wavetable = { path = "../../plugins/lemon-wavetable", features = ["linked"] }
+mango-soundfont = { path = "../../plugins/mango-soundfont", features = ["linked"] }
+# The control surface (a recreation of FL's Control Surface), compiled in like the other small generators.
+mango-surface = { path = "../../plugins/mango-surface", features = ["linked"] }
+# The image synthesizer (a recreation of FL's BeepMap), compiled in like Mango Font.
+mango-beepmap = { path = "../../plugins/mango-beepmap", features = ["linked"] }
+# The preset synthesizer (a recreation of FL's FLEX), compiled in like the other small generators.
+mango-flex = { path = "../../plugins/mango-flex", features = ["linked"] }
+# The electric guitar (a recreation of FL's Slayer), compiled in like the other small generators.
+mango-slayer = { path = "../../plugins/mango-slayer", features = ["linked"] }
+# The hardware panel (a recreation of FL's Dashboard), compiled in like the other small generators.
+mango-dashboard = { path = "../../plugins/mango-dashboard", features = ["linked"] }
+# The sampler (a recreation of FL's DirectWave), compiled in like the drum sampler.
+mango-directwave = { path = "../../plugins/mango-directwave", features = ["linked"] }
+lemon-boom = { path = "../../plugins/lemon-boom", features = ["linked"] }
+lemon-bass = { path = "../../plugins/lemon-bass", features = ["linked"] }
+lemon-acid = { path = "../../plugins/lemon-acid", features = ["linked"] }
+# The chanting monk (a port of MonkSynth), compiled in like the other small generators.
+mango-monk = { path = "../../plugins/mango-monk", features = ["linked"] }
 lemon-limiter = { path = "../../plugins/lemon-limiter", features = ["linked"] }
 lemon-reverb = { path = "../../plugins/lemon-reverb", features = ["linked"] }
 lemon-delay = { path = "../../plugins/lemon-delay", features = ["linked"] }
+mango-beat = { path = "../../plugins/mango-beat", features = ["linked"] }
 lemon-soft-clipper = { path = "../../plugins/lemon-soft-clipper", features = ["linked"] }
 lemon-fast-distortion = { path = "../../plugins/lemon-fast-distortion", features = ["linked"] }
 lemon-balance = { path = "../../plugins/lemon-balance", features = ["linked"] }
@@ -47,15 +72,13 @@ pulp-filter = { path = "../../plugins/pulp-filter", features = ["linked"] }
 press = { path = "../../plugins/press", features = ["linked"] }
 lemon-flanger = { path = "../../plugins/lemon-flanger", features = ["linked"] }
 lemon-phaser = { path = "../../plugins/lemon-phaser", features = ["linked"] }
-lemon-peak-controller = { path = "../../plugins/lemon-peak-controller", features = ["linked"] }
-lemon-formula-controller = { path = "../../plugins/lemon-formula-controller", features = ["linked"] }
-lemon-slicer = { path = "../../plugins/lemon-slicer", features = ["linked"] }
+lemon-crusher = { path = "../../plugins/lemon-crusher", features = ["linked"] }
 lemon-vocoder = { path = "../../plugins/lemon-vocoder", features = ["linked"] }
+lemon-twelve = { path = "../../plugins/lemon-twelve", features = ["linked"] }
 winit = "0.30"
 softbuffer = "0.4"
 cpal = "0.18"
 crossbeam-queue = "0.3"
-midir = "0.11"
 tiny-skia = "0.11"
 # JPEG workspace pictures of theme files (`wallpaper`; PNG goes through tiny-skia). Pure Rust, no threads.
 jpeg-decoder = { version = "0.3", default-features = false }
@@ -69,12 +92,27 @@ mp3lame-encoder = "0.2"
 vorbis_rs = "0.5"
 zip = { version = "9.1.2", default-features = false, features = ["deflate"] }
 
+[target.'cfg(not(target_os = "android"))'.dependencies]
+# MIDI in and out (WinMM, ALSA, CoreMIDI). Android does not build it: midir links ALSA there; the
+# MIDI code uses the no-device stand-in `midi_shim` instead (the pages list nothing, as on a
+# machine without MIDI). AMIDI can replace it when Android MIDI arrives.
+midir = "0.11"
+
+[target.'cfg(target_os = "android")'.dependencies]
+# The event loop runs on the NativeActivity (`mobile::run`).
+winit = { version = "0.30", features = ["android-native-activity"] }
+# The activity's handle, for the private data folder (`mobile::run`).
+android-activity = { version = "0.6", features = ["native-activity"] }
+# The JVM handle (`vm_as_ptr`) raises the feeder thread's priority (`raise_priority`), the way
+# android.os.Process.setThreadPriority does for native audio apps. The version android-activity uses.
+jni = "0.21"
+
 [target.'cfg(windows)'.dependencies]
 # ASIO output (`device::asio`), built from the ASIO SDK's host files in `asiosdk` (`.cargo/config.toml`).
 asio-sys = "0.4"
 # WASAPI exclusive and low-latency shared output (`device::wasapi`): the version cpal is built with.
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Media_Audio", "Win32_Media_KernelStreaming", "Win32_Media_Multimedia", "Win32_Devices_Properties", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Threading", "Win32_System_Variant", "Win32_UI_Shell_PropertiesSystem"] }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_LibraryLoader", "Win32_Storage_Xps", "Win32_System_Threading", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Diagnostics_ToolHelp", "Win32_UI_Shell", "Win32_System_Com", "Win32_System_Diagnostics_Debug", "Win32_System_Console", "Win32_UI_HiDpi", "Win32_System_Registry", "Win32_System_SystemInformation"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_LibraryLoader", "Win32_Storage_Xps", "Win32_System_Threading", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Diagnostics_ToolHelp", "Win32_UI_Shell", "Win32_System_Com", "Win32_System_Diagnostics_Debug", "Win32_UI_HiDpi", "Win32_System_Registry"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Shared mode plays through the sound server (PulseAudio, or PipeWire's pipewire-pulse) as other programs do; the
@@ -84,6 +122,10 @@ cpal = { version = "0.18", features = ["pulseaudio"] }
 # protocol crate cpal's PulseAudio host is built on.
 pulseaudio = "0.3"
 x11rb = { version = "0.13", features = ["randr", "resource_manager", "shape"] }
+# Real-time priority for the audio threads (`rt`): rtkit on the system bus, through the zbus the file dialogs
+# already bring.
+libc = "0.2"
+zbus = "5"
 
 # The main window's chrome (`macos`), plugin windows (`plugin_window::cocoa`) and the startup splash (`splash`): the
 # objc2 crates softbuffer already uses.

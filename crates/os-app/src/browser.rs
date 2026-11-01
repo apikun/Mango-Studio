@@ -1,12 +1,14 @@
 // Copyright (C) 2026 ItsAlphaNeon
+// Copyright (C) 2026 ravenmarkdev-alt
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
-//! Browser behaviour: tabs, tree open/close, selection, scrolling and drag and drop into the project, favorites, the
-//! folder index, and the menu bar's ways in.
+//! Browser behaviour: tabs, tree open/close, selection, scrolling and drag and drop into the project, and the menu
+//! bar's ways in.
 // spec: ui/browser.md, ui/browser-commands.md
 
 use os_model::{ChannelKind, ClipSource};
+use os_ui::Rect;
 
 use crate::app::{Action, App, Drag, Win};
 use crate::playlist::{Cmd, Mark, PItem, Popup};
@@ -28,6 +30,7 @@ impl App {
         let s = &mut self.state;
         match *a {
             Action::BrowserTab(i) => {
+                self.browser_click = None;
                 s.browser_tab = i;
                 s.browser_scroll = 0.0;
             }
@@ -44,15 +47,46 @@ impl App {
                 s.playlist.popup = if open { None } else { Some(Popup { x, y, items: options_menu(s), sub: None, scroll: [0; 2] }) };
             }
             Action::BrowserSearch => s.browser_search_focus = true,
-            // The cross that stands in for the magnifier while there is text (spec §5).
-            Action::BrowserClear => {
-                s.browser_search.clear();
-                s.browser_search_focus = false;
+            Action::BrowserPlugFilter(i) => {
+                s.browser_plug_filter = i;
+                s.browser_plug_cat = None;
                 s.browser_scroll = 0.0;
+            }
+            Action::BrowserPlugCat(c) => {
+                s.browser_plug_cat = c;
+                s.browser_scroll = 0.0;
+            }
+            Action::BrowserPlugStar(i) => {
+                let Some(f) = crate::views::plugin_panel::list(s).into_iter().nth(i) else { return true };
+                crate::plugin_menu::run(self, crate::plugin_menu::PlugCmd::Star { effect: f.effect, index: f.entry().index });
             }
             Action::BrowserRow(i) => {
                 let Some(row) = view::rows(s).into_iter().nth(i) else { return true };
+                let project = project_path(&row.item);
+                let now = std::time::Instant::now();
+                let double = project.as_ref().is_some_and(|path| {
+                    self.browser_click.as_ref().is_some_and(|(last, time)| last == path && now.duration_since(*time).as_millis() < 400)
+                });
+                self.browser_click = if double { None } else { project.map(|path| (path, now)) };
                 select(s, &row.key);
+                // The plugin browser: a second press on the same plugin adds it, as its row menu's Add does.
+                if s.browser_tab == view::PLUGIN_TAB {
+                    let now = std::time::Instant::now();
+                    let double = s.browser_plug_click.as_ref().is_some_and(|(k, t)| *k == row.key && now.duration_since(*t).as_millis() < 400);
+                    s.browser_plug_click = if double { None } else { Some((row.key.clone(), now)) };
+                    if double {
+                        let m = match row.item {
+                            Item::Generator(i) => crate::plugin_menu::add_generator(self, i, None),
+                            Item::Effect(i) => crate::plugin_menu::add_effect(self, i, None),
+                            _ => None,
+                        };
+                        if m.is_some() {
+                            self.state.message = m;
+                        }
+                        self.invalidate();
+                        return true;
+                    }
+                }
                 if row.open.is_some() && !s.browser_open.remove(&row.key) {
                     s.browser_open.insert(row.key.clone());
                 }
@@ -66,6 +100,10 @@ impl App {
                     }
                     Item::History(e) => s.message = crate::history::go_to(s, e),
                     _ => {}
+                }
+                if double {
+                    self.drop_file(project_path(&row.item).unwrap());
+                    return true;
                 }
                 if let Item::Sample(path) = &row.item {
                     self.preview_sample(path);
@@ -101,7 +139,6 @@ impl App {
                 if !s.browser_opts.remove(k) {
                     s.browser_opts.insert(k);
                 }
-                save_opts(&s.browser_opts);
                 s.browser_scroll = s.browser_scroll.min(view::max_scroll(s));
             }
             BCmd::History(dir) => {
@@ -123,80 +160,8 @@ impl App {
             // A background scan (spec: ui/plugin-manager.md §4); plugins in use stay where they are.
             BCmd::Rescan => self.start_scan(crate::plugin_db::Mode::Changed),
             BCmd::Row(c) => return self.browser_row_cmd(c),
-            BCmd::Jump(j) => self.browser_jump(j),
-            // File ▸ Browser extra search folders (spec §4).
-            BCmd::Configure => self.open_settings(crate::views::settings::FILE),
-            BCmd::Star(key) => {
-                let Some(d) = self.plugins.descriptor(key) else { return Some("No plugin here".into()) };
-                return Some(self.star_plugin(&d.uid(), &d.name));
-            }
         }
         None
-    }
-
-    /// The plugin manager's star on plugin `uid` (spec §10: a favorite plugin; ui/plugin-manager.md §2), toggled.
-    fn star_plugin(&mut self, uid: &str, name: &str) -> String {
-        self.state.plugdb.prefs.toggle_favorite(uid);
-        self.prefs_changed();
-        if self.state.plugdb.prefs.is_favorite(uid) {
-            format!("{name} is a favorite: listed first in the plugin menus and in the browser's Favorites")
-        } else {
-            format!("{name} is no longer a favorite")
-        }
-    }
-
-    /// The row's Favorite (spec §10): a plugin's star, or the file in or out of the favorites.
-    fn toggle_favorite(&mut self, row: &view::Row) -> Option<String> {
-        let s = &mut self.state;
-        let path = match &row.item {
-            Item::Generator(i) | Item::Effect(i) => {
-                let list = if matches!(row.item, Item::Generator(_)) { &s.plugdb.lists.gens } else { &s.plugdb.lists.fx };
-                let e = list.iter().find(|e| e.index == *i)?;
-                let (uid, name) = (e.uid.clone(), e.label.clone());
-                return Some(self.star_plugin(&uid, &name));
-            }
-            Item::Sample(p) | Item::Preset(p) | Item::File(p) => p.clone(),
-            _ => return None,
-        };
-        let on = if let Some(i) = s.browser_favs.iter().position(|f| f.path == path) {
-            s.browser_favs.remove(i);
-            false
-        } else {
-            s.browser_favs.push(Fav { path, label: row.label.clone() });
-            true
-        };
-        save_favs(&s.browser_favs);
-        s.browser_scroll = s.browser_scroll.min(view::max_scroll(s));
-        Some(if on { format!("{} added to the favorites", row.label) } else { format!("{} removed from the favorites", row.label) })
-    }
-
-    /// Keeps the folder index up to date (spec §11): read again when the indexed folders change, at once with "Re-index
-    /// changed folders on startup", else when a search needs it; a search repaints when its index arrives.
-    pub(crate) fn browser_index_tick(&mut self) {
-        let s = &mut self.state;
-        if s.browser_index.poll() {
-            if s.browser_index.cut() {
-                s.message = Some(format!("Browser index: the folders hold more than {} entries; a search finds the first ones", crate::browser_index::MAX_ENTRIES));
-            }
-            if !s.browser_search.is_empty() {
-                s.browser_scroll = s.browser_scroll.min(view::max_scroll(s));
-                self.invalidate();
-            }
-            return;
-        }
-        if !view::opt(s, view::OPT_INDEX) || s.browser_index.building() {
-            return;
-        }
-        let roots = index_roots(s);
-        if roots.is_empty() || s.browser_index.covers(&roots) {
-            return;
-        }
-        if view::opt(s, view::OPT_REINDEX) || !s.browser_search.is_empty() {
-            s.browser_index.start(roots);
-            if cfg!(test) {
-                self.invalidate();
-            }
-        }
     }
 
     /// A way into the browser from the menu bar or its keys (spec: ui/browser-commands.md): the browser is shown first
@@ -232,26 +197,6 @@ impl App {
             // §3: exactly as a click in the search field.
             Jump::Find => {
                 self.browser_act(&Action::BrowserSearch);
-            }
-            // ADD ▸ Browse all installed plugins, the mixer's Plugin database entry, ADD ▸ Browse presets (§2, §5): that
-            // node of its tab opened and selected.
-            Jump::Installed | Jump::DbEffects | Jump::Presets => {
-                let (tab, key) = match j {
-                    Jump::Installed => (view::PLUGIN_TAB, format!("{}:Plugin library/{}", view::PLUGIN_TAB, view::INSTALLED)),
-                    Jump::DbEffects => (view::PLUGIN_TAB, format!("{}:Plugin library/Effects", view::PLUGIN_TAB)),
-                    _ => (0, view::presets_key()),
-                };
-                if s.browser_tab != tab {
-                    s.browser_tab = tab;
-                    s.browser_scroll = 0.0;
-                }
-                s.browser_search.clear();
-                if tab == view::PLUGIN_TAB {
-                    s.browser_open.insert(format!("{tab}:Plugin library"));
-                }
-                s.browser_open.insert(key.clone());
-                select(s, &key);
-                reveal(s);
             }
             // §4-5: Patterns opened, the current pattern's row selected when listed (else the section's).
             Jump::Patterns => {
@@ -289,6 +234,16 @@ impl App {
         let shift = self.shift;
         let focus = self.state.browser_search_focus;
         let over = self.over_browser() || focus;
+        if over && !focus && !ctrl && !alt && matches!(key, Key::Named(NamedKey::Enter)) {
+            let project = view::rows(&self.state).into_iter()
+                .find(|row| self.state.browser_sel.as_ref() == Some(&row.key))
+                .and_then(|row| project_path(&row.item));
+            if let Some(path) = project {
+                self.browser_click = None;
+                self.drop_file(path);
+                return true;
+            }
+        }
         let cmd = match key {
             Key::Named(NamedKey::F2) if !self.state.browser_search.is_empty() => Some(BCmd::Find(-1)),
             Key::Named(NamedKey::F3) if !self.state.browser_search.is_empty() => Some(BCmd::Find(1)),
@@ -303,6 +258,31 @@ impl App {
                 self.state.message = Some(m);
             }
             return true;
+        }
+        // The arrow keys, as FL's browser has them (spec §7): Down / Up walk the visible rows, wrapping, and the
+        // sample a move lands on is heard at once; Right replays the focused sample from its start, opens a closed
+        // folder or steps into its first row; Left closes an opened folder or selects the parent. From the search
+        // field Up / Down still walk the rows (the results); Left / Right stay with the field. The older Shift and
+        // Ctrl arrows above keep their meanings, and an open menu or popup takes its keys first.
+        if over && !ctrl && !alt && !shift && self.state.playlist.popup.is_none() && self.state.menu_open.is_none() {
+            let arrow = matches!(key, Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown | NamedKey::ArrowLeft | NamedKey::ArrowRight));
+            if arrow && (!focus || matches!(key, Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown))) {
+                let s = &mut self.state;
+                let sample = match key {
+                    Key::Named(NamedKey::ArrowDown) => move_sel(s, 1),
+                    Key::Named(NamedKey::ArrowUp) => move_sel(s, -1),
+                    Key::Named(NamedKey::ArrowRight) => into_sel(s),
+                    _ => {
+                        out_sel(s);
+                        None
+                    }
+                };
+                if let Some(p) = sample {
+                    self.preview_sample(&p);
+                }
+                self.invalidate();
+                return true;
+            }
         }
         let s = &mut self.state;
         if focus {
@@ -350,6 +330,7 @@ impl App {
         if double {
             s.browser_w = crate::views::BROWSER_W;
             save_width(s.browser_w);
+            crate::win_clamp::keep_all(s);
             return self.invalidate();
         }
         self.drag = Some(Drag::BrowserSplit { dx: self.mouse.0 - crate::views::browser_w(&self.state) });
@@ -362,6 +343,7 @@ impl App {
         let w = right.min(s.screen.0 / 2.0).max(crate::views::BROWSER_W).round();
         if w != s.browser_w {
             s.browser_w = w;
+            crate::win_clamp::keep_all(s);
             self.invalidate();
         }
     }
@@ -394,16 +376,33 @@ impl App {
         if !started && (x - m0.0).hypot(y - m0.1) < DRAG_START {
             return;
         }
+        // The playlist's drop-zone ghost (issue #4): damaged where it was (the drag's last place) and where it goes,
+        // so the moving preview leaves no trail.
+        let grid = self.pl_grid();
+        let old_zone = self.state.browser_drag.as_ref().and_then(|d| zone_rect(&self.state, grid, d.x, d.y));
+        // The label too: redrawn where it was, or each old copy stays on screen as a trail.
+        let old_ghost = self.state.browser_drag.as_ref().map(|d| view::ghost_rect(d.x, d.y));
         if !started {
-            self.drag = Some(Drag::Browser { item, label: label.clone(), m0, started: true });
+            self.drag = Some(Drag::Browser { item: item.clone(), label: label.clone(), m0, started: true });
         }
-        if let Some((_, ox, oy)) = self.state.browser_drag {
-            self.damage_rect(view::ghost_rect(ox, oy));
+        self.state.browser_drag = Some(view::BrowserDrag { item: item.clone(), label, x, y, alt: self.alt });
+        for r in old_zone.into_iter().chain(zone_rect(&self.state, grid, x, y)) {
+            self.damage_rect(r.outset(1.0));
         }
-        self.state.browser_drag = Some((label, x, y));
-        self.damage_rect(view::ghost_rect(x, y));
+        for r in old_ghost.into_iter().chain([view::ghost_rect(x, y)]) {
+            self.damage_rect(r.outset(1.0));
+        }
     }
+}
 
+/// The drop-zone ghost's rect over the playlist's grid, when the drag at (x, y) would land one (issue #4): None off
+/// the grid, while the playlist is not shown, or where no clip would be placed.
+fn zone_rect(s: &crate::app::State, grid: Option<Rect>, x: f32, y: f32) -> Option<Rect> {
+    let grid = grid.filter(|g| g.contains(x, y) && s.shown(Win::Playlist))?;
+    crate::views::playlist::drop_ghost(s, grid, x, y).map(|dg| dg.rect)
+}
+
+impl App {
     /// Release: drop the dragged item on whatever is under the mouse (spec §3).
     pub(crate) fn browser_drop(&mut self, item: Item, started: bool) {
         self.state.browser_drag = None;
@@ -425,8 +424,17 @@ impl App {
         }
         let (x, y) = self.mouse;
         let win = self.top_hit(x, y).and_then(|h| h.win);
+        // A drop on a track header (issue #2): the track it names, and where on it the instrument lands — the song
+        // position, snapped like a drop on the rows (a header has no place of its own).
+        let head = self.top_hit(x, y).and_then(|h| match h.action { Action::PlHeader(t) => Some(t), _ => None });
         let grid = self.pl_grid().filter(|g| g.contains(x, y) && win == Some(Win::Playlist));
         let alt = self.alt;
+        let on_header = head.filter(|_| grid.is_none()).map(|track| {
+            (track, self.pl_grid().map_or(0, |grid| {
+                let g = pl::PGeom::new(&self.state, grid);
+                pl::snap_place(&self.state, &g, self.state.playlist.pos as f32, alt)
+            }))
+        });
         let s = &mut self.state;
         // Snapped playlist position under the mouse.
         let spot = grid.map(|grid| {
@@ -456,7 +464,7 @@ impl App {
                         let i = pl::place(s, track, tick);
                         s.playlist.sel = vec![i];
                     } else {
-                        s.message = Some("Only audio and automation channels go on the arranger; drop a pattern instead".into());
+                        s.message = Some("Only audio and automation channels go on the playlist; drop a pattern instead".into());
                     }
                 } else if matches!(win, Some(Win::PianoRoll | Win::ChannelRack)) {
                     s.selected_channel = c;
@@ -474,9 +482,15 @@ impl App {
                     self.sample_to_rack(path, y);
                 }
             }
-            // As if picked in the F8 menu (spec: ui/plugin-menu.md §5): a new channel at the bottom of the rack.
+            // On the playlist — a track row or its header (issue #2) — the instrument lands there: the channel as
+            // the F8 menu adds it, plus a clip of a new pattern named after it on that track, at the drop (on a
+            // header, at the song position). On the rack: a new channel at the bottom (spec: ui/plugin-menu.md §5).
             Item::Generator(i) => {
-                if spot.is_some() || win == Some(Win::ChannelRack) {
+                if let Some((track, tick)) = spot.or(on_header) {
+                    if let Some(m) = crate::plugin_menu::add_generator_on_track(self, i, track, tick) {
+                        self.state.message = Some(m);
+                    }
+                } else if win == Some(Win::ChannelRack) {
                     if let Some(m) = crate::plugin_menu::add_generator(self, i, None) {
                         self.state.message = Some(m);
                     }
@@ -595,7 +609,6 @@ impl App {
                 self.search_folder_cell(i, crate::search_folders::Col::Name);
             }
             RowCmd::Remove => return Some(remove_root(s, &row.path?)),
-            RowCmd::Favorite => return self.toggle_favorite(&row),
         }
         None
     }
@@ -614,7 +627,7 @@ fn remove_root(s: &mut crate::app::State, path: &std::path::Path) -> String {
 }
 
 /// Opens folder `dir` in the system's file manager (tests: nothing).
-fn open_folder(dir: &std::path::Path) {
+pub(crate) fn open_folder(dir: &std::path::Path) {
     if cfg!(test) {
         return;
     }
@@ -634,49 +647,9 @@ fn width_file() -> Option<std::path::PathBuf> {
     os_paths::user_file("browser.txt")
 }
 
-/// The value of `key=` in `browser.txt`'s text.
-fn value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
-    text.lines().filter_map(|l| l.split_once('=')).find(|(k, _)| k.trim() == key).map(|(_, v)| v.trim())
-}
-
 fn parse_width(text: &str) -> f32 {
-    let w = value(text, "width").and_then(|v| v.parse::<f32>().ok());
+    let w = text.lines().filter_map(|l| l.split_once('=')).find(|(k, _)| k.trim() == "width").and_then(|(_, v)| v.trim().parse::<f32>().ok());
     w.filter(|w| w.is_finite()).map_or(crate::views::BROWSER_W, |w| w.max(crate::views::BROWSER_W))
-}
-
-/// `options=` the options-menu toggles that are on, by name, comma-separated (spec §4); missing = the defaults.
-fn parse_opts(text: &str) -> std::collections::HashSet<&'static str> {
-    match value(text, "options") {
-        Some(v) => v.split(',').filter_map(|o| view::ALL_OPTS.iter().copied().find(|k| *k == o.trim())).collect(),
-        None => view::DEFAULT_OPTS.iter().copied().collect(),
-    }
-}
-
-/// The options kept from the last run (tests: the defaults).
-pub(crate) fn load_opts() -> std::collections::HashSet<&'static str> {
-    parse_opts(&width_file().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default())
-}
-
-/// `browser.txt` with `key=` set to `v`, its other lines kept.
-fn with_value(text: &str, key: &str, v: &str) -> String {
-    let mut out: String = text.lines().filter(|l| l.split_once('=').is_none_or(|(k, _)| k.trim() != key)).map(|l| format!("{l}\n")).collect();
-    out.push_str(&format!("{key}={v}\n"));
-    out
-}
-
-fn save_value(key: &str, v: &str) {
-    let Some(p) = width_file() else { return };
-    if let Some(d) = p.parent() {
-        let _ = std::fs::create_dir_all(d);
-    }
-    let old = std::fs::read_to_string(&p).unwrap_or_default();
-    let _ = std::fs::write(p, with_value(&old, key, v));
-}
-
-/// Keeps the options for the next run.
-fn save_opts(opts: &std::collections::HashSet<&'static str>) {
-    let on: Vec<&str> = view::ALL_OPTS.iter().copied().filter(|k| opts.contains(k)).collect();
-    save_value("options", &on.join(","));
 }
 
 /// The browser's width kept from the last run (spec §9; tests: the default).
@@ -686,57 +659,11 @@ pub(crate) fn load_width() -> f32 {
 
 /// Keeps the browser's width for the next run.
 pub(crate) fn save_width(w: f32) {
-    save_value("width", &w.to_string());
-}
-
-/// A favorite file (spec §10): its path (or a factory preset's) and the label its row had when it was starred.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Fav {
-    pub path: String,
-    pub label: String,
-}
-
-/// `browser_favorites.txt` in the user folder: one favorite per line, its path, a tab, its label.
-fn favs_file() -> Option<std::path::PathBuf> {
-    if cfg!(test) {
-        return None;
-    }
-    os_paths::user_file("browser_favorites.txt")
-}
-
-fn parse_favs(text: &str) -> Vec<Fav> {
-    text.lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| {
-            let (path, label) = l.split_once('\t').unwrap_or((l, ""));
-            let label = if label.is_empty() { path.rsplit(['/', '\\']).next().unwrap_or(path) } else { label };
-            Fav { path: path.to_string(), label: label.to_string() }
-        })
-        .collect()
-}
-
-fn favs_text(favs: &[Fav]) -> String {
-    favs.iter().map(|f| format!("{}\t{}\n", f.path, f.label)).collect()
-}
-
-/// The favorite files kept from the last run.
-pub(crate) fn load_favs() -> Vec<Fav> {
-    favs_file().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| parse_favs(&t)).unwrap_or_default()
-}
-
-fn save_favs(favs: &[Fav]) {
-    let Some(p) = favs_file() else { return };
+    let Some(p) = width_file() else { return };
     if let Some(d) = p.parent() {
         let _ = std::fs::create_dir_all(d);
     }
-    let _ = std::fs::write(p, favs_text(favs));
-}
-
-/// The folders the index reads (spec §11): the dropped folders and the project's data folder.
-pub(crate) fn index_roots(s: &crate::app::State) -> Vec<std::path::PathBuf> {
-    let mut v = s.browser_folders.clone();
-    v.extend(crate::data_folder::folder(s));
-    v
+    let _ = std::fs::write(p, format!("width={w}\n"));
 }
 
 /// `browser_folders.txt` in the user folder (`os_paths::user_dir`): one dropped folder per line (spec §6), its Browser
@@ -749,8 +676,61 @@ fn folders_file() -> Option<std::path::PathBuf> {
 }
 
 fn read_folders() -> Vec<(std::path::PathBuf, String)> {
-    let Some(text) = folders_file().and_then(|p| std::fs::read_to_string(p).ok()) else { return Vec::new() };
-    crate::search_folders::parse_file(&text)
+    let Some(file) = folders_file() else { return Vec::new() };
+    match std::fs::read_to_string(file) {
+        Ok(text) => crate::search_folders::parse_file(&text),
+        // No list kept yet: FL Studio's Projects folder when there is one. A kept list, even an empty one, wins.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            initial_folders(None, documents_dir().as_deref()).into_iter().map(|f| (f, String::new())).collect()
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
+fn project_path(item: &Item) -> Option<std::path::PathBuf> {
+    let Item::File(path) = item else { return None };
+    let path = std::path::PathBuf::from(path);
+    path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("flp")).then_some(path)
+}
+
+fn initial_folders(saved: Option<&str>, documents: Option<&std::path::Path>) -> Vec<std::path::PathBuf> {
+    if let Some(text) = saved {
+        return text.lines().map(str::trim).filter(|l| !l.is_empty()).map(std::path::PathBuf::from).collect();
+    }
+    documents.map(|dir| dir.join("Image-Line").join("FL Studio").join("Projects"))
+        .filter(|path| path.is_dir()).into_iter().collect()
+}
+
+/// Ask Windows for Documents so OneDrive and other redirected folders work.
+#[cfg(windows)]
+fn documents_dir() -> Option<std::path::PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_APARTMENTTHREADED};
+    use windows_sys::Win32::UI::Shell::{SHGetKnownFolderPath, FOLDERID_Documents};
+    unsafe {
+        let initialized = CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32);
+        let mut path = std::ptr::null_mut();
+        let result = SHGetKnownFolderPath(&FOLDERID_Documents, 0, std::ptr::null_mut(), &mut path);
+        let folder = if result >= 0 && !path.is_null() {
+            let mut length = 0;
+            while *path.add(length) != 0 {
+                length += 1;
+            }
+            Some(std::path::PathBuf::from(std::ffi::OsString::from_wide(std::slice::from_raw_parts(path, length))))
+        } else {
+            None
+        };
+        CoTaskMemFree(path.cast());
+        if initialized >= 0 {
+            CoUninitialize();
+        }
+        folder
+    }
+}
+
+#[cfg(not(windows))]
+fn documents_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join("Documents"))
 }
 
 pub(crate) fn load_folders() -> Vec<std::path::PathBuf> {
@@ -782,22 +762,96 @@ pub enum Jump {
     Find,
     /// PATTERNS > Open in project browser (Shift+Ctrl+P): the Patterns section, the other sections left as they are (§4).
     Patterns,
-    /// ADD > Browse all installed plugins: the Plugin database's Installed section (§2).
-    Installed,
-    /// The mixer's Plugin database entry (Shift+F8 in its effect list): the Plugin database's Effects.
-    DbEffects,
-    /// ADD > Browse presets: the All tab's Plugin presets.
-    Presets,
 }
 
 impl Jump {
-    /// Whether the jump has somewhere to go: a section the tree does not list (History, Remote control) has not, and
-    /// its entry stays greyed out.
-    pub fn available(self) -> bool {
-        match self {
-            Jump::Section(name) => view::section_key(name).is_some(),
-            _ => true,
+    /// The jump behind entry `label` of menu `menu`. `None` for other entries, and for a section the tree does not list
+    /// (History, Remote control: their entries stay greyed out).
+    pub fn from_label(menu: usize, label: &str) -> Option<Jump> {
+        use crate::views::menus::{ADD_MENU, TOOLS_MENU, VIEW};
+        let j = match (menu, label) {
+            (VIEW, "Undo history") => Jump::Section("History"),
+            (VIEW, "Patterns") => Jump::Section("Patterns"),
+            (VIEW, "Generators in use") => Jump::Section("Generators"),
+            (VIEW, "Effects in use") => Jump::Section("Effects"),
+            (VIEW, "Remote control") => Jump::Section("Remote control"),
+            (VIEW, "Plugin database") | (ADD_MENU, "Browse plugin database") => Jump::PluginDb,
+            (TOOLS_MENU, "Browser find...") => Jump::Find,
+            _ => return None,
+        };
+        match j {
+            Jump::Section(name) => view::section_key(name).map(|_| j),
+            _ => Some(j),
         }
+    }
+}
+
+#[cfg(test)]
+mod project_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn browser_initial_projects_follow_documents_and_saved_choices() {
+        let documents = std::env::temp_dir().join(format!("os_browser_documents_{}", std::process::id()));
+        let projects = documents.join("Image-Line/FL Studio/Projects");
+        std::fs::create_dir_all(&projects).unwrap();
+        assert_eq!(initial_folders(None, Some(&documents)), vec![projects.clone()]);
+        assert!(initial_folders(Some(""), Some(&documents)).is_empty(), "removing all folders remains saved");
+        let custom = documents.join("My projects");
+        assert_eq!(initial_folders(Some(&format!("{}\r\n", custom.display())), Some(&documents)), vec![custom]);
+        assert!(initial_folders(None, Some(&documents.join("Missing"))).is_empty());
+        std::fs::remove_dir(&projects).unwrap();
+        std::fs::remove_dir(projects.parent().unwrap()).unwrap();
+        std::fs::remove_dir(documents.join("Image-Line")).unwrap();
+        std::fs::remove_dir(documents).unwrap();
+    }
+
+    #[test]
+    fn browser_projects_open_on_double_click_and_enter() {
+        use winit::keyboard::{Key, NamedKey};
+        let dir = std::env::temp_dir().join(format!("os_browser_projects_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let first = dir.join("First.FLP");
+        let second = dir.join("Second.flp");
+        let mut source = App::new(None);
+        source.state.project.info.title = Some("Browser project".into());
+        source.save_to(first.clone());
+        source.save_to(second.clone());
+        let mut app = App::new(None);
+        app.add_browser_folder(dir.clone());
+        let index = |app: &App, path: &PathBuf| view::rows(&app.state).iter()
+            .position(|row| row.path.as_ref() == Some(path)).unwrap();
+        app.browser_act(&Action::BrowserRow(index(&app, &first)));
+        assert!(app.state.path.is_none(), "one click only selects");
+        app.browser_act(&Action::BrowserRow(index(&app, &first)));
+        assert_eq!(app.state.path.as_ref(), Some(&first));
+        assert_eq!(app.state.project.info.title.as_deref(), Some("Browser project"));
+        app.browser_act(&Action::BrowserRow(index(&app, &second)));
+        assert_eq!(app.state.path.as_ref(), Some(&first), "a different row is not a double click");
+        app.mouse = (10.0, view::LIST_Y + 10.0);
+        assert!(app.browser_key(&Key::Named(NamedKey::Enter), false, false));
+        assert_eq!(app.state.path.as_ref(), Some(&second));
+        std::fs::remove_file(first).unwrap();
+        std::fs::remove_file(second).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn browser_text_files_cannot_open_as_projects() {
+        assert!(project_path(&Item::File("readme.txt".into())).is_none());
+        assert!(project_path(&Item::Sample("audio.wav".into())).is_none());
+        assert_eq!(project_path(&Item::File("Track.FLP".into())), Some(PathBuf::from("Track.FLP")));
+    }
+
+    #[test]
+    #[ignore = "reads the native user's Documents location; does not modify it"]
+    fn browser_native_documents_discovery() {
+        let documents = documents_dir().expect("Documents location");
+        println!("Documents: {}", documents.display());
+        let folders = initial_folders(None, Some(&documents));
+        assert!(!folders.is_empty(), "FL Studio Projects folder must exist for this native check");
+        println!("Projects: {}", folders[0].display());
     }
 }
 
@@ -816,12 +870,6 @@ pub enum BCmd {
     Rescan,
     /// A row menu command (spec §8), on the selected row (the right click selected it).
     Row(RowCmd),
-    /// A way into the browser from another menu (the mixer's Plugin database entry).
-    Jump(Jump),
-    /// Configure extra folders: File ▸ Browser extra search folders.
-    Configure,
-    /// "Add to plugin database (flag as favorite)" of the plugin at this hosted key: its star toggled (spec §10).
-    Star(usize),
 }
 
 /// What a row menu entry does (spec §8).
@@ -845,8 +893,6 @@ pub enum RowCmd {
     /// A dropped folder root: its Browser name typed in File ▸ Browser extra search folders; out of the browser.
     Rename,
     Remove,
-    /// The row's Favorite check: a plugin's star, a file in or out of the favorites (spec §10).
-    Favorite,
 }
 
 /// The row menu's way to the system's file manager: a folder, a file.
@@ -880,13 +926,13 @@ pub fn row_menu(s: &crate::app::State, row: &view::Row) -> Vec<PItem> {
             items.extend([
                 r("Select pattern", RowCmd::Activate),
                 PItem::sep(),
-                p("Rename and colour...", P::Rename),
+                p("Rename and color...", P::Rename),
                 p("Change color...", P::ChangeColor),
                 p("Clone", P::Clone),
                 p("Delete", P::Delete),
                 PItem::sep(),
-                p("Select in arranger", P::SelectInPlaylist),
-                p("Split by instrument", P::SplitByChannel),
+                p("Select in playlist", P::SelectInPlaylist),
+                p("Split by channel", P::SplitByChannel),
             ]);
         }
         Item::Channel(c) => {
@@ -904,9 +950,9 @@ pub fn row_menu(s: &crate::app::State, row: &view::Row) -> Vec<PItem> {
         Item::Sample(_) => {
             let send = r("Send to selected channel", RowCmd::Send);
             let sampler = s.project.channels.get(s.selected_channel).is_some_and(|c| c.kind.is_sampler());
-            items.extend([r("Preview", RowCmd::Preview), if sampler { send } else { send.off() }, r("Add to instrument rack", RowCmd::NewChannel)]);
+            items.extend([r("Preview", RowCmd::Preview), if sampler { send } else { send.off() }, r("Add to channel rack", RowCmd::NewChannel)]);
         }
-        Item::Generator(index) => items.push(PItem::new("Add to instrument rack", Cmd::Plugin(crate::plugin_menu::PlugCmd::Generator { index, after: None }))),
+        Item::Generator(index) => items.push(PItem::new("Add to channel rack", Cmd::Plugin(crate::plugin_menu::PlugCmd::Generator { index, after: None }))),
         Item::Effect(index) => items.push(PItem::new("Add to selected mixer track", Cmd::Plugin(crate::plugin_menu::PlugCmd::Effect { index, slot: None }))),
         Item::History(_) => items.push(r("Go to this step", RowCmd::Activate)),
         // Into the selected channel's plugin (spec: plugins/presets.md "Browser").
@@ -917,17 +963,16 @@ pub fn row_menu(s: &crate::app::State, row: &view::Row) -> Vec<PItem> {
         }
         Item::None | Item::File(_) | Item::Param(..) => {}
     }
+    // The plugin browser's variants and star.
+    if s.browser_tab == view::PLUGIN_TAB {
+        items.extend(crate::views::plugin_panel::row_menu(s, row));
+    }
     if let Some(path) = &row.path {
         sep(&mut items);
         items.push(if row.open.is_some() { r(FILE_MANAGER[0], RowCmd::OpenFolder) } else { r(FILE_MANAGER[1], RowCmd::ShowInFolder) });
         if s.browser_folders.contains(path) && row.key == view::disk_key(path) {
             items.extend([r("Rename...", RowCmd::Rename), r("Remove from browser", RowCmd::Remove)]);
         }
-    }
-    // Files and plugins can be favorites (§10; folders cannot).
-    if matches!(row.item, Item::Sample(_) | Item::Preset(_) | Item::File(_) | Item::Generator(_) | Item::Effect(_)) {
-        sep(&mut items);
-        items.push(r("Favorite", RowCmd::Favorite).mark(Mark::Check(view::is_favorite(s, row))));
     }
     sep(&mut items);
     items.extend([
@@ -954,13 +999,13 @@ pub fn options_menu(s: &crate::app::State) -> Vec<PItem> {
         find("Find next", "F3", 1),
         PItem::sep(),
         t("Show parent folders in search results", view::OPT_PARENTS),
-        t("Expand folders", view::OPT_EXPAND),
+        dead("Expand folders", view::OPT_EXPAND),
         t("Search for folders", view::OPT_FOLDERS),
         t("Search box on top", view::OPT_TOP),
         t("Type to filter", view::OPT_TYPE),
         dead("Load plugin tags", view::OPT_TAGS),
-        t("Enable indexing", view::OPT_INDEX),
-        t("Re-index changed folders on startup", view::OPT_REINDEX),
+        dead("Enable indexing", view::OPT_INDEX),
+        dead("Re-index changed folders on startup", view::OPT_REINDEX),
         PItem::head("Navigation history"),
         b("Previous", BCmd::History(-1)),
         b("Next", BCmd::History(1)),
@@ -977,16 +1022,14 @@ pub fn options_menu(s: &crate::app::State) -> Vec<PItem> {
         b("Collapse structure", BCmd::Collapse).key("Ctrl+Up"),
         b("Reread structure", BCmd::Reread).key("Ctrl+R"),
         PItem::head("Content"),
-        b("Configure extra folders", BCmd::Configure),
-        b("Rescan plugins (fast)", BCmd::Rescan),
+        PItem::not_yet("Configure extra folders"),
+        b("Refresh plugin list (fast scan)", BCmd::Rescan),
     ]
 }
 
-/// Reread structure (spec §4): folders are read from disk again, the index too (§11); open nodes and the selection
-/// stay.
+/// Reread structure (spec §4): folders are read from disk again; open nodes and the selection stay.
 fn reread(s: &mut crate::app::State) {
     s.browser_dirs.borrow_mut().clear();
-    s.browser_index.clear();
     s.browser_scroll = s.browser_scroll.min(view::max_scroll(s));
 }
 
@@ -1067,7 +1110,7 @@ fn send(s: &mut crate::app::State, dir: isize) -> Option<String> {
     send_sample(s, &path, &rows[i].label)
 }
 
-/// Sample `path` (shown as `label`) into the selected channel, which takes the file's name while "Name channels after their sample or plugin"
+/// Sample `path` (shown as `label`) into the selected channel, which takes the file's name while "Auto name channels"
 /// is on (`rack::auto_name`). One history step (`history::load_sample`).
 fn send_sample(s: &mut crate::app::State, path: &str, label: &str) -> Option<String> {
     let row = s.selected_channel;
@@ -1086,211 +1129,65 @@ fn send_sample(s: &mut crate::app::State, path: &str, label: &str) -> Option<Str
     Some(format!("Sent {label} to the selected channel"))
 }
 
+/// Arrow Down / Up over the browser: the selection moves a visible row, wrapping from the last to the first and back
+/// (FL's browser). The row landed on is returned when it is a sample, so the move itself plays it (§7, the sample
+/// heard as soon as it is focused); every other kind of row is only selected.
+fn move_sel(s: &mut crate::app::State, dir: isize) -> Option<String> {
+    let rows = view::rows(s);
+    let i = step(s, &rows, dir, |_| true)?;
+    let key = rows[i].key.clone();
+    select(s, &key);
+    reveal(s);
+    match &rows[i].item {
+        Item::Sample(p) => Some(p.clone()),
+        _ => None,
+    }
+}
+
+/// Arrow Right over the browser: the focused sample is returned to be replayed from its start; a closed folder opens
+/// where it stands; an opened folder selects its first row (the one below it), which is heard when it is a sample.
+fn into_sel(s: &mut crate::app::State) -> Option<String> {
+    let rows = view::rows(s);
+    let i = rows.iter().position(|r| Some(&r.key) == s.browser_sel.as_ref())?;
+    if let Item::Sample(p) = &rows[i].item {
+        return Some(p.clone());
+    }
+    match rows[i].open? {
+        true => {
+            let child = rows.get(i + 1)?;
+            select(s, &child.key);
+            reveal(s);
+            match &child.item {
+                Item::Sample(p) => Some(p.clone()),
+                _ => None,
+            }
+        }
+        false => {
+            s.browser_open.insert(rows[i].key.clone());
+            None
+        }
+    }
+}
+
+/// Arrow Left over the browser: an opened folder closes; a leaf or a closed folder selects the nearest folder above
+/// it (its parent, when the tree shows it), so walking out of a folder of samples takes the arrows alone.
+fn out_sel(s: &mut crate::app::State) {
+    let rows = view::rows(s);
+    let Some(i) = rows.iter().position(|r| Some(&r.key) == s.browser_sel.as_ref()) else { return };
+    if rows[i].open == Some(true) {
+        s.browser_open.remove(rows[i].key.as_str());
+        s.browser_scroll = s.browser_scroll.min(view::max_scroll(s));
+        return;
+    }
+    if let Some(p) = rows[..i].iter().rposition(|r| r.open.is_some() && r.depth < rows[i].depth) {
+        select(s, &rows[p].key);
+        reveal(s);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use crate::app::{Action, App};
-    use os_ui::Canvas;
-
-    /// A temporary folder holding `files` (paths relative to it; audio files get a short WAV, others nothing).
-    fn folder(name: &str, files: &[&str]) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("os_{name}_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        for f in files {
-            let p = dir.join(f);
-            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-            if f.ends_with(".wav") {
-                os_engine::wav::write_f32_stereo(&mut std::fs::File::create(&p).unwrap(), 44100, &[0.0; 8]).unwrap();
-            } else {
-                std::fs::write(&p, b"").unwrap();
-            }
-        }
-        dir
-    }
-
-    /// Right-clicks the first row `find` accepts, as the mouse does; the menu it opens.
-    fn right(app: &mut App, c: &mut Canvas, find: impl Fn(&view::Row) -> bool) -> Vec<PItem> {
-        app.paint(c, None);
-        let i = view::rows(&app.state).iter().position(find).expect("the row");
-        let r = app.hits.iter().rev().find(|h| h.action == Action::BrowserRow(i)).expect("row on screen").rect;
-        app.mouse_move(r.cx(), r.cy());
-        app.mouse_down_right();
-        app.state.playlist.popup.take().expect("a menu").items
-    }
-
-    fn labels(app: &App) -> Vec<String> {
-        view::rows(&app.state).into_iter().map(|r| r.label).collect()
-    }
-
-    /// Favorites (spec: ui/browser.md §10): a file's and a plugin's row menu tick Favorite; the Favorites tab lists the
-    /// favorite plugins, then the files, and drops a row whose Favorite is unticked; folders cannot be favorites; the
-    /// plugin windows' and mixer slots' "Add to plugin database (flag as favorite)" star the plugin.
-    #[test]
-    fn favorites() {
-        let Ok(mut c) = Canvas::new(1920, 1080, 1.0) else { return };
-        let dir = folder("browser_favs", &["Kick 01.wav", "readme.txt"]);
-        let mut app = App::new(None);
-        app.plugins = crate::plugins::Plugins::builtins();
-        app.state.plugdb.rebuild(&app.plugins);
-        app.state.browser_folders.push(dir.clone());
-        app.state.browser_open.insert(view::disk_key(&dir));
-        let fav = |items: &[PItem]| items.iter().find(|i| i.label == "Favorite").map(|i| i.mark);
-        assert_eq!(fav(&right(&mut app, &mut c, |r| r.label == "Kick 01")), Some(Mark::Check(false)));
-        app.browser_cmd(BCmd::Row(RowCmd::Favorite));
-        let kick = dir.join("Kick 01.wav").to_string_lossy().into_owned();
-        assert_eq!(app.state.browser_favs, [Fav { path: kick.clone(), label: "Kick 01".into() }]);
-        assert_eq!(fav(&right(&mut app, &mut c, |r| r.label == "Kick 01")), Some(Mark::Check(true)));
-        assert_eq!(fav(&right(&mut app, &mut c, |r| r.key == view::disk_key(&dir))), None, "a folder is no favorite");
-        // Lemon Sampler in the Plugin database: its star.
-        app.state.browser_tab = view::PLUGIN_TAB;
-        app.state.browser_open.extend(["2:Plugin library/Generators".into(), "2:Plugin library/Generators/Sampler".into()]);
-        assert_eq!(fav(&right(&mut app, &mut c, |r| r.item == Item::Generator(0))), Some(Mark::Check(false)));
-        app.browser_cmd(BCmd::Row(RowCmd::Favorite));
-        let uid = app.plugins.available[0].desc.uid();
-        assert!(app.state.plugdb.prefs.is_favorite(&uid) && app.state.plugdb.lists.gens.iter().any(|e| e.index == 0 && e.favorite));
-        // The Favorites tab: the plugin, then the file, each starred; the file row shows its info.
-        app.act(Action::BrowserTab(view::FAV_TAB));
-        assert_eq!(labels(&app), [crate::plugins::LEMON_SAMPLER, "Kick 01"]);
-        let rows = view::rows(&app.state);
-        assert!(rows.iter().all(|r| view::is_favorite(&app.state, r)));
-        assert_eq!(rows[1].item, Item::Sample(kick.clone()));
-        assert_eq!(rows[1].path.as_deref(), Some(dir.join("Kick 01.wav").as_path()));
-        // A favorite dragged from the tab is the sample it stands for (as in any tab).
-        app.paint(&mut c, None);
-        assert!(app.hits.iter().any(|h| h.action == Action::BrowserRow(1)));
-        // Unticked in the tab, the row goes.
-        right(&mut app, &mut c, |r| r.label == "Kick 01");
-        app.browser_cmd(BCmd::Row(RowCmd::Favorite));
-        assert_eq!(labels(&app), [crate::plugins::LEMON_SAMPLER]);
-        assert!(app.state.browser_favs.is_empty());
-        // "Add to plugin database (flag as favorite)" of a hosted plugin toggles the same star.
-        app.state.project = crate::app::test_project();
-        let row = 0;
-        app.plugins.create(row, 0).expect("Lemon Sampler hosted");
-        assert!(app.browser_cmd(BCmd::Star(row)).is_some_and(|m| m.contains("no longer")));
-        assert!(!app.state.plugdb.prefs.is_favorite(&uid));
-        assert_eq!(labels(&app), Vec::<String>::new());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Search with the folder index (spec §5, §11): files in folders nobody opened are found, flat or under their
-    /// folders; Expand folders lists a found folder's contents; without indexing only opened folders are searched;
-    /// Reread structure reads the index again; the cross clears the search.
-    #[test]
-    fn search_finds_files_in_closed_folders() {
-        let Ok(mut c) = Canvas::new(1920, 1080, 1.0) else { return };
-        let dir = folder("browser_find", &["A/Bzz/Qzx Kick.wav", "A/Bzz/notes.txt", "Other/Snare.wav"]);
-        let mut app = App::new(None);
-        app.state.browser_folders.push(dir.clone());
-        app.state.browser_search = "qzx".into();
-        assert!(view::rows(&app.state).is_empty(), "no index yet");
-        app.browser_index_tick();
-        assert_eq!(labels(&app), ["Qzx Kick"]);
-        let root = view::root_label(&app.state, &dir);
-        app.browser_cmd(BCmd::Toggle(view::OPT_PARENTS));
-        assert_eq!(labels(&app), [root.as_str(), "A", "Bzz", "Qzx Kick"]);
-        let depths: Vec<u8> = view::rows(&app.state).iter().map(|r| r.depth).collect();
-        assert_eq!(depths, [0, 1, 2, 3]);
-        app.browser_cmd(BCmd::Toggle(view::OPT_PARENTS));
-        // Find next selects the match; a click on it is a sample row (preview, drag).
-        assert_eq!(app.browser_cmd(BCmd::Find(1)), None);
-        assert_eq!(app.state.browser_sel.as_ref(), Some(&view::rows(&app.state)[0].key));
-        // Expand folders: the found folder with what it holds.
-        app.state.browser_search = "bzz".into();
-        assert_eq!(labels(&app), ["Bzz"]);
-        app.browser_cmd(BCmd::Toggle(view::OPT_EXPAND));
-        assert_eq!(labels(&app), ["Bzz", "notes.txt", "Qzx Kick"]);
-        assert_eq!(view::rows(&app.state)[1].depth, 1);
-        app.browser_cmd(BCmd::Toggle(view::OPT_EXPAND));
-        // Indexing off: closed folders are not searched.
-        app.state.browser_search = "qzx".into();
-        app.browser_cmd(BCmd::Toggle(view::OPT_INDEX));
-        assert!(view::rows(&app.state).is_empty());
-        app.browser_cmd(BCmd::Toggle(view::OPT_INDEX));
-        // Reread structure forgets the index; the tick reads the folders again (a file added meanwhile is found).
-        std::fs::write(dir.join("Other").join("Qzx Snare.wav"), b"").unwrap();
-        app.browser_cmd(BCmd::Reread);
-        assert!(view::rows(&app.state).is_empty());
-        app.browser_index_tick();
-        assert_eq!(labels(&app), ["Qzx Kick", "Qzx Snare"]);
-        // The cross right of the field clears the search.
-        app.paint(&mut c, None);
-        assert!(!app.hits.iter().any(|h| h.action == Action::BrowserSearch && h.rect.w < 30.0), "the magnifier gave way");
-        app.act(Action::BrowserClear);
-        assert!(app.state.browser_search.is_empty());
-        app.paint(&mut c, None);
-        assert!(!app.hits.iter().any(|h| h.action == Action::BrowserClear));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// The browser's new pages to look at: `OS_SHOT_DIR=dir cargo test -p os-app browser_shots` writes the window with
-    /// the Plugin database opened, the Favorites tab and an indexed search.
-    #[test]
-    fn browser_shots() {
-        let Some(out) = std::env::var_os("OS_SHOT_DIR").map(std::path::PathBuf::from) else { return };
-        let Ok(mut c) = Canvas::new(1280, 900, 1.0) else { return };
-        let dir = folder("browser_shots", &["Drums/Kicks/Big Kick.wav", "Drums/Kicks/Kick Tail.wav", "Drums/Snares/Kick Snare Combo.wav", "readme.txt"]);
-        let mut app = App::new(None);
-        app.plugins = crate::plugins::Plugins::builtins();
-        app.state.plugdb.rebuild(&app.plugins);
-        app.state.browser_folders.push(dir.clone());
-        let mut shot = |app: &mut App, name: &str| {
-            app.paint(&mut c, None);
-            c.pixmap.save_png(out.join(format!("browser_{name}.png"))).unwrap();
-        };
-        app.state.browser_tab = view::PLUGIN_TAB;
-        let root = "2:Plugin library";
-        app.state.browser_open.extend([format!("{root}/Effects"), format!("{root}/Effects/Dynamics"), format!("{root}/{}", view::INSTALLED), format!("{root}/{}/Generators", view::INSTALLED), format!("{root}/{}/Generators/{}", view::INSTALLED, view::BUILT_IN)]);
-        let star = view::rows(&app.state).iter().position(|r| r.depth == 3).unwrap();
-        app.state.browser_sel = Some(view::rows(&app.state)[star].key.clone());
-        app.browser_cmd(BCmd::Row(RowCmd::Favorite));
-        shot(&mut app, "plugin_database");
-        app.state.browser_favs.push(Fav { path: dir.join("Drums/Kicks/Big Kick.wav").to_string_lossy().into_owned(), label: "Big Kick".into() });
-        app.act(Action::BrowserTab(view::FAV_TAB));
-        shot(&mut app, "favorites");
-        app.act(Action::BrowserTab(0));
-        app.state.browser_search = "kick".into();
-        app.browser_cmd(BCmd::Toggle(view::OPT_PARENTS));
-        app.browser_index_tick();
-        shot(&mut app, "search");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// The Plugin database (spec §2): Generators and Effects by category, Installed by format; the mixer effect list's
-    /// Plugin database entry opens its Effects, and Configure extra folders opens File ▸ Browser extra search folders.
-    #[test]
-    fn plugin_database_by_category_and_format() {
-        let mut app = App::new(None);
-        app.plugins = crate::plugins::Plugins::builtins();
-        app.state.plugdb.rebuild(&app.plugins);
-        app.state.browser_tab = view::PLUGIN_TAB;
-        let root = "2:Plugin library";
-        app.state.browser_open.extend([format!("{root}/Generators"), format!("{root}/{}", view::INSTALLED), format!("{root}/{}/Generators", view::INSTALLED)]);
-        let rows = view::rows(&app.state);
-        let at = |depth: u8| rows.iter().filter(|r| r.depth == depth).map(|r| r.label.as_str()).collect::<Vec<_>>();
-        assert_eq!(at(1), ["Generators", "Effects", view::INSTALLED]);
-        assert!(at(2).starts_with(&["Sampler", "Synth"]), "{:?}", at(2));
-        assert!(at(3).contains(&view::BUILT_IN));
-        app.state.browser_open.insert(format!("{root}/{}/Generators/{}", view::INSTALLED, view::BUILT_IN));
-        let built_in: Vec<String> = view::rows(&app.state).into_iter().filter(|r| r.depth == 4).map(|r| r.label).collect();
-        assert!(built_in.iter().any(|l| l == crate::plugins::LEMON_SAMPLER), "{built_in:?}");
-        // The mixer's empty-slot menu: Plugin database works and opens the Effects section.
-        let menu = crate::mixer::effect_menu(&app.state, 0, 0.0, 0.0);
-        let first = &menu.items[0];
-        assert!(first.label == "Plugin library" && first.enabled);
-        app.state.browser_tab = 0;
-        app.browser_cmd(BCmd::Jump(Jump::DbEffects));
-        let fx = format!("{root}/Effects");
-        assert!(app.state.browser_tab == view::PLUGIN_TAB && app.state.browser_open.contains(&fx) && app.state.browser_sel.as_ref() == Some(&fx));
-        // The options menu: Expand folders and the indexing options work; tags stay greyed out.
-        let opts = options_menu(&app.state);
-        let on = |l: &str| opts.iter().find(|i| i.label == l).unwrap().enabled;
-        assert!(on("Expand folders") && on("Enable indexing") && on("Re-index changed folders on startup") && on("Configure extra folders"));
-        assert!(!on("Load plugin tags"));
-        app.browser_cmd(BCmd::Configure);
-        assert!(app.state.settings.open);
-    }
 
     /// `browser.txt` (spec: ui/browser.md §9): the dragged width, never below the default; anything else is the default.
     #[test]
@@ -1299,25 +1196,113 @@ mod tests {
         assert_eq!(parse_width("width=120"), crate::views::BROWSER_W);
         assert_eq!(parse_width("width=wide\n"), crate::views::BROWSER_W);
         assert_eq!(parse_width(""), crate::views::BROWSER_W);
-        assert_eq!(parse_width("options=top\nwidth=300\n"), 300.0);
     }
 
-    /// The options are kept in `browser.txt` beside the width (spec §4): missing = the defaults, unknown names dropped.
+    /// The arrows' walk over the browser's rows (FL's browser): Down / Up step a row, wrapping, every kind of row
+    /// selected, a sample heard the moment it is focused, files and folders silent; Right replays a sample, opens a
+    /// closed folder or steps into an opened one's first row; Left closes it again or walks out to the parent.
     #[test]
-    fn kept_options() {
-        assert_eq!(parse_opts("width=300\n"), view::DEFAULT_OPTS.iter().copied().collect());
-        assert_eq!(parse_opts("options=top, expand,nonsense\n"), [view::OPT_TOP, view::OPT_EXPAND].into_iter().collect());
-        assert!(parse_opts("options=\n").is_empty());
-        let text = with_value("width=300\noptions=top\n", "options", "expand");
-        assert_eq!(text, "width=300\noptions=expand\n");
-        assert_eq!(parse_width(&with_value(&text, "width", "250")), 250.0);
+    fn arrows_walk_the_rows_and_hear_the_samples() {
+        let dir = std::env::temp_dir().join(format!("os_browser_arrows_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let wav = |n: &str| {
+            let p = dir.join(format!("{n}.wav"));
+            os_engine::wav::write_f32_stereo(&mut std::fs::File::create(&p).unwrap(), 44100, &[0.0; 8]).unwrap();
+            p.to_string_lossy().into_owned()
+        };
+        let (kick, snare, hat) = (wav("A Kick"), wav("B Snare"), wav("C Hat"));
+        std::fs::write(dir.join("readme.txt"), b"hello").unwrap();
+        let mut app = App::new(None);
+        app.state.browser_folders.push(dir.clone());
+        app.state.browser_open.insert(view::disk_key(&dir));
+        let keys: Vec<String> = view::rows(&app.state).into_iter().map(|r| r.key).collect();
+        assert_eq!(keys.len(), 8, "the three closed roots, the dropped folder and its four rows");
+        // From no selection Down takes the first row: the closed Current project root, nothing heard.
+        assert_eq!(move_sel(&mut app.state, 1), None);
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[0].as_str()));
+        for k in &keys[1..4] {
+            assert_eq!(move_sel(&mut app.state, 1), None, "roots and the folder row are silent");
+            assert_eq!(app.state.browser_sel.as_deref(), Some(k.as_str()));
+        }
+        // The folder's samples, each heard the moment it is focused:
+        assert_eq!(move_sel(&mut app.state, 1).as_deref(), Some(kick.as_str()));
+        assert_eq!(move_sel(&mut app.state, 1).as_deref(), Some(snare.as_str()));
+        assert_eq!(move_sel(&mut app.state, 1).as_deref(), Some(hat.as_str()));
+        // The readme is a file, not a sample: silent, and the walk wraps to the top.
+        assert_eq!(move_sel(&mut app.state, 1), None);
+        assert_eq!(move_sel(&mut app.state, 1), None);
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[0].as_str()), "wrapped to the first row");
+        // Up from the first row wraps to the last (the readme, silent), then back onto the samples.
+        assert_eq!(move_sel(&mut app.state, -1), None);
+        assert_eq!(move_sel(&mut app.state, -1).as_deref(), Some(hat.as_str()));
+        assert_eq!(move_sel(&mut app.state, -1).as_deref(), Some(snare.as_str()));
+        assert_eq!(move_sel(&mut app.state, -1).as_deref(), Some(kick.as_str()));
+        assert_eq!(move_sel(&mut app.state, -1), None, "the folder row again");
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[3].as_str()));
+        // Right on the opened folder steps into its first row, the kick, heard.
+        assert_eq!(into_sel(&mut app.state).as_deref(), Some(kick.as_str()));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[4].as_str()));
+        // Right on a sample replays it, the selection staying where it is.
+        assert_eq!(into_sel(&mut app.state).as_deref(), Some(kick.as_str()));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[4].as_str()));
+        // Left from the sample back to its parent folder...
+        out_sel(&mut app.state);
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[3].as_str()));
+        // ...and Left on the opened folder closes it.
+        out_sel(&mut app.state);
+        assert!(!app.state.browser_open.contains(&keys[3]));
+        // Right on the closed folder opens it where the selection stands, nothing heard yet.
+        assert_eq!(into_sel(&mut app.state), None);
+        assert!(app.state.browser_open.contains(&keys[3]));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[3].as_str()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// `browser_favorites.txt` (spec §10): path and label per line; a line without a label shows the file's name.
+    /// The arrows in the app's keys: over the browser (or from its search field) they are the browser's, elsewhere
+    /// they are left alone, and Shift+Down keeps its older meaning of sending the next sample to the channel.
     #[test]
-    fn kept_favorites() {
-        let favs = vec![Fav { path: "C:\\Kits\\Kick.wav".into(), label: "Kick".into() }, Fav { path: "/x/y.fxp".into(), label: "y".into() }];
-        assert_eq!(parse_favs(&favs_text(&favs)), favs);
-        assert_eq!(parse_favs("C:\\Kits\\Snare.wav\n\n")[0].label, "Snare.wav");
+    fn the_browser_takes_its_arrows_only_over_the_browser() {
+        use winit::keyboard::{Key, NamedKey};
+        let dir = std::env::temp_dir().join(format!("os_browser_arrows_key_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("A Kick.wav");
+        os_engine::wav::write_f32_stereo(&mut std::fs::File::create(&p).unwrap(), 44100, &[0.0; 8]).unwrap();
+        let mut app = App::new(None);
+        app.state.browser_folders.push(dir.clone());
+        app.state.browser_open.insert(view::disk_key(&dir));
+        app.mouse_move(100.0, 400.0);
+        assert!(app.over_browser());
+        let keys: Vec<String> = view::rows(&app.state).into_iter().map(|r| r.key).collect();
+        // Down takes the first row; Right opens the closed root without moving; Down walks into it; Left back out.
+        assert!(app.browser_key(&Key::Named(NamedKey::ArrowDown), false, false));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[0].as_str()));
+        assert!(app.browser_key(&Key::Named(NamedKey::ArrowRight), false, false));
+        assert!(app.state.browser_open.contains(&keys[0]));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[0].as_str()), "opening keeps the row");
+        assert!(app.browser_key(&Key::Named(NamedKey::ArrowDown), false, false));
+        assert_ne!(app.state.browser_sel.as_deref(), Some(keys[0].as_str()));
+        assert!(app.browser_key(&Key::Named(NamedKey::ArrowLeft), false, false));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[0].as_str()));
+        // From the search field the Up / Down walk goes on (the results).
+        app.state.browser_search_focus = true;
+        app.state.browser_sel = None;
+        assert!(app.browser_key(&Key::Named(NamedKey::ArrowDown), false, false));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[0].as_str()));
+        app.state.browser_search_focus = false;
+        // With the pointer off the browser the arrow is somebody else's.
+        app.mouse_move(1500.0, 400.0);
+        app.state.browser_sel = None;
+        assert!(!app.browser_key(&Key::Named(NamedKey::ArrowDown), false, false));
+        assert!(app.state.browser_sel.is_none());
+        // Over the browser again, Shift+Down still sends the next sample to the selected channel (and selects it).
+        app.mouse_move(100.0, 400.0);
+        app.shift = true;
+        assert!(app.browser_key(&Key::Named(NamedKey::ArrowDown), false, false));
+        app.shift = false;
+        let row = view::rows(&app.state).into_iter().find(|r| Some(&r.key) == app.state.browser_sel.as_ref());
+        assert_eq!(row.map(|r| r.label), Some("A Kick".into()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

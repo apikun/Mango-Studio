@@ -5,13 +5,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[lib]
-doctest = false
-
 [dependencies]
 os-model.workspace = true
 os-dsp.workspace = true
 miniz_oxide = "0.8"
 thiserror.workspace = true
-symphonia = { version = "0.6", default-features = false, features = ["wav", "pcm", "flac", "ogg", "vorbis", "mp3", "aiff", "id3v1", "id3v2"] }
+symphonia = { version = "0.6", default-features = false, features = ["wav", "pcm", "flac", "ogg", "vorbis", "mp3", "aac", "isomp4", "aiff", "id3v1", "id3v2"] }
 symphonia-codec-wavpack = "0.1"

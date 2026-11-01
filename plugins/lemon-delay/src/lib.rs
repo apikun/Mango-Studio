@@ -69,8 +69,8 @@ impl LemonDelay {
 }
 
 impl Plugin for LemonDelay {
-    const NAME: &'static str = "Lemon Delay";
-    const VENDOR: &'static str = "Lemon Studio";
+    const NAME: &'static str = "Mango Delay";
+    const VENDOR: &'static str = "Mango Studio";
     const URL: &'static str = "";
     const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
@@ -131,7 +131,7 @@ impl Plugin for LemonDelay {
 
 impl ClapPlugin for LemonDelay {
     const CLAP_ID: &'static str = "org.openstudio.lemon-delay";
-    const CLAP_DESCRIPTION: Option<&'static str> = Some("Lemon Studio's stereo delay");
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("Mango Studio's stereo delay");
     const CLAP_MANUAL_URL: Option<&'static str> = None;
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Delay, ClapFeature::Stereo];

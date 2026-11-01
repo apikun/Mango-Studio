@@ -1,0 +1,13 @@
+OSPRESET 1
+plugin=Mango 12	id=clap:org.openstudio.mango-12	format=clap	body=params
+# The tune fader five semitones down: the clock slows and the aliasing coarsens, pitch and length stay put.
+Tune = 50
+Fine = 1
+Range = 0
+Gain In = 120
+Gain Out = 120
+Link = 0
+Filter = 99
+Route = 0
+Mix = 100
+Crush = 0

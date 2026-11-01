@@ -66,9 +66,9 @@ const CONTROLS: [Control; 9] = [
 ];
 
 pub const SPEC: &Spec = &Spec {
-    name: "Lemon Transient Processor",
+    name: "Mango Transient Processor",
     word: "TRANSIENT PROCESSOR",
-    about: "Lemon Studio's transient processor",
+    about: "Mango Studio's transient processor",
     settings: &SETTINGS,
     version: Some(dsp::VERSION),
     any_version: false,
@@ -85,6 +85,7 @@ pub const SPEC: &Spec = &Spec {
     labels: &[],
     text,
     parse,
+    shown: None,
     sound,
     rings: false,
 };
@@ -186,7 +187,7 @@ pub struct TransientProcessorKind;
 impl Kind for TransientProcessorKind {
     const SPEC: &'static Spec = SPEC;
     const CLAP_ID: &'static str = "org.openstudio.lemon-transient-processor";
-    const CLAP_DESCRIPTION: &'static str = "Lemon Studio's transient processor";
+    const CLAP_DESCRIPTION: &'static str = "Mango Studio's transient processor";
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::TransientShaper, ClapFeature::Stereo];
     const VST3_CLASS_ID: [u8; 16] = *b"LemonStudioTrPro";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Fx, Vst3SubCategory::Dynamics];

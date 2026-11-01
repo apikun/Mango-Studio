@@ -16,9 +16,9 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-const NAME: &str = "Lemon Studio";
-const EXE: &str = "lemonstudio";
-const IDENTIFIER: &str = "io.github.itsalphaneon.lemonstudio";
+const NAME: &str = "Mango Studio";
+const EXE: &str = "mangostudio";
+const IDENTIFIER: &str = "io.github.apikun.mangostudio";
 
 fn main() {
     if !cfg!(target_os = "macos") {
@@ -106,7 +106,7 @@ fn info_plist() -> String {
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Lemon Studio records and monitors your audio inputs on its mixer tracks.</string>
+	<string>Mango Studio records and monitors your audio inputs on its mixer tracks.</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>

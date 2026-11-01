@@ -57,7 +57,7 @@ impl Conn {
         let reply: protocol::AuthReply = c.ask(Command::Auth(auth))?;
         c.version = c.version.min(reply.version);
         let mut props = protocol::Props::new();
-        props.set(protocol::Prop::ApplicationName, c"Lemon Studio");
+        props.set(protocol::Prop::ApplicationName, c"Mango Studio");
         let _: protocol::SetClientNameReply = c.ask(Command::SetClientName(props))?;
         Ok(Some(c))
     }

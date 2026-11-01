@@ -234,6 +234,7 @@ tokens! {
     toolbar_edge = 0x3a3f41, "Light top edge of toolbar groups.";
     sunken = 0x25282a, "Sunken panels: hint bar, monitors.";
     sunken_dark = 0x1c1e20, "CPU / memory panel.";
+    display_edge = 0x2a2e31, "Outline of the readout displays and window rims (kept as picked: a theme's tint does not move it).";
     time_panel = 0x2c3334, "Song position display.";
     menu_panel = 0x313838, "Menu bar background.";
     menu_text = 0xbcd0dc, "Menu bar items.";
@@ -477,7 +478,7 @@ impl Theme {
     /// Serialize as a theme file listing every token.
     pub fn to_text(&self) -> String {
         let mut s = format!(
-            "# Lemon Studio theme: {}\nhue = {}\nsaturation = {}\nlightness = {}\n",
+            "# Mango Studio theme: {}\nhue = {}\nsaturation = {}\nlightness = {}\n",
             self.name, self.adjust.hue, self.adjust.saturation, self.adjust.lightness
         );
         for name in Palette::NAMES {

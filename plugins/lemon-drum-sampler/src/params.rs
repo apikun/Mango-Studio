@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
-//! Lemon Drum Sampler's saved state: the original's whole saved state (`state`, hex), so what the editor does not
+//! Mango Drum Sampler's saved state: the original's whole saved state (`state`, hex), so what the editor does not
 //! change comes back out byte for byte, and the sample files to open (`sample-paths`, a JSON list, one per layer in
 //! the state's order; "" = the stored path). The host fills the list with the stored paths resolved (FL's
 //! placeholders made real); the stored paths stay as written. No automatable parameters: the pads' settings live

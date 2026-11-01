@@ -61,9 +61,9 @@ const CONTROLS: [Control; 12] = [
 ];
 
 pub const SPEC: &Spec = &Spec {
-    name: "Lemon Chorus",
+    name: "Mango Chorus",
     word: "CHORUS",
-    about: "Lemon Studio's chorus",
+    about: "Mango Studio's chorus",
     settings: &SETTINGS,
     version: Some(dsp::VERSION),
     any_version: false,
@@ -80,6 +80,7 @@ pub const SPEC: &Spec = &Spec {
     labels: &[],
     text,
     parse,
+    shown: None,
     sound,
     rings: true,
 };
@@ -208,7 +209,7 @@ pub struct ChorusKind;
 impl Kind for ChorusKind {
     const SPEC: &'static Spec = SPEC;
     const CLAP_ID: &'static str = "org.openstudio.lemon-chorus";
-    const CLAP_DESCRIPTION: &'static str = "Lemon Studio's chorus";
+    const CLAP_DESCRIPTION: &'static str = "Mango Studio's chorus";
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Chorus, ClapFeature::Stereo];
     const VST3_CLASS_ID: [u8; 16] = *b"LemonStudioChrus";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Fx, Vst3SubCategory::Modulation];

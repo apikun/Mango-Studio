@@ -13,3 +13,13 @@ CLAUDE.md
 
 # macOS Finder metadata
 .DS_Store
+
+# Python bytecode from the icon tooling
+__pycache__/
+
+# Gradle and Android build leftovers
+android/.gradle/
+android/app/build/
+android/local.properties
+*.apk
+!tools/**/*.apk

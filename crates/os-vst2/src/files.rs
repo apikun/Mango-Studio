@@ -142,7 +142,7 @@ pub fn unsupported(path: &Path) -> Option<String> {
         return Some("a 32-bit plugin, which a 64-bit program cannot load".into());
     }
     if cfg!(all(target_os = "macos", target_arch = "aarch64")) && macho_cpus(&file).is_some_and(|c| !c.is_empty() && !c.contains(&CPU_ARM64)) {
-        return Some("built for Intel Macs only, which Lemon Studio on Apple silicon cannot load".into());
+        return Some("built for Intel Macs only, which Mango Studio on Apple silicon cannot load".into());
     }
     None
 }

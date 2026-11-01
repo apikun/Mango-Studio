@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
-//! Lemon Slicer editor: painting and hit regions (platform independent), in the Lemon "Pith" plugin look on a 6 px
+//! Mango Slicer editor: painting and hit regions (platform independent), in the Lemon "Pith" plugin look on a 6 px
 //! grid: the header band (the lemon mark and "SLICER", the loop's BPM and BEATS boxes, the Load / Slicing / Dump
 //! buttons), the slice well (the loop, its slices, the chosen one lit), and the cards of the chosen slice, the play
 //! knobs and the switches.

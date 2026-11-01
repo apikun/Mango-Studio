@@ -33,10 +33,9 @@ pub use win32::{default_position, first_position, focus_main, lift_hide, lift_sh
 #[cfg(target_os = "linux")]
 mod x11;
 #[cfg(target_os = "linux")]
-mod hyprland;
-#[cfg(target_os = "linux")]
 pub use x11::{
-    busy, default_position, exposed, focus_main, lift_hide, lift_show, main_focused, paint_dirty, pointer, pointer_in_docked, pump, screen_to_main, stack, take_exposed, take_lift_input, unpinned,
+    busy, default_position, exposed, focus_main, lift_hide, lift_show, main_focused, paint_dirty, pointer, pointer_in_docked, pump, screen_to_main, stack, take_exposed, take_lift_input, take_pointer_entered,
+    unpinned,
     FrameWindow, Unpinned,
 };
 
@@ -73,8 +72,6 @@ pub enum LinkMsg {
     /// A sample sent to the host (Tesla's Send): to the selected channel (true) or the playlist; the files wait in
     /// `os_hostlink::take_audio`.
     Audio(bool),
-    /// Notes for the plugin's channel (Lemon Slicer's dump), waiting in `os_hostlink::take_notes` under this token.
-    Notes(isize),
 }
 
 /// Mouse input on the lifted popup (see `lift_show`); positions in the main window (physical px).
@@ -101,7 +98,6 @@ pub fn take_link() -> Vec<(isize, LinkMsg)> {
                 }
                 os_hostlink::Cmd::Automate => LinkMsg::Automate(arg.max(0) as usize),
                 os_hostlink::Cmd::Audio => LinkMsg::Audio(arg != 0),
-                os_hostlink::Cmd::Notes => LinkMsg::Notes(arg),
                 _ => LinkMsg::Changed,
             };
             (area as isize, m)
@@ -115,6 +111,8 @@ pub const TITLE_H: f32 = 27.0;
 pub const STRIP_H: f32 = 46.0;
 /// Left / right / bottom inset of the editor: 1 px outline, 5 px frame, 1 px editor outline.
 pub const BORDER: f32 = 7.0;
+/// The smallest editor (logical px) a window of a plugin that lets the host resize it (CLAP, VST 3) goes down to.
+pub const MIN_EDITOR: (f32, f32) = (240.0, 80.0);
 /// Width of the Presets box in the title bar (its right edge is 49 px from the window's).
 const PRESETS_W: f32 = 80.0;
 
@@ -168,7 +166,7 @@ fn c_caption() -> Color {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChannelInfo {
     pub name: String,
-    /// "Bus 3" / "Master".
+    /// "Insert 3" / "Master".
     pub target: String,
     pub enabled: bool,
     /// 0..1, -1..1, cents.
@@ -219,6 +217,10 @@ pub enum FrameEvent {
     KnobMenu(Knob, i32, i32),
     /// A Misc tab keyboard key: key, velocity, pressed.
     Note(u8, u8, bool),
+    /// Ctrl+Z (`alt`: Ctrl+Alt+Z, `shift`: Ctrl+Shift+Z) was pressed while the plugin's own window had the keyboard: the
+    /// app's undo history moves, as it does from the main window (X11: the frame grabs the keys before the editor).
+    #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+    Undo { alt: bool, shift: bool },
     /// A detached window moved to a monitor with another DPI: the app redraws it at this scale (spec: ui/ui-scaling.md §3).
     #[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
     Dpi(f32),
@@ -405,6 +407,11 @@ impl State {
         self.resize_min.is_some() && !self.misc
     }
     /// Top of the editor (below the strip, or the title bar, and the editor's 1 px outline).
+    /// The frame around the editor: what the window adds to the editor's width and height (logical px).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn chrome(&self) -> (f32, f32) {
+        (2.0 * BORDER, self.area_y() + BORDER)
+    }
     fn area_y(&self) -> f32 {
         TITLE_H + if self.strip { STRIP_H } else { 0.0 } + 1.0
     }
@@ -445,9 +452,9 @@ impl State {
     }
 }
 
-/// "Bus 3" / "Master", as the title bar names the target.
+/// "Insert 3" / "Master", as the title bar names the target.
 fn track_name(t: u16) -> String {
-    if t == 0 { "Master".into() } else { format!("Bus {t}") }
+    if t == 0 { "Master".into() } else { format!("Insert {t}") }
 }
 
 /// The RANGE box's live part and the TRACK box (window coordinates). Classic: FL's measured places, the PITCH knob
@@ -807,6 +814,15 @@ enum Btn {
     Left,
     Right,
     Middle,
+}
+
+/// An editor of `editor` logical px in a window with `chrome` around it, that has `room` (logical px) to open in: the
+/// editor size that fits, shrinking only the side that is too large and never below [`MIN_EDITOR`]; `None` when it fits.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn fit_in(editor: (f32, f32), chrome: (f32, f32), room: (f32, f32)) -> Option<(f32, f32)> {
+    let fit = |e: f32, c: f32, r: f32, min: f32| if e + c > r { (r - c).max(min) } else { e };
+    let fitted = (fit(editor.0, chrome.0, room.0, MIN_EDITOR.0), fit(editor.1, chrome.1, room.1, MIN_EDITOR.1));
+    (fitted != editor).then_some(fitted)
 }
 
 /// Window point (logical px) to screen point (physical px), for the app's popups.
@@ -1236,7 +1252,7 @@ fn misc_hint(st: &mut State, h: Option<crate::misc_page::Hit>) {
         (Some(Hit::Value(m) | Hit::Step(m, _)), Some(v)) => format!("{}: {}", m.label(), value_text(m, v.get(m))),
         (Some(Hit::ArpDir(i)), _) => format!("Arpeggio direction: {}", value_text(M::ArpDir, f32::from(i))),
         (Some(Hit::Key(k)), _) => format!("{} (right click sets the root note)", note_name(i32::from(k))),
-        (Some(Hit::CutSelf), _) => "Chokes itself: a new note stops the channel's playing notes".into(),
+        (Some(Hit::CutSelf), _) => "Cut itself: a new note cuts the channel's playing notes".into(),
         (Some(Hit::Reset), _) => "Reset the root note and fine tuning".into(),
         (Some(Hit::TrackTab(k)), _) => (if k { "Key tracking" } else { "Velocity tracking" }).into(),
         _ => String::new(),
@@ -1372,14 +1388,14 @@ mod tests {
         let Some(dir) = std::env::var_os("OS_SHOT_DIR") else { return };
         let dir = std::path::PathBuf::from(dir);
         let misc = |sampler: bool| {
-            let mut st = state(true, "Bus 1");
+            let mut st = state(true, "Insert 1");
             st.misc = true;
             st.editor = (crate::misc_page::PAGE_W, crate::misc_page::PAGE_H);
             st.info.misc = Some(crate::misc_page::MiscVals { sampler, ..Default::default() });
             st
         };
         let effect = || {
-            let mut st = state(true, "Bus 1");
+            let mut st = state(true, "Insert 1");
             st.info.misc = None;
             st
         };
@@ -1398,7 +1414,7 @@ mod tests {
         // The Misc page again in the Lemon design.
         os_theme::set_current(&os_theme::design::palette(os_theme::Design::Lemon, None));
         let boxes = |range: i32, track: u16| {
-            let mut st = state(true, "Bus 1");
+            let mut st = state(true, "Insert 1");
             (st.info.range, st.info.track) = (range, track);
             st
         };
@@ -1476,7 +1492,7 @@ mod tests {
         st.left_down(tx, y, false, &screen);
         st.motion(tx, y - 30.0, false);
         st.left_up(tx, y - 30.0);
-        assert_eq!((st.info.track, st.info.target.as_str()), (3, "Bus 3"));
+        assert_eq!((st.info.track, st.info.target.as_str()), (3, "Insert 3"));
         st.wheel(tx, y, 100.0);
         assert_eq!(st.info.track, 4, "one per notch");
         st.left_down(tx, y, false, &screen);
@@ -1486,7 +1502,7 @@ mod tests {
         st.wheel(tx, y, 1.0);
         assert_eq!(st.events.last(), Some(&FrameEvent::Track(20)), "no event at the limit");
         st.motion(tx, y, false);
-        assert!(st.box_text(Knob::Track).starts_with("Target mixer track: Bus 20"));
+        assert!(st.box_text(Knob::Track).starts_with("Target mixer track: Insert 20"));
         st.left_down(tx, y, true, &screen);
         assert_eq!(st.events.last(), Some(&FrameEvent::ShowTrack));
         assert!(st.drag.is_none());
@@ -1499,7 +1515,7 @@ mod tests {
         use crate::misc_page::{PAGE_H, PAGE_W};
         let screen = |_: f32, _: f32| (0, 0);
         for editor in [(850.0, 450.0), (300.0, 200.0)] {
-            let mut st = state(true, "Bus 1");
+            let mut st = state(true, "Insert 1");
             st.editor = editor;
             st.resize_min = Some((200.0, 100.0));
             let at = |st: &State, i: usize| (tab_rect(i).cx(), tab_rect(i).cy());
@@ -1520,7 +1536,7 @@ mod tests {
     fn knobs_have_a_menu_and_reset() {
         use crate::misc_page::{self as mp, Hit};
         let screen = |x: f32, y: f32| (x as i32, y as i32);
-        let mut st = state(true, "Bus 1");
+        let mut st = state(true, "Insert 1");
         let (w, _) = st.size();
         let dx = w - STRIP_RIGHT;
         for (k, x, reset) in [(Knob::Pan, 383.0, FrameEvent::Pan(0.0)), (Knob::Vol, 417.0, FrameEvent::Volume(0.78125)), (Knob::Pitch, 455.0, FrameEvent::PitchCents(0))] {
@@ -1537,7 +1553,7 @@ mod tests {
         st.events.clear();
         st.right_down(417.0 + dx, 47.0, &screen);
         assert!(st.events.is_empty());
-        let mut st = state(true, "Bus 1");
+        let mut st = state(true, "Insert 1");
         st.misc = true;
         st.editor = (mp::PAGE_W, mp::PAGE_H);
         let (w, h) = st.size();
@@ -1568,7 +1584,7 @@ mod tests {
     #[test]
     fn misc_keys_sound_while_held() {
         use crate::misc_page::Hit;
-        let mut st = state(true, "Bus 1");
+        let mut st = state(true, "Insert 1");
         st.misc = true;
         st.editor = (crate::misc_page::PAGE_W, crate::misc_page::PAGE_H);
         let (w, h) = st.size();
@@ -1584,5 +1600,18 @@ mod tests {
         let notes: Vec<(u8, bool)> = st.events.iter().filter_map(|e| if let FrameEvent::Note(k, _, on) = e { Some((*k, *on)) } else { None }).collect();
         assert_eq!(notes, [(60, true), (60, false), (61, true), (61, false)]);
         assert_eq!(st.misc_ui.held, None);
+    }
+
+    /// An editor larger than the monitor's work area opens fitted to it, one side at a time and never below the smallest
+    /// editor; one that fits is left as it is.
+    #[test]
+    fn oversize_editors_are_fitted_to_the_work_area() {
+        let chrome = (14.0, 81.0);
+        let room = (1536.0, 864.0);
+        assert_eq!(fit_in((800.0, 600.0), chrome, room), None, "fits");
+        assert_eq!(fit_in((1600.0, 1000.0), chrome, room), Some((1522.0, 783.0)));
+        assert_eq!(fit_in((800.0, 1000.0), chrome, room), Some((800.0, 783.0)), "only the side too large shrinks");
+        assert_eq!(fit_in((1522.0, 783.0), chrome, room), None, "exactly fits");
+        assert_eq!(fit_in((900.0, 900.0), chrome, (200.0, 120.0)), Some(MIN_EDITOR), "a tiny screen: the smallest editor");
     }
 }

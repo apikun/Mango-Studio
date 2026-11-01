@@ -323,18 +323,17 @@ fn slider(ui: &mut Ui, id: &str, cap: &str, disabled: bool) {
     ui.hit(hr, target);
 }
 
-/// The wordmark on the foot's line (as Lemon Limiter's and Lemon Sampler's): the lemon mark and "LEMON" in lemon
+/// The wordmark on the foot's line (as Lemon Limiter's and Lemon Sampler's): "MANGO" in mango
 /// beside a large grey "DELAY", right edge on the cards'; returns its left edge.
 fn logo(ui: &mut Ui) -> f32 {
     let wb = lemon::spaced_width(ui.c, MARK_BIG, "DELAY", 2.0);
-    let ws = lemon::spaced_width(ui.c, MARK_SMALL, "LEMON", 2.5);
+    let ws = lemon::spaced_width(ui.c, MARK_SMALL, "MANGO", 2.5);
     let (lh_b, lh_s) = (ui.c.line_height(MARK_BIG), ui.c.line_height(MARK_SMALL));
     let bx = (RIGHT - wb).round();
     lemon::spaced(ui.c, MARK_BIG, bx, (FOOT - lh_b / 2.0).round(), plug::WORDMARK, "DELAY", 2.0);
     let sx = (bx - 8.0 - ws).round();
-    lemon::spaced(ui.c, MARK_SMALL, sx, (FOOT - lh_s / 2.0).round() + 1.0, brand::MAIN, "LEMON", 2.5);
-    let left = sx - 14.0;
-    lemon::lemon_mark(ui.c, left + 5.0, FOOT, 4.0, brand::MAIN);
+    lemon::spaced(ui.c, MARK_SMALL, sx, (FOOT - lh_s / 2.0).round() + 1.0, brand::MAIN, "MANGO", 2.5);
+    let left = sx;
     ui.hit(Rect::span(left - 2.0, RIGHT, FOOT - 12.0, FOOT + 12.0), Target::Logo);
     left
 }
@@ -371,7 +370,7 @@ pub fn name(id: &str, m: &dyn Model) -> String {
 /// The hint line for a target.
 pub fn hint(t: &Target, m: &dyn Model) -> String {
     match t {
-        Target::Logo => "Lemon Delay".into(),
+        Target::Logo => "Mango Delay".into(),
         t => format!("{}: {}", name(t.id(), m), m.text(t.id())),
     }
 }

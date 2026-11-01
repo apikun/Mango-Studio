@@ -4,9 +4,10 @@
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
 //! Settings window (OPTIONS > MIDI / Audio / General / File / Theme settings, Project settings, Project info,
-//! Debugging log; F10 / F11): ten tabs of grouped controls. The controls that work today are listed in `LIVE` and
-//! handled in `App::settings_act`, or are program settings declared in `crate::prefs`; every other control is drawn
-//! greyed out and only says it is not available yet.
+//! Debugging log; F10 / F11): eleven tabs of grouped controls. The controls that work today are listed in `LIVE` and
+//! handled in `App::settings_act`, or are program settings declared in `crate::prefs` (the Recording page's are the
+//! Record button's options, `crate::record::Opt`); every other control is drawn greyed out and only says it is not
+//! available yet.
 //! The Plugins tab is the plugin manager (search folders, scanning, the plugin table).
 // spec: ui/settings.md, ui/plugin-manager.md
 
@@ -50,6 +51,15 @@ pub enum SAct {
     PickSv,
     PickHue,
     PickRevert,
+    /// The rolling sampler's wave colour: its combo's bottom left (where its menu opens).
+    WaveColourMenu(f32, f32),
+    /// The wave colour's picker (like the theme's, for `crate::prefs::set_rolling_wave_color`): its panel (swallows
+    /// clicks), close button, saturation / brightness square, hue strip, and Use theme.
+    WavePickBody,
+    WavePickClose,
+    WavePickSv,
+    WavePickHue,
+    WavePickTheme,
     /// The name panel (`crate::theme_library::NameEdit`): its body (swallows clicks), OK and Cancel.
     NameBody,
     NameOk,
@@ -77,6 +87,21 @@ pub enum SAct {
     /// Row i's Folder or Browser name cell: a click selects it for typing (`App::search_folder_cell`).
     FolderCell(usize, crate::search_folders::Col),
 }
+
+/// The wave colour picker's state while it is open (Audio ▸ Rolling sampler's Wave colour): like the theme's
+/// colour picker, for `crate::prefs::set_rolling_wave_color`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WavePicker {
+    /// The colour being picked, kept as HSV so hue and saturation survive black and greys.
+    pub hsv: [f32; 3],
+    /// The custom colour when the picker opened (`None`: the theme's), for the old colour.
+    pub before: Option<u32>,
+    /// The swatch's centre and radius: the panel opens under it.
+    pub at: (f32, f32, f32),
+}
+
+/// The rolling sampler's wave colour row's label (`crate::prefs::rolling_wave_color`).
+pub const WAVE_COLOUR: &str = "Wave colour";
 
 /// The Info page's text boxes: the project's credits (spec: ui/settings.md "Info", flp/events/project-info.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,6 +218,8 @@ pub struct SettingsUi {
     pub theme_previews: Vec<os_theme::Palette>,
     /// Theme ▸ Adjustments' colour picker, while open.
     pub picker: Option<crate::theme_adjust::Picker>,
+    /// The rolling sampler's wave colour picker (Audio page), while open.
+    pub wave_picker: Option<WavePicker>,
     /// The Themes tiles from here on are the user's own (`crate::theme_library::user_dir`).
     pub user_from: usize,
     /// The name panel (Save preset..., a tile's Rename... / Delete...), while open.
@@ -218,9 +245,10 @@ pub struct SettingsUi {
 
 /// Tabs: label, page title, group (0 system / 1 project / 2 info) (spec §2). Plugins takes the place of FL's Account
 /// tab (spec: ui/plugin-manager.md §2); tabs are laid out from their text widths (`tab_rects`).
-pub const TABS: [(&str, &str, u8); 10] = [
+pub const TABS: [(&str, &str, u8); 11] = [
     ("MIDI", "MIDI input / output devices", 0),
     ("Audio", "Audio devices / mixer", 0),
+    ("Recording", "Recording options", 0),
     ("General", "System / miscellaneous", 0),
     ("File", "Files & folders", 0),
     ("Plugins", "Plugin manager", 0),
@@ -232,9 +260,10 @@ pub const TABS: [(&str, &str, u8); 10] = [
 ];
 pub const MIDI: usize = 0;
 pub const AUDIO: usize = 1;
-pub const GENERAL: usize = 2;
-pub const FILE: usize = 3;
-pub const PLUGINS: usize = 4;
+pub const RECORDING: usize = 2;
+pub const GENERAL: usize = 3;
+pub const FILE: usize = 4;
+pub const PLUGINS: usize = 5;
 
 /// Opt in to the experimental FL native plugin host (spec plugins/fruity-abi.md), on the Plugins page only with
 /// `OPENSTUDIO_NATIVE_SETTINGS` (`SettingsUi::native`). Labels are the keys for `SAct::Check`; `App::settings_act`
@@ -244,7 +273,12 @@ pub const NATIVE_HOST_CHECK: &str = "Experimental: host installed native plugins
 /// never by the built-in Lemon recreations (spec plugins/fruity-abi.md "Opened projects").
 pub const NATIVE_FIRST_CHECK: &str = "Experimental: real native plugins instead of Lemon recreations";
 /// Plugin manager checks (spec: ui/plugin-manager.md §2).
-pub const STARTUP_CHECK: &str = "Scan for new plugins at startup";
+pub const STARTUP_CHECK: &str = "Find new plugins at startup";
+/// Plugins ▸ Windows plugins (Linux, `crate::yabridge`): get yabridge, run a Windows plugin's installer in Wine, add a
+/// folder of Windows plugins.
+pub const INSTALL_YABRIDGE: &str = "Install yabridge";
+pub const RUN_INSTALLER: &str = "Run Windows installer...";
+pub const ADD_WINDOWS_FOLDER: &str = "Add Windows folder...";
 pub const ERRORS_CHECK: &str = "Rescan plugins with errors";
 pub const COMBINE_CHECK: &str = "Combine formats of the same plugin";
 
@@ -286,7 +320,10 @@ pub const LIVE: &[&str] = &[
     "Manage messages",
     REFRESH_MIDI,
     "Add folder...",
-    "Scan for new plugins",
+    INSTALL_YABRIDGE,
+    RUN_INSTALLER,
+    ADD_WINDOWS_FOLDER,
+    "Find new plugins",
     "Rescan all",
     "Load theme...",
     "Reset",
@@ -297,19 +334,26 @@ pub const LIVE: &[&str] = &[
 /// MIDI: lists the devices again (`App::midi_refresh`); Update MIDI scripts stays greyed with its reason.
 pub const REFRESH_MIDI: &str = "Refresh device list";
 pub const UPDATE_SCRIPTS: &str = "Update MIDI scripts";
-const NO_SCRIPTS: &str = "Lemon Studio has no MIDI scripts";
+const NO_SCRIPTS: &str = "Mango Studio has no MIDI scripts";
 /// MIDI: Performance mode MIDI channel stays greyed with its reason.
 pub const PERFORMANCE_CHANNEL: &str = "Performance mode MIDI channel";
-const NO_PERFORMANCE: &str = "Lemon Studio has no live performance mode for the arranger";
+const NO_PERFORMANCE: &str = "Mango Studio has no playlist performance mode";
 
-/// `LIVE`, and the checks declared in `crate::prefs`.
+/// `LIVE`, the checks declared in `crate::prefs`, and the Record button's options (`crate::record::Opt`, the
+/// Recording page's checks).
 fn live(key: &str) -> bool {
-    LIVE.contains(&key) || crate::prefs::find_check(key).is_some()
+    LIVE.contains(&key) || crate::prefs::find_check(key).is_some() || crate::record::Opt::by_label(key).is_some()
 }
 
 /// The combos that work (they open a menu of choices, `App::audio_menu`).
 pub const LIVE_COMBOS: [&str; 6] = [OUTPUT_DEVICE, INPUT_DEVICE, MODE, SAMPLE_RATE, BUFFER_LENGTH, ANIMATIONS];
-/// General ▸ Display: "Playful" simulates the mixer's cables, "Off" hangs them still (crate::cable).
+/// Recording ▸ Precount: the count-in's length menu (the same one the Recording precount button's right-click opens,
+/// `App::record_option_menu`).
+pub const PRECOUNT_DURATION: &str = "Precount duration";
+/// Recording ▸ Recording filter: where audio records today (the filter's Audio entry waits for mixer-track
+/// recording, spec: ui/recording.md §2).
+const AUDIO_ONE_CLICK: &str = "Audio records with One-click recording: into the playlist, or into the audio editor";
+/// General ▸ Display: "Entertain me" simulates the mixer's cables, "Off" hangs them still (crate::cable).
 pub const ANIMATIONS: &str = "Animations";
 pub const OUTPUT_DEVICE: &str = "Output device";
 /// The device the mixer tracks' inputs and one-click recording take in from (not under an ASIO driver, whose inputs
@@ -324,7 +368,7 @@ pub const BUFFER_LENGTH: &str = "Buffer length";
 pub const MODE: &str = "Mode";
 pub const MODE_SHARED: &str = "Shared (other programs play too)";
 #[cfg(not(target_os = "linux"))]
-pub const MODE_EXCLUSIVE: &str = "Exclusive (Lemon Studio alone, smaller buffers)";
+pub const MODE_EXCLUSIVE: &str = "Exclusive (Mango Studio alone, smaller buffers)";
 #[cfg(target_os = "linux")]
 pub const MODE_EXCLUSIVE: &str = "Exclusive (ALSA directly, past the sound server)";
 const MODE_ASIO: &str = "Mode: for Windows devices (an ASIO driver plays on its own terms)";
@@ -388,7 +432,7 @@ pub const SAVE_PRESET: &str = "Save preset...";
 pub const THEME_UNDO: &str = "Undo";
 pub const THEME_REDO: &str = "Redo";
 pub const FIX_TEXT: &str = "Fix text";
-pub const RESET_WORK_TIME: &str = "Reset time spent on project";
+pub const RESET_WORK_TIME: &str = "Reset working time";
 /// General ▸ Input: opens the Manage shortcuts window (`App::open_shortcuts`).
 pub const MANAGE_SHORTCUTS: &str = "Manage shortcuts";
 
@@ -397,7 +441,7 @@ pub const DEFAULT_TEMPLATE: &str = "Default template";
 
 /// Whether the combo labelled `label` works (opens a menu of choices).
 fn live_combo(label: &str) -> bool {
-    LIVE_COMBOS.contains(&label) || PROJECT_COMBOS.contains(&label) || label == DEFAULT_TEMPLATE
+    LIVE_COMBOS.contains(&label) || PROJECT_COMBOS.contains(&label) || label == DEFAULT_TEMPLATE || label == PRECOUNT_DURATION
 }
 
 /// A buffer length as the Audio page shows it: frames and milliseconds at `rate`.
@@ -405,16 +449,33 @@ pub fn buffer_text(frames: u32, rate: u32) -> String {
     format!("{frames} frames ({:.1} ms)", f64::from(frames) * 1000.0 / f64::from(rate.max(1)))
 }
 
-pub const THEME: usize = 5;
-pub const PROJECT: usize = 6;
-pub const INFO: usize = 7;
-pub const DEBUG: usize = 8;
+pub const THEME: usize = 6;
+pub const PROJECT: usize = 7;
+pub const INFO: usize = 8;
+pub const DEBUG: usize = 9;
 
 /// Plugin table rows shown at once (spec: ui/plugin-manager.md §2).
 pub const TABLE_ROWS: usize = 18;
 pub const TABLE_ROW_H: f32 = 17.0;
 /// Table columns: x from the table's left edge, width.
 const COLS: [(f32, f32); 8] = [(0.0, 20.0), (20.0, 38.0), (58.0, 152.0), (210.0, 50.0), (260.0, 68.0), (328.0, 112.0), (440.0, 66.0), (506.0, 80.0)];
+
+/// OPTIONS menu label -> tab (spec §1).
+pub fn tab_for_menu(label: &str) -> Option<usize> {
+    Some(match label {
+        "MIDI settings" => MIDI,
+        "Audio settings" => AUDIO,
+        "Recording settings" => RECORDING,
+        "General settings" => GENERAL,
+        "File settings" => FILE,
+        "Manage plugins" => PLUGINS,
+        "Theme settings" => THEME,
+        "Project general settings" => PROJECT,
+        "Project info" => INFO,
+        "Debugging log" => DEBUG,
+        _ => return None,
+    })
+}
 
 pub const W: f32 = 668.0;
 const LABEL: Font = Font::new(13);
@@ -530,6 +591,11 @@ fn gf(title: &'static str, closed: bool, rows: Vec<Row>) -> Group {
 fn combo(v: &str, w: f32, label: &'static str) -> Row {
     Row::Combo(v.into(), w, label)
 }
+
+/// The wave colour row's box text: the custom colour's hex, or Theme when there is none.
+fn wave_colour_text() -> String {
+    crate::prefs::rolling_wave_color().map_or("Theme".into(), |c| format!("#{c:06x}"))
+}
 /// The panning law's name for event 23 (`PANNING_LAWS`; none is Circular); a value outside those shows as a number.
 pub fn panning_text(law: Option<u8>) -> String {
     let v = law.unwrap_or(0);
@@ -614,9 +680,9 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
                         let device = st.audio.device.as_deref().unwrap_or("the default device");
                         let alone = exclusive.then(|| {
                             let line = if cfg!(windows) {
-                                format!("Other programs can't play on {device} while Lemon Studio has it open.")
+                                format!("Other programs can't play on {device} while Mango Studio has it open.")
                             } else {
-                                format!("Other programs can't play on {device} while Lemon Studio has it open through ALSA (it lets go once nothing plays).")
+                                format!("Other programs can't play on {device} while Mango Studio has it open through ALSA (it lets go once nothing plays).")
                             };
                             Text(line, true)
                         });
@@ -642,9 +708,9 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
                     },
                     vec![
                         List(vec![("Output devices", 0.0)], listed.map(|d| vec![d]).collect(), 4),
-                        Check2("Mix at buffer boundaries", false, "Triple buffer", false),
+                        Check2("Mix in buffer switch", false, "Triple buffer", false),
                         combo("Highest", 96.0, "Priority"),
-                        Check("Avoid dropouts under load", true),
+                        Check("Safe overloads", true),
                         combo("Mixer", 96.0, "Playback tracking"),
                     ],
                 ]
@@ -652,7 +718,7 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
                 .flatten()
                 .collect()),
                 g("CPU", vec![
-                    Check2("Multithreaded instrument processing", true, "Auto-bypass when silent", true),
+                    Check2("Multithreaded generator processing", true, "Smart disable", true),
                     Check2("Multithreaded mixer processing", true, "Align tick lengths", false),
                 ]),
                 g("Mixer", vec![
@@ -661,6 +727,55 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
                     Value(crate::prefs::number_text(&crate::prefs::METRONOME_TRACK), "Metronome track"),
                     Check("Play truncated notes on transport", true),
                     Check("Reset plugins on transport", false),
+                ]),
+                g("Rolling sampler", vec![
+                    Check("Rolling sampler", crate::prefs::check(&crate::prefs::ROLLING_SAMPLER)),
+                    combo(crate::prefs::choice(&crate::prefs::ROLLING_BUFFER), 96.0, "Rolling buffer"),
+                    Check("Remove silence", crate::prefs::check(&crate::prefs::ROLLING_TRIM)),
+                    Slider("Fade in/out", 0.5),
+                    combo(&wave_colour_text(), 96.0, WAVE_COLOUR),
+                    Text("Keeps the newest master output in memory; a selection on the strip between the toolbar and the playlist drops onto a track as audio. Ctrl+click the strip's wave to pause the capture; the fade smooths a dragged clip's edges over that many milliseconds, from the nearest zero crossing.".into(), true),
+                ]),
+            ]
+        }
+        // The Record button's options (spec: ui/recording.md §2-§3), the same program settings its right-click menu and
+        // the toolbar's option buttons keep. The filter's Audio waits for mixer-track recording (an alpha blocker);
+        // today audio records with one-click recording, into the playlist or the audio editor.
+        RECORDING => {
+            use crate::record::{precount_bars, Opt};
+            let bars = precount_bars();
+            vec![
+                g("Recording filter", vec![
+                    Check(Opt::Notes.label(), Opt::Notes.on()),
+                    Check(Opt::Automation.label(), Opt::Automation.on()),
+                    Check("Audio", false),
+                    Text(AUDIO_ONE_CLICK.into(), true),
+                ]),
+                g("Options", vec![
+                    Check(Opt::Ask.label(), Opt::Ask.on()),
+                    Check(Opt::StartsPlayback.label(), Opt::StartsPlayback.on()),
+                    Check(Opt::DisarmOnStop.label(), Opt::DisarmOnStop.on()),
+                ]),
+                g("Start on input", vec![
+                    Check(Opt::Wait.label(), Opt::Wait.on()),
+                    Check(Opt::WaitFilter.label(), Opt::WaitFilter.on()),
+                    Check(Opt::WaitArmed.label(), Opt::WaitArmed.on()),
+                ]),
+                g("Precount", vec![
+                    Check(Opt::Precount.label(), Opt::Precount.on()),
+                    Combo(
+                        if Opt::Precount.on() { format!("{bars} bar{}", if bars == 1 { "" } else { "s" }) } else { "Off".into() },
+                        64.0,
+                        PRECOUNT_DURATION,
+                    ),
+                ]),
+                g("Quantize", vec![
+                    Check(Opt::QuantizeStart.label(), Opt::QuantizeStart.on()),
+                    Check(Opt::QuantizeEnd.label(), Opt::QuantizeEnd.on()),
+                ]),
+                g("Takes", vec![
+                    Check(Opt::Loop.label(), Opt::Loop.on()),
+                    Check(Opt::Blend.label(), Opt::Blend.on()),
                 ]),
             ]
         }
@@ -677,7 +792,7 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
                 combo("Main", 64.0, "Pop-ups scaling"),
                 combo("Main", 64.0, "Toolbars scaling"),
                 combo("Off", 64.0, "Transparent windows"),
-                combo(if s.cables.borrow().animations() { "Playful" } else { "Off" }, 126.0, ANIMATIONS),
+                combo(if s.cables.borrow().animations() { "Entertain me" } else { "Off" }, 126.0, ANIMATIONS),
                 Slider("Smoothing", 0.2),
                 combo("Ultrasmooth", 126.0, "Animation refresh rate"),
                 Check2("Force refreshes", true, "Transparent menus", true),
@@ -694,18 +809,18 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
             gf("Input", false, vec![
                 combo("Multi-button mouse", 136.0, "Optimize for"),
                 Buttons(vec![(MANAGE_SHORTCUTS, 212.0)]),
-                Check("Click-and-hold gestures", false),
-                Check("Right button clears steps", false),
+                Check("Click-and-hold & special gesture functions", false),
+                Check("Use both mouse buttons in step sequencer", false),
                 Slider("Vertical scrolling speed", 0.5),
                 Slider("Horizontal scrolling speed", 0.5),
-                Check("Swap mouse buttons for drawing", false),
+                Check("Invert pencil buttons", false),
             ]),
             // spec: ui/settings-choices.md "Undo history: the four checks (2026-10-16)" (`crate::history`).
             gf("Undo history", false, vec![
                 Value(crate::prefs::number(&crate::prefs::MAX_UNDO_LEVELS).to_string(), "Maximum undo levels"),
                 Check("Undo knob tweaks", true),
                 Check("Alternate undo mode", true),
-                Check("Move undone recordings to the trash", true),
+                Check("Put undone recordings in the recycle bin", true),
                 Check("Show undo history in the browser when undoing changes", false),
                 Check("Show recent changes at the top", false),
             ]),
@@ -722,18 +837,18 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
                 Check("Automatically download program updates", true),
             ]),
             gf("Miscellaneous", false, vec![
-                Check("Name channels after their sample or plugin", true),
-                Check("Name effect slots after their plugin", false),
-                Check("Auto-collapse empty channels", false),
-                Check("Select linked controls automatically", true),
+                Check("Auto name channels", true),
+                Check("Auto name effect slots", false),
+                Check("Auto zip empty channels", false),
+                Check("Auto select linked modules", true),
                 Check("Auto zoom in piano roll", false),
                 Check("Small scrollbars in editors", false),
-                Check2("Open new plugin windows floating", false, "Open detached plugins with the main window", false),
-                Check("Disable computer keyboard priority by default", false),
+                Check2("Detach all new plugins", false, "Open detached plugins with the main window", false),
+                Check("Disable typing keyboard priority by default", false),
                 Check("Alternate meter scale", false),
                 Check("Show startup splash screen", true),
                 Check("Restore previous state after solo", false),
-                Check("Hide plugin window strip by default", true),
+                Check("Hide plugin window toolbar by default", true),
                 Check("Silent startup", false),
                 Check("Monophonic painting in piano roll", false),
                 Check("Create automation clips at the playback position", true),
@@ -747,8 +862,8 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
                 Check("Fast sample preview", true),
                 Check("Auto keep long audio on disk", true),
                 Check2("Read sample tempo information", true, "Read sample root note", true),
-                Check("Set start values automatically", true),
-                Check("Use the high-performance power plan", true),
+                Check("Initialize controls automatically", true),
+                Check("Force high performance power plan", true),
                 Check("Threaded project sample loading", false),
                 combo("System", 64.0, "Cursors scaling"),
                 combo("Main", 64.0, "Legacy scaling"),
@@ -794,13 +909,26 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
                     scanning.push(Check(NATIVE_FIRST_CHECK, os_native::prefer_native()));
                 }
             }
-            scanning.push(Buttons(vec![("Scan for new plugins", 130.0), ("Rescan all", 100.0)]));
+            scanning.push(Buttons(vec![("Find new plugins", 130.0), ("Rescan all", 100.0)]));
             scanning.push(Text(d.status_line(), true));
-            vec![
-                g("Search folders", vec![Folders(folders), Buttons(vec![("Add folder...", 110.0)])]),
-                g("Scanning", scanning),
-                g("Plugins", vec![Table]),
-            ]
+            let mut groups = vec![g("Search folders", vec![Folders(folders), Buttons(vec![("Add folder...", 110.0)])])];
+            // Windows plugins through yabridge, on Linux: what is ready, the bridged folders and the buttons.
+            if cfg!(target_os = "linux") {
+                let w = &d.windows;
+                let mut rows = vec![Text(d.win_busy.clone().unwrap_or_else(|| w.status()), true)];
+                rows.extend(w.dirs.iter().map(|p| Text(format!("    {}", p.display()), true)));
+                let buttons = match (&w.ctl, &w.wine) {
+                    (None, Some(_)) => vec![(INSTALL_YABRIDGE, 130.0)],
+                    (Some(_), Some(_)) => vec![(RUN_INSTALLER, 170.0), (ADD_WINDOWS_FOLDER, 170.0)],
+                    (_, None) => vec![],
+                };
+                if d.win_busy.is_none() && !buttons.is_empty() {
+                    rows.push(Buttons(buttons));
+                }
+                groups.push(g("Windows plugins", rows));
+            }
+            groups.extend([g("Scanning", scanning), g("Plugins", vec![Table])]);
+            groups
         }
         THEME => {
             // Skins (shapes and base colours) and themes (`.flstheme` colours for either skin), spec:
@@ -855,11 +983,11 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
             gf("Advanced", true, vec![
                 combo(&panning_text(s.project.panning_law), 82.0, PANNING_LAW),
                 Check(TRUNCATED_CHECK, s.project.play_truncated),
-                Check("Fast fade for choke groups", s.project.fast_declick.unwrap_or(false)),
+                Check("Fast declick for cut groups", s.project.fast_declick.unwrap_or(false)),
             ]),
             // The project's automatic crossfades (event 44; off when the file has none) and the program setting new
             // projects take it from (`prefs::AUTO_CROSSFADES_NEW`, which the check shows).
-            gf("Arranger", false, vec![Check2(
+            gf("Playlist", false, vec![Check2(
                 CROSSFADES_CHECK,
                 s.project.auto_crossfades.unwrap_or(false),
                 crate::prefs::AUTO_CROSSFADES_NEW.label,
@@ -888,7 +1016,7 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
         }
         DEBUG => {
             let mut lines = vec![
-                format!("Lemon Studio {}", env!("CARGO_PKG_VERSION")),
+                format!("Mango Studio {}", env!("CARGO_PKG_VERSION")),
                 format!("Project: {}", s.path.as_ref().map_or("(new project)".into(), |p| p.display().to_string())),
                 format!("Saved by: {}", s.project.saved_by),
                 format!("PPQ {}, tempo {:.3}", s.project.ppq, s.tempo),
@@ -910,9 +1038,9 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
             g("", [
                 vec![
                     Gap(20.0),
-                    Big(format!("Lemon Studio {}", env!("CARGO_PKG_VERSION"))),
+                    Big(format!("Mango Studio {}", env!("CARGO_PKG_VERSION"))),
                     txt("A digital audio workstation written in Rust."),
-                    txt("Copyright (C) 2026 ItsAlphaNeon and the Lemon Studio contributors."),
+                    txt("Copyright (C) 2026 ItsAlphaNeon and the Mango Studio contributors."),
                     Gap(10.0),
                 ],
                 if cfg!(windows) {
@@ -931,7 +1059,7 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
             .flatten()
             .collect()),
             g("Licence", vec![
-                Big("Lemon Studio needs no account.".into()),
+                Big("Mango Studio needs no account.".into()),
                 txt("It is free software: you can redistribute it and/or modify it under the terms"),
                 txt("of the GNU General Public License, version 3 or (at your option) any later version."),
                 txt("It comes with ABSOLUTELY NO WARRANTY. Licence: https://www.gnu.org/licenses/"),
@@ -1016,9 +1144,8 @@ pub fn paint(ui: &mut Ui, s: &State) {
     let x = Rect::new(r.right() - 26.0, r.y + 5.0, 20.0, 20.0);
     let hov = ui.hit(x, Action::Settings(SAct::Close), "Close");
     ui.c.icon(&os_ui::tabler::X, x.inset(3.0), if hov { t.glyph } else { t.text });
-    // Tabs (spec §2): active text coloured by group.
-    let font = Font::new(13);
-    let rects = tab_rects(ui, r);
+    // Tabs (spec §2): active text coloured by group. Eleven tabs share the width: their font may step down a size.
+    let (rects, font) = tab_rects(ui, r);
     for (i, &(label, _, grp)) in TABS.iter().enumerate() {
         let tr = rects[i];
         let hov = ui.hit(tr, Action::Settings(SAct::Tab(i)), TABS[i].1);
@@ -1078,6 +1205,9 @@ pub fn paint(ui: &mut Ui, s: &State) {
     }
     if let Some(p) = st.picker.as_ref().filter(|_| st.tab == THEME) {
         picker(ui, s, p, r);
+    }
+    if let Some(p) = st.wave_picker.as_ref().filter(|_| st.tab == AUDIO) {
+        wave_picker(ui, s, p, r);
     }
     if let Some(e) = st.name_edit.as_ref().filter(|_| st.tab == THEME) {
         name_panel(ui, s, e, r);
@@ -1233,20 +1363,87 @@ fn picker(ui: &mut Ui, s: &State, p: &crate::theme_adjust::Picker, win: Rect) {
     ui.c.text_center(Font::new(13), b, if hov { t.glyph } else { t.text }, "Revert");
 }
 
-/// Tab rects in window `r`: text width + 10 px each side, 4 px apart, 15 px more between groups.
-fn tab_rects(ui: &mut Ui, r: Rect) -> Vec<Rect> {
-    let font = Font::new(13);
-    let mut x = r.x + 3.0;
-    let mut v = Vec::new();
-    for (i, &(label, _, grp)) in TABS.iter().enumerate() {
-        if i > 0 && TABS[i - 1].2 != grp {
-            x += 15.0;
-        }
-        let w = ui.c.text_width(font, label) + 20.0;
-        v.push(Rect::new(x.round(), r.y + 34.0, w.round(), TABS_B - 34.0));
-        x += w + 11.0;
+/// Audio ▸ Rolling sampler's wave colour picker (`SettingsUi::wave_picker`), over the page: a saturation /
+/// brightness square, a hue strip, the new colour over the old one with its hex value, and Use theme.
+fn wave_picker(ui: &mut Ui, s: &State, p: &WavePicker, win: Rect) {
+    use crate::theme_adjust::{self as adj, from_hsv};
+    let t = ui.t;
+    // The panel's parts come from the same geometry as the theme picker's (one colour, no chips).
+    let fake = adj::Picker { swatch: 0, part: 0, hsv: p.hsv, before: None, at: p.at };
+    let rr = adj::picker_rects(&fake, 1, win);
+    let lemon = super::lemon(ui);
+    let rad = if lemon { lk::r_panel(t) } else { 0.0 };
+    ui.hit(rr.panel, Action::Settings(SAct::WavePickBody), "");
+    ui.c.fill_rrect(rr.panel.outset(3.0), rad + 3.0, Color::rgb(0).with_alpha(70));
+    ui.c.fill_rrect(rr.panel, rad, t.s(0x1c1e21));
+    ui.c.fill_rrect(rr.panel.inset(1.0), (rad - 1.0).max(0.0), t.s(0x2b2d30));
+    ui.c.text(Font::new(13).bold(), rr.panel.x + 10.0, rr.panel.y + 9.0, t.text, "Wave colour");
+    let hov = ui.hit(rr.close, Action::Settings(SAct::WavePickClose), "Close (Esc)");
+    ui.c.icon(&os_ui::tabler::X, rr.close.inset(3.0), if hov { t.glyph } else { t.text });
+    // Saturation left to right, brightness bottom to top, at the picked hue; a ring marks the colour.
+    let (w, h) = (48usize, 36usize);
+    let sv: Vec<u32> = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let c = from_hsv([p.hsv[0], x as f32 / (w - 1) as f32, 1.0 - y as f32 / (h - 1) as f32]);
+            u32::from(c.r) << 16 | u32::from(c.g) << 8 | u32::from(c.b)
+        })
+        .collect();
+    ui.hit(rr.sv, Action::Settings(SAct::WavePickSv), "Saturation (left to right) and brightness (bottom to top)");
+    ui.c.image(rr.sv, w, h, &sv);
+    let (mx, my) = (rr.sv.x + p.hsv[1] * rr.sv.w, rr.sv.y + (1.0 - p.hsv[2]) * rr.sv.h);
+    ui.c.stroke_circle(mx, my, 5.0, 1.5, Color::rgb(0));
+    ui.c.stroke_circle(mx, my, 4.0, 1.5, Color::rgb(0xffffff));
+    let hue: Vec<u32> = (0..64)
+        .map(|y| {
+            let c = from_hsv([y as f32 / 63.0 * 360.0, 1.0, 1.0]);
+            u32::from(c.r) << 16 | u32::from(c.g) << 8 | u32::from(c.b)
+        })
+        .collect();
+    ui.hit(rr.hue, Action::Settings(SAct::WavePickHue), "Hue");
+    ui.c.image(rr.hue, 1, 64, &hue);
+    let hy = (rr.hue.y + p.hsv[0] / 360.0 * rr.hue.h).round();
+    ui.c.fill_rect(Rect::new(rr.hue.x - 2.0, hy - 2.0, rr.hue.w + 4.0, 4.0), Color::rgb(0));
+    ui.c.fill_rect(Rect::new(rr.hue.x - 1.0, hy - 1.0, rr.hue.w + 2.0, 2.0), Color::rgb(0xffffff));
+    // New colour over the old one (the colour when the picker opened, the theme's ink when there was none), the
+    // hex value, Use theme.
+    let new = from_hsv(p.hsv);
+    let old = p.before.map_or_else(|| ui.t.tx(0xb9bfc3), os_ui::Color::rgb);
+    ui.c.fill_rect(rr.new, new);
+    ui.c.fill_rect(rr.old, old);
+    ui.c.stroke_rrect(Rect::new(rr.new.x, rr.new.y, rr.new.w, rr.old.bottom() - rr.new.y), 0.0, 1.0, t.s(0x161819));
+    let hex = format!("#{:02x}{:02x}{:02x}", new.r, new.g, new.b);
+    ui.c.text_center(Font::new(13), Rect::new(rr.new.x, rr.old.bottom() + 4.0, rr.new.w, 20.0), t.text, &hex);
+    let b = rr.revert;
+    let hov = ui.hit(b, Action::Settings(SAct::WavePickTheme), "The strip's wave follows the theme again");
+    if lemon {
+        lk::outlined(ui.c, b, lk::r_btn(t), t.s(0x161819), lk::face(t.s(0x2a2d2f), kit::State::hover(hov)));
+    } else {
+        kit::bordered(ui.c, b, 2.0, t.s(0x161819), kit::face(t.s(0x212425), kit::State::hover(hov)));
     }
-    v
+    ui.c.text_center(Font::new(13), b, if hov { t.glyph } else { t.text }, "Use theme");
+}
+
+/// Tab rects in window `r`: text width + 10 px each side, 4 px apart, 15 px more between groups. Eleven tabs share
+/// the 668 px window: while the row is too wide, the labels' font steps down a size (returns the font it used).
+fn tab_rects(ui: &mut Ui, r: Rect) -> (Vec<Rect>, Font) {
+    for (size, last) in [(13, false), (12, false), (11, false), (10, true)] {
+        let font = Font::new(size);
+        let mut x = r.x + 3.0;
+        let mut v = Vec::new();
+        for (i, &(label, _, grp)) in TABS.iter().enumerate() {
+            if i > 0 && TABS[i - 1].2 != grp {
+                x += 15.0;
+            }
+            let w = ui.c.text_width(font, label) + 20.0;
+            v.push(Rect::new(x.round(), r.y + 34.0, w.round(), TABS_B - 34.0));
+            x += w + 11.0;
+        }
+        if last || x - 11.0 <= r.right() - 3.0 {
+            return (v, font);
+        }
+    }
+    unreachable!()
 }
 
 fn paint_group(ui: &mut Ui, s: &State, gr: &Group, r: Rect, open: bool, clip: Rect) {
@@ -1411,6 +1608,18 @@ fn paint_row_at(ui: &mut Ui, s: &State, group: &'static str, row: &Row, g: Rect,
         }
         // The Audio page's device, rate and buffer combos and General's Animations open their menus.
         // An ASIO driver has no Windows mode: the Mode combo shows the one kept, greyed, and its hint says why.
+        // The rolling sampler's wave colour: its menu opens under the box; a dot of the colour it is now by the
+        // label (the theme's ink when it follows the theme).
+        Row::Combo(v, w, label) if *label == WAVE_COLOUR => {
+            let b = Rect::new(x0, y + 3.0, *w, 21.0);
+            let hov = ui.hit(b, Action::Settings(SAct::WaveColourMenu(b.x, b.bottom())), "The rolling sampler strip's wave colour: the theme's, or pick one");
+            kit::combo(ui.c, t, b, v, f, kit::State::hover(hov));
+            ui.c.text(f, b.right() + 8.0, ty, t.text, label);
+            let dot = Rect::new(b.right() + 8.0 + ui.c.text_width(f, label) + 8.0, ty + 3.0, 12.0, 12.0);
+            let colour = crate::prefs::rolling_wave_color().map_or_else(|| ui.t.tx(0xb9bfc3), |c| os_ui::Color::rgb(c));
+            ui.c.fill_rrect(dot, 6.0, colour);
+            ui.c.stroke_rrect(dot, 6.0, 1.0, t.s(0x161819));
+        }
         Row::Combo(v, w, label) if *label == MODE && s.settings.audio.asio_driver().is_some() => {
             let b = Rect::new(x0, y + 3.0, *w, 21.0);
             ui.hit(b, Action::Settings(SAct::Body), MODE_ASIO);
@@ -1508,7 +1717,15 @@ fn paint_row_at(ui: &mut Ui, s: &State, group: &'static str, row: &Row, g: Rect,
             let tr = Rect::new(x0, cy - 2.0, 150.0, 4.0);
             let hov = ui.hit(Rect::span(tr.x - 9.0, tr.right() + 9.0, cy - 9.0, cy + 9.0), Action::Settings(SAct::Slider(label, tr.x, tr.w)), "");
             slider_track(ui, tr, cy, v);
-            ui.c.text(f, tr.right() + 12.0, ty, if hov { t.glyph } else { t.text }, label);
+            let mut tx = tr.right() + 12.0;
+            // The value, in its unit (the rolling sampler's fade: "3 ms"), before the label.
+            if !sl.unit.is_empty() {
+                let text = format!("{} {}", crate::prefs::slider(sl), sl.unit);
+                let vw = ui.c.text_width(f, &text);
+                ui.c.text(f, tx, ty, if hov { t.glyph } else { t.text_dim }, &text);
+                tx += vw + 8.0;
+            }
+            ui.c.text(f, tx, ty, if hov { t.glyph } else { t.text }, label);
         }
         Row::Slider(label, v) => {
             let tr = Rect::new(x0, cy - 2.0, 150.0, 4.0);
@@ -1976,7 +2193,7 @@ fn prefer(ui: &mut Ui, cur: Prefer, x0: f32, y: f32, ty: f32) {
 }
 
 /// A filled star (favourite).
-const STAR_ON: os_ui::tabler::TablerIcon = os_ui::tabler::TablerIcon { filled: true, d: os_ui::tabler::STAR.d };
+pub const STAR_ON: os_ui::tabler::TablerIcon = os_ui::tabler::TablerIcon { filled: true, d: os_ui::tabler::STAR.d };
 
 /// The plugin table (spec: ui/plugin-manager.md §2): sortable column titles, ★ / Show toggles, the count and the Find box.
 fn table(ui: &mut Ui, s: &State, area: Rect) {

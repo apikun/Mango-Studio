@@ -336,7 +336,9 @@ pub fn tick(app: &mut App) {
     };
     let z = app.zipping.take().expect("checked");
     match result {
-        Ok(Done::Unzipped(project)) => app.open(project),
+        Ok(Done::Unzipped(project)) => {
+            app.open(project);
+        }
         Ok(Done::Zipped { zip, samples, missing }) => {
             app.state.message = Some(format!("Exported {} with {samples} samples", zip.display()));
             if !missing.is_empty() {

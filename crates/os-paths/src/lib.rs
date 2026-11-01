@@ -16,7 +16,9 @@
 use std::path::PathBuf;
 
 /// The folder's own name inside the platform's per-user settings folder.
-const APP: &str = "Lemon Studio";
+const APP: &str = "Mango Studio";
+/// Lemon Studio's folder, which Mango Studio was forked from (`lemon_dir`): its settings are copied once.
+const LEMON: &str = "Lemon Studio";
 /// Its name before the rename to Lemon Studio (`legacy_dir`).
 const LEGACY: &str = "OpenStudio";
 
@@ -36,6 +38,15 @@ pub fn legacy_dir() -> Option<PathBuf> {
         return None;
     }
     platform_dir().map(|d| d.join(LEGACY))
+}
+
+/// Lemon Studio's per-user folder (`Lemon Studio` in the same place), whose settings the app copies to [`user_dir`]
+/// once, leaving it for Lemon Studio. `None` when `OPENSTUDIO_USER_DIR` chooses the folder.
+pub fn lemon_dir() -> Option<PathBuf> {
+    if var("OPENSTUDIO_USER_DIR").is_some() {
+        return None;
+    }
+    platform_dir().map(|d| d.join(LEMON))
 }
 
 /// A file or folder inside [`user_dir`].
@@ -86,6 +97,9 @@ mod tests {
         if let (Some(old), Some(new)) = (legacy_dir(), user_dir()) {
             assert_eq!(old.parent(), new.parent());
             assert_eq!(old.file_name().and_then(|n| n.to_str()), Some(LEGACY));
+        }
+        if let (Some(lemon), Some(new)) = (lemon_dir(), user_dir()) {
+            assert_eq!((lemon.parent(), lemon.file_name().and_then(|n| n.to_str())), (new.parent(), Some(LEMON)));
         }
     }
 }

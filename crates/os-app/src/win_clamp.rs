@@ -34,7 +34,8 @@ pub const KEEP_TOP: f32 = 15.0;
 /// Top-left for a window `w` wide wanted at (`x`, `y`): moved as little as it takes to keep `KEEP_W` px of it inside
 /// `work` at either side, its top `KEEP_TOP` px above the bottom and not above the top.
 pub fn keep(x: f32, y: f32, w: f32, work: Rect) -> (f32, f32) {
-    (x.min(work.right() - KEEP_W).max(work.x + KEEP_W - w), y.min(work.bottom() - KEEP_TOP).max(work.y))
+    let min_x = if work.x > 0.0 { work.x } else { work.x + KEEP_W - w };
+    (x.min(work.right() - KEEP_W).max(min_x), y.min(work.bottom() - KEEP_TOP).max(work.y))
 }
 
 /// `keep` in physical px at display scale `k`: top-left `p` of a window `w` wide in `work` ([left, top, right,
@@ -42,7 +43,8 @@ pub fn keep(x: f32, y: f32, w: f32, work: Rect) -> (f32, f32) {
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn keep_px(p: (i32, i32), w: i32, work: [i32; 4], k: f32) -> (i32, i32) {
     let (kw, kt) = ((KEEP_W * k).round() as i32, (KEEP_TOP * k).round() as i32);
-    (p.0.min(work[2] - kw).max(work[0] + kw - w), p.1.min(work[3] - kt).max(work[1]))
+    let min_x = if work[0] > 0 { work[0] } else { work[0] + kw - w };
+    (p.0.min(work[2] - kw).max(min_x), p.1.min(work[3] - kt).max(work[1]))
 }
 
 /// `r` moved fully into `work`, as little as it takes; too wide or too tall, it shrinks to the workspace, though not
@@ -110,7 +112,6 @@ pub fn rect_of(s: &State, w: Win) -> Option<Rect> {
         Win::Perf => views::perf::rect(s),
         Win::Tapper => views::tapper::rect(s),
         Win::Touch => views::touch::rect(s),
-        Win::Events => views::events::rect(s),
         Win::Strum => views::strum::rect(s),
         Win::Arp => views::arpeggiate::rect(s),
         Win::PianoDlg => views::piano_dlg::rect(s),
@@ -119,17 +120,13 @@ pub fn rect_of(s: &State, w: Win) -> Option<Rect> {
     })
 }
 
-/// Windows sit on whole px: a mouse at a fractional display scale (125 %) moves in fractions of one, and parts of a
-/// window worked out two ways then disagree by a rounding (the playlist's scroll parts, a debug assertion).
 fn set_pos(s: &mut State, w: Win, pos: (f32, f32)) {
-    let pos = (pos.0.round(), pos.1.round());
     match w {
         Win::ChannelRack => s.rack_pos = pos,
         Win::Plugin => s.plugin_pos = pos,
         Win::Perf => s.perf.pos = pos,
         Win::Tapper => s.tapper.pos = pos,
         Win::Touch => s.touch.pos = pos,
-        Win::Events => s.events.pos = pos,
         Win::Strum => s.strum.pos = pos,
         Win::Arp => s.arp.pos = pos,
         Win::PianoDlg => s.piano_dlg.pos[s.piano_dlg.tool.index()] = pos,
@@ -158,7 +155,7 @@ pub fn keep_all(s: &mut State) -> bool {
         return false;
     }
     let mut moved = false;
-    for w in [Win::ChannelRack, Win::Plugin, Win::Perf, Win::Tapper, Win::Touch, Win::Strum, Win::Arp, Win::PianoDlg, Win::Events] {
+    for w in [Win::ChannelRack, Win::Plugin, Win::Perf, Win::Tapper, Win::Touch, Win::Strum, Win::Arp, Win::PianoDlg] {
         let Some(r) = rect_of(s, w) else { continue };
         let pos = keep(r.x, r.y, r.w, work);
         if pos != (r.x, r.y) {
@@ -192,7 +189,7 @@ impl App {
         if r.h > work.h {
             s.rack_size.1 = fit.1;
         }
-        for w in [Win::ChannelRack, Win::Plugin, Win::Perf, Win::Tapper, Win::Touch, Win::Strum, Win::Arp, Win::PianoDlg, Win::Events] {
+        for w in [Win::ChannelRack, Win::Plugin, Win::Perf, Win::Tapper, Win::Touch, Win::Strum, Win::Arp, Win::PianoDlg] {
             if let Some(r) = rect_of(s, w) {
                 let to = inside(r, work, (r.w, r.h));
                 set_pos(s, w, (to.x, to.y));
@@ -210,31 +207,6 @@ mod tests {
     use crate::app::Action;
     use os_ui::Canvas;
 
-    /// A window dragged by its title bar at a fractional display scale (the mouse in steps of 0.8 px at 125 %) lands on
-    /// whole px: the floating playlist painted at a fractional place tripped its scroll parts' debug assertion.
-    #[test]
-    fn dragged_windows_land_on_whole_px() {
-        let Ok(mut c) = Canvas::new(1400, 800, 1.0) else { return };
-        let mut app = App::new(None);
-        app.state.screen = (1400.0, 800.0);
-        app.state.raise(Win::Playlist);
-        let i = Win::Playlist.slot().unwrap();
-        app.state.wins[i].maxed = false;
-        app.state.wins[i].rect = Rect::new(230.0, 110.0, 820.0, 430.0);
-        app.paint(&mut c, None);
-        app.mouse_move(500.0, 120.0);
-        app.mouse_down();
-        for k in 1..30 {
-            app.mouse_move(500.0 + k as f32 * 0.8, 120.0 + k as f32 * 0.8);
-            let _ = app.take_damage();
-            app.paint(&mut c, None);
-            let r = app.state.wins[i].rect;
-            assert_eq!((r.x.fract(), r.y.fract()), (0.0, 0.0), "{r:?}");
-        }
-        app.mouse_up();
-        assert_ne!(app.state.wins[i].rect.x, 230.0, "it moved");
-    }
-
     const WORK: Rect = Rect { x: 209.0, y: 83.0, w: 1711.0, h: 997.0 };
 
     /// Spec "Lemon Studio": at least 31 px of the width stays inside the workspace at the left and at the right, the
@@ -244,9 +216,13 @@ mod tests {
         let w = 500.0;
         // Inside: unchanged.
         assert_eq!(keep(400.0, 300.0, w, WORK), (400.0, 300.0));
-        // Left: the right edge 31 px right of the workspace's left edge.
+        // Left: when docked browser is present (work.x > 0.0), stops at the browser edge.
         let (x, _) = keep(-4000.0, 300.0, w, WORK);
-        assert_eq!(x + w, WORK.x + 31.0);
+        assert_eq!(x, WORK.x);
+        // Left without browser (work.x == 0.0): the right edge 31 px right of the workspace's left edge.
+        let no_browser = Rect { x: 0.0, y: 83.0, w: 1920.0, h: 997.0 };
+        let (x0, _) = keep(-4000.0, 300.0, w, no_browser);
+        assert_eq!(x0 + w, no_browser.x + 31.0);
         // Right: the left edge 31 px left of the workspace's right edge.
         assert_eq!(keep(9000.0, 300.0, w, WORK).0, WORK.right() - 31.0);
         // Down: the top 15 px above the bottom.
@@ -257,7 +233,9 @@ mod tests {
         assert_eq!(keep(WORK.right() - 106.0, 300.0, w, WORK), (WORK.right() - 106.0, 300.0));
         // The same in physical px at 150 %: 47 and 23 px.
         let work = [314, 125, 2880, 1620];
-        assert_eq!(keep_px((-9000, -9000), 750, work, 1.5), (314 + 47 - 750, 125));
+        assert_eq!(keep_px((-9000, -9000), 750, work, 1.5), (314, 125));
+        let no_browser_px = [0, 125, 2880, 1620];
+        assert_eq!(keep_px((-9000, -9000), 750, no_browser_px, 1.5), (0 + 47 - 750, 125));
         assert_eq!(keep_px((9000, 9000), 750, work, 1.5), (2880 - 47, 1620 - 23));
     }
 
@@ -371,7 +349,7 @@ mod tests {
         for w in WINDOWS {
             let work = app.state.work_rect();
             drag(&mut app, &mut c, w, all, (-5000.0, 0.0));
-            assert_eq!(rect(&app, w).right(), work.x + KEEP_W, "{w:?} past the left");
+            assert_eq!(rect(&app, w).x, work.x, "{w:?} past the left");
             drag(&mut app, &mut c, w, all, (9000.0, 0.0));
             assert_eq!(rect(&app, w).x, work.right() - KEEP_W, "{w:?} past the right");
             drag(&mut app, &mut c, w, all, (-6000.0, 5000.0));
@@ -516,7 +494,7 @@ mod tests {
         let work = app.state.work_rect();
         assert!(work.x > 0.0);
         for w in WINDOWS {
-            assert_eq!(rect(&app, w).right(), work.x + KEEP_W, "{w:?}");
+            assert_eq!(rect(&app, w).x, work.x, "{w:?}");
         }
     }
 }

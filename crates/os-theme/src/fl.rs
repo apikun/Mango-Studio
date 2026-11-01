@@ -262,6 +262,8 @@ pub(crate) enum Role {
     StepOdd,
     /// Signal colours (record, meters, clip, categories): kept.
     Fixed,
+    /// A colour the palette states outright and no skin or theme tint moves (picked outlines like `display_edge`).
+    Raw,
 }
 
 pub(crate) fn role(name: &str) -> Role {
@@ -278,6 +280,7 @@ pub(crate) fn role(name: &str) -> Role {
         | "cat_plugin_presets" | "cat_channel_presets" | "cat_mixer_presets" | "clip" | "note_top" | "note_bottom" | "note_rim"
         | "note_text" | "note_sel_top" | "note_sel_bottom" | "note_sel_rim" | "note_sel_text" | "key_white" | "key_white_left"
         | "key_black" | "key_black_left" | "key_c" | "key_label" | "step_on" => Role::Fixed,
+        "display_edge" => Role::Raw,
         _ => Role::Surface,
     }
 }
@@ -426,7 +429,7 @@ pub fn palette(th: &FlTheme) -> Palette {
             Role::Mute => key(c, dark.mute, th.mute),
             Role::StepEven => step(c, dark.step_even, th.step_even),
             Role::StepOdd => step(c, dark.step_odd, th.step_odd),
-            Role::Fixed => c,
+            Role::Fixed | Role::Raw => c,
         };
         *out.get_mut(name).expect("token") = v;
     }

@@ -169,6 +169,16 @@ pub enum MenuItem {
     Sub { label: String, items: Vec<MenuItem> },
 }
 
+/// The half of an editor's opening that may hang (`Plugin::begin_editor`): it runs on a thread of its own, without the
+/// instance's lock, so a plugin that never answers holds up only that thread. Dropped without being finished, it lets go
+/// of the editor (it is detached from its window if it joined one).
+pub trait PendingEditor: Send {
+    /// The editor joins its window. Blocks for as long as the plugin takes; an error when it refused.
+    fn attach(&mut self) -> Result<(), String>;
+    /// For [`Plugin::finish_editor`]: the format's own object.
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any + Send>;
+}
+
 /// A loaded plugin file of any format.
 pub trait Library: Send + Sync {
     /// The file it was loaded from.
@@ -209,6 +219,31 @@ pub trait Plugin: Instrument + HostedEffect + Send {
     /// The editor's current size in pixels (when open). The host polls it: a plugin that resizes itself is followed.
     fn editor_size(&self) -> Option<(u32, u32)>;
     fn close_editor(&mut self);
+    /// Opens the editor in two halves, for an editor that may hang joining its window (a Windows plugin through
+    /// yabridge, whose Wine side can stop answering): this half prepares it (UI thread, the instance locked) and returns
+    /// the part that may hang, which the host runs on a thread of its own without the instance's lock
+    /// ([`PendingEditor::attach`]); [`Plugin::finish_editor`] takes it back. `None`: the plugin opens its editor in one
+    /// call only ([`Plugin::open_editor`]).
+    fn begin_editor(&mut self, parent: *mut c_void, scale: f32) -> Option<Result<Box<dyn PendingEditor>, String>> {
+        let _ = (parent, scale);
+        None
+    }
+    /// The editor `pending` (from [`Plugin::begin_editor`]) joined its window: it becomes the open editor, whose size in
+    /// pixels this returns (as [`Plugin::open_editor`] does). UI thread.
+    fn finish_editor(&mut self, pending: Box<dyn PendingEditor>) -> Result<(u32, u32), String> {
+        let _ = pending;
+        Err("this plugin opens its editor in one call".into())
+    }
+    /// The open editor lets the host resize it (the user drags the window's border).
+    fn can_resize_editor(&self) -> bool {
+        false
+    }
+    /// Asks the open editor to take `w` x `h` pixels; returns the size it took (it may round or clamp the request), or
+    /// `None` when it cannot be resized or refused.
+    fn resize_editor(&mut self, w: u32, h: u32) -> Option<(u32, u32)> {
+        let _ = (w, h);
+        None
+    }
 
     /// The plugin's whole state as bytes, in the format's own layout (UI thread). Round-trips through `load_state`
     /// of the same plugin; what a project file stores for the instance.

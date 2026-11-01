@@ -1,5 +1,4 @@
 // Copyright (C) 2026 ItsAlphaNeon
-// Copyright (C) 2026 thacer13
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
@@ -35,7 +34,7 @@ fn main() {
     write_samples(&samples);
     let project = project(&samples);
     let bytes = create(&project).expect("build the project").to_bytes().expect("encode the project");
-    let out = dir.join("Lemon Studio Demo.flp");
+    let out = dir.join("Mango Studio Demo.flp");
     std::fs::write(&out, bytes).expect("write the project");
     println!("{}", out.display());
 }
@@ -140,7 +139,6 @@ fn project(samples: &Path) -> Project {
                 ChannelKind::Sampler
             };
             Channel {
-                id: os_model::Id::NONE,
                 index: i,
                 kind,
                 name: Some(name.into()),
@@ -214,8 +212,8 @@ fn project(samples: &Path) -> Project {
         ppq: PPQ,
         tempo: Some(TEMPO),
         info: ProjectInfo {
-            title: Some("Lemon Studio Demo".into()),
-            author: Some("Lemon Studio".into()),
+            title: Some("Mango Studio Demo".into()),
+            author: Some("Mango Studio".into()),
             genre: Some("House".into()),
             ..Default::default()
         },

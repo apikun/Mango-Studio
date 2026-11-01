@@ -1,0 +1,19 @@
+// The Android project's shape (the NativeActivity activity, the gradle wiring, this file) follows daijro's
+// honeydew (GPL-3.0-or-later), https://github.com/daijro/honeydew — see THIRD-PARTY-NOTICES.txt.
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'MangoStudio'
+include ':app'

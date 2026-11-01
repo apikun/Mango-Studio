@@ -14,18 +14,18 @@
 use crate::app::App;
 
 /// Lemon Studio's own file type for `.flp` files (spec).
-pub const PROG_ID: &str = "LemonStudio.Project";
+pub const PROG_ID: &str = "MangoStudio.Project";
 /// The extension it registers.
 pub const EXT: &str = ".flp";
 /// The type's description and the open verb's name (spec).
-const DESCRIPTION: &str = "Lemon Studio project";
-const FRIENDLY_NAME: &str = "Lemon Studio";
+const DESCRIPTION: &str = "Mango Studio project";
+const FRIENDLY_NAME: &str = "Mango Studio";
 /// The per-user classes, where every write goes (`Root::Classes`).
 const CLASSES: &str = r"Software\Classes";
 /// Windows' "Open with ▸ Always" choice for `.flp` (`Root::User`), value `ProgId`.
 const USER_CHOICE: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.flp\UserChoice";
 /// The hint bar's text when a `UserChoice` keeps another program after a tick (spec).
-pub const BLOCKED_HINT: &str = "Windows opens .flp files with another program: choose Lemon Studio under Open with ▸ Choose another app";
+pub const BLOCKED_HINT: &str = "Windows opens .flp files with another program: choose Mango Studio under Open with ▸ Choose another app";
 
 /// Where a read looks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -346,7 +346,7 @@ mod tests {
     use os_ui::{Canvas, Rect};
 
     /// The made-up program path `program` gives in tests.
-    pub const PROGRAM: &str = r"C:\Programs\Lemon Studio\lemonstudio.exe";
+    pub const PROGRAM: &str = r"C:\Programs\Mango Studio\mangostudio.exe";
     const OTHER: &str = r"C:\Program Files\Other DAW\other.exe";
     const FL_TYPE: &str = "Other.flp.1";
 
@@ -386,10 +386,10 @@ mod tests {
             ops,
             [
                 Op::DeleteValue { key: PROG_ID.into(), name: "Previous" },
-                set(PROG_ID, "", "Lemon Studio project"),
-                set(r"LemonStudio.Project\DefaultIcon", "", &format!("\"{PROGRAM}\",0")),
-                set(r"LemonStudio.Project\shell\open", "FriendlyAppName", "Lemon Studio"),
-                set(r"LemonStudio.Project\shell\open\command", "", &format!("\"{PROGRAM}\" \"%1\"")),
+                set(PROG_ID, "", "Mango Studio project"),
+                set(r"MangoStudio.Project\DefaultIcon", "", &format!("\"{PROGRAM}\",0")),
+                set(r"MangoStudio.Project\shell\open", "FriendlyAppName", "Mango Studio"),
+                set(r"MangoStudio.Project\shell\open\command", "", &format!("\"{PROGRAM}\" \"%1\"")),
                 set(".flp", "", PROG_ID),
                 set(r".flp\OpenWithProgids", PROG_ID, ""),
             ]
@@ -424,7 +424,7 @@ mod tests {
         reg::apply(&ops);
         assert!(ticked(PROGRAM, &seen()) && !ticked(OTHER, &seen()));
         // A second tick (say from another copy of Lemon Studio) keeps `Previous`.
-        let again = tick(r"D:\Lemon\lemonstudio.exe", &seen());
+        let again = tick(r"D:\Lemon\mangostudio.exe", &seen());
         assert!(!again.iter().any(|op| matches!(op, Op::Set { name: "Previous", .. } | Op::DeleteValue { name: "Previous", .. })));
         reg::apply(&again);
         assert!(!ticked(PROGRAM, &seen()), "now the other copy's");
@@ -451,10 +451,10 @@ mod tests {
         reg::put("HKLM", &format!(r"Software\Classes\{FL_TYPE}\shell\open\command"), "", &format!("\"{OTHER}\" \"%1\""));
         assert_eq!(seen().user_choice, Some((FL_TYPE.into(), Some(format!("\"{OTHER}\" \"%1\"")))));
         assert!(blocked(PROGRAM, &seen()) && !ticked(PROGRAM, &seen()));
-        reg::put("HKCU", choice, "ProgId", "lemonstudio.project");
-        assert!(ticked(PROGRAM, &seen()), "Lemon Studio's own type, any case");
-        reg::put("HKCU", choice, "ProgId", r"Applications\lemonstudio.exe");
-        reg::put("HKCU", r"Software\Classes\Applications\lemonstudio.exe\shell\open\command", "", &format!("\"{PROGRAM}\" \"%1\""));
+        reg::put("HKCU", choice, "ProgId", "mangostudio.project");
+        assert!(ticked(PROGRAM, &seen()), "Mango Studio's own type, any case");
+        reg::put("HKCU", choice, "ProgId", r"Applications\mangostudio.exe");
+        reg::put("HKCU", r"Software\Classes\Applications\mangostudio.exe\shell\open\command", "", &format!("\"{PROGRAM}\" \"%1\""));
         assert!(ticked(PROGRAM, &seen()), "a type that runs this program");
         reg::put("HKCU", choice, "ProgId", "Unknown.Type");
         assert!(blocked(PROGRAM, &seen()), "a type without a command is another program's");

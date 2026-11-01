@@ -22,6 +22,13 @@ use crate::prefs;
 
 /// The built-in template: Lemon Studio's own new project (one Lemon Sampler channel, 130 BPM).
 pub const EMPTY: &str = "Empty";
+/// The Starter kit template (from battlemountain2's fork), made once in the Templates folder: its category, its name
+/// and its drum channels, each playing `<name>.wav` from the template's folder.
+pub const STARTER_CATEGORY: &str = "Starter";
+pub const STARTER: &str = "Starter kit";
+pub const STARTER_DRUMS: [&str; 4] = ["Kick", "Clap", "Hat", "Snare"];
+/// Set once the Starter kit was made, so one the user deleted stays deleted.
+const STARTER_KEY: &str = "starter_kit_made";
 /// The settings file's keys: the picked template and the project file last opened or saved.
 const TEMPLATE_KEY: &str = "default_template";
 const LAST_KEY: &str = "last_project";
@@ -70,6 +77,28 @@ pub fn scan(root: &Path) -> Vec<Category> {
             (!templates.is_empty()).then_some(Category { name: cat, templates })
         })
         .collect()
+}
+
+/// Makes the Starter kit in `root` once: `Starter/Starter kit/Starter kit.flp` with the 808 drums it plays beside it.
+/// Not again once made (a deleted one stays deleted), nor over a folder that is there.
+pub fn ensure_starter(root: &Path) -> Result<(), String> {
+    let dir = root.join(STARTER_CATEGORY).join(STARTER);
+    if prefs::text(STARTER_KEY).is_some() || dir.exists() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let drums = [os_engine::drums::kick_808, os_engine::drums::clap_808, os_engine::drums::hat_808, os_engine::drums::snare_808];
+    for (name, make) in STARTER_DRUMS.iter().zip(drums) {
+        let s = make(44100);
+        let frames: Vec<f32> = s.left.iter().zip(&s.right).flat_map(|(l, r)| [*l, *r]).collect();
+        let mut bytes = Vec::new();
+        os_engine::wav::write_f32_stereo(&mut bytes, s.rate, &frames).map_err(|e| e.to_string())?;
+        std::fs::write(dir.join(format!("{name}.wav")), bytes).map_err(|e| e.to_string())?;
+    }
+    let flp = crate::app::new_flp(crate::app::starter_project(&dir))?;
+    std::fs::write(file_in(root, STARTER_CATEGORY, STARTER), flp).map_err(|e| e.to_string())?;
+    prefs::set_text(STARTER_KEY, "1");
+    Ok(())
 }
 
 /// The pick as kept: "Empty" or "<category>/<template>".
@@ -197,6 +226,39 @@ mod tests {
     use crate::app::Action;
     use crate::playlist::{Cmd, Mark};
     use crate::views::settings::{self, SAct};
+
+    /// The Starter kit is made once: its template with the four 808 drums beside it, listed under Starter. Opened, it
+    /// gives Kick, Clap, Hat and Snare channels on inserts 1 to 4, each cutting itself and playing its drum. Not made
+    /// again once made, even when deleted.
+    #[test]
+    fn the_starter_kit_is_made_once_and_plays_its_drums() {
+        let dir = std::env::temp_dir().join(format!("os_templates_starter_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let kept = prefs::text(STARTER_KEY);
+        prefs::set_text(STARTER_KEY, "");
+        ensure_starter(&dir).unwrap();
+        let at = dir.join(STARTER_CATEGORY).join(STARTER);
+        for d in STARTER_DRUMS {
+            let s = os_engine::sample::load(&at.join(format!("{d}.wav"))).unwrap();
+            assert!(s.left.iter().any(|v| v.abs() > 0.1), "{d} sounds");
+        }
+        assert_eq!(scan(&dir), vec![Category { name: STARTER_CATEGORY.into(), templates: vec![STARTER.into()] }]);
+        let mut a = App::new(None);
+        assert!(a.new_from_file(&file_in(&dir, STARTER_CATEGORY, STARTER), STARTER), "{:?}", a.state.message);
+        let p = &a.state.project;
+        let names: Vec<_> = p.channels.iter().map(|c| c.name.clone().unwrap_or_default()).collect();
+        assert_eq!(names, STARTER_DRUMS);
+        for (i, c) in p.channels.iter().enumerate() {
+            assert_eq!((c.mixer_track, c.misc.cut, c.misc.cut_by), (i as u16 + 1, i as u32 + 1, i as u32 + 1));
+            assert!(c.sample_path.as_deref().is_some_and(|s| s.ends_with(&format!("{}.wav", names[i]))));
+        }
+        assert!(a.state.path.is_none(), "untitled");
+        // Made: deleting it does not bring it back.
+        std::fs::remove_dir_all(&dir).unwrap();
+        ensure_starter(&dir).unwrap();
+        assert!(!dir.exists());
+        prefs::set_text(STARTER_KEY, kept.as_deref().unwrap_or(""));
+    }
 
     /// A fresh Templates folder for this test (this thread's `root`), with "Minimal/Basic with limiter" (a 140 BPM
     /// project with six channels: the test project's five and a copy), "Utility/Scoring", and folders that are no

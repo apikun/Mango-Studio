@@ -393,7 +393,7 @@ impl Logic {
                 m.sep(Cmd::None);
                 m.add(MenuItem::item("Copy value"), Cmd::CopyValue(id.clone()));
                 m.add(MenuItem::item("Paste value").enabled(self.copied.is_some()), Cmd::PasteValue(id.clone()));
-                m.add(MenuItem::item("Enter value..."), Cmd::TypeIn(id.clone()));
+                m.add(MenuItem::item("Type in value..."), Cmd::TypeIn(id.clone()));
                 // Automation belongs to the host: offered when Lemon Studio hosts the editor (host link).
                 m.sep(Cmd::None);
                 m.add(MenuItem::item("Create automation clip").enabled(self.hosted), Cmd::Automate(id.clone()));
@@ -545,7 +545,7 @@ mod win32 {
                 tracking: false,
                 slot: slot.clone(),
             });
-            let title = pw::wide("Lemon Trio");
+            let title = pw::wide("Mango Trio");
             let hwnd = CreateWindowExW(
                 0,
                 class.as_ptr(),
@@ -845,7 +845,7 @@ mod win32 {
             return None;
         }
         let mut file = vec![0u16; 1024];
-        let filter: Vec<u16> = "Audio files\0*.wav;*.flac;*.ogg;*.wv;*.aif;*.aiff;*.mp3\0All files\0*.*\0\0".encode_utf16().collect();
+        let filter: Vec<u16> = "Audio files\0*.wav;*.flac;*.ogg;*.wv;*.aif;*.aiff;*.mp3;*.m4a;*.aac\0All files\0*.*\0\0".encode_utf16().collect();
         let title = pw::wide("Sample for the custom shape");
         unsafe {
             let mut ofn: OPENFILENAMEW = std::mem::zeroed();
@@ -1137,7 +1137,7 @@ mod gui {
         let path = win.dialog(move || {
             rfd::FileDialog::new()
                 .set_title("Sample for the custom shape")
-                .add_filter("Audio files", &["wav", "flac", "ogg", "wv", "aif", "aiff", "mp3"])
+                .add_filter("Audio files", &["wav", "flac", "ogg", "wv", "aif", "aiff", "mp3", "m4a", "aac"])
                 .pick_file()
         });
         path.flatten().map(|p| p.to_string_lossy().into_owned())
@@ -1194,7 +1194,7 @@ mod tests {
         let acts = l.down(x, y, Btn::Right, Mods::default(), false);
         assert!(matches!(acts.last(), Some(Act::Menu(MenuReq::Param(id), _, _)) if id == "o2_coarse"));
         let m = l.menu(&MenuReq::Param("o2_coarse".into()));
-        assert_eq!(m.find("Enter value..."), Some(Cmd::TypeIn("o2_coarse".into())));
+        assert_eq!(m.find("Type in value..."), Some(Cmd::TypeIn("o2_coarse".into())));
         l.typed("o2_coarse", "+7");
         assert_eq!(l.vals.plain("o2_coarse"), 7.0);
         l.pick(&MenuReq::Param("o2_coarse".into()), Cmd::CopyValue("o2_coarse".into()), 0.0, 0.0);

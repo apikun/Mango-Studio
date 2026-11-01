@@ -135,6 +135,7 @@ impl App {
         let row = self.state.selected_channel;
         if let Some(k) = key.filter(|_| row < self.state.project.channels.len()) {
             self.sync_live();
+            self.live_note_guidance(row);
             self.transport.note_on(row, u16::from(k), VELOCITY);
             self.state.touch.held = Some((k, row));
             self.step_edit_down(crate::step_edit::Src::Touch(k), u16::from(k), VELOCITY);

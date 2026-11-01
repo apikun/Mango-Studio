@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Mango Studio
+GenericName=Digital Audio Workstation
+Comment=Pattern-based music production
+Exec=mangostudio %f
+Icon=mangostudio
+Terminal=false
+Categories=AudioVideo;Audio;Midi;Music;
+StartupWMClass=mangostudio
+Keywords=DAW;music;audio;sequencer;

@@ -78,7 +78,7 @@ fn shoot(window: isize, path: &Path) -> bool {
 
 pub fn run(args: &[String]) -> i32 {
     let Some((dir, files)) = args.split_first() else {
-        eprintln!("usage: lemonstudio --plugin-window-check <dir> <plugin file>...");
+        eprintln!("usage: mangostudio --plugin-window-check <dir> <plugin file>...");
         return 2;
     };
     let dir = PathBuf::from(dir);
@@ -118,7 +118,7 @@ pub fn run(args: &[String]) -> i32 {
             println!("{name}: no editor");
             continue;
         }
-        let info = ChannelInfo { name: name.clone(), target: "Bus 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
+        let info = ChannelInfo { name: name.clone(), target: "Insert 1".into(), enabled: true, volume: 0.78, pan: 0.0, pitch_cents: 0, range: 2, track: 1, max_track: 125, misc: None };
         if let Err(e) = pl.open_window(0, info) {
             println!("{name}: the window did not open: {e}");
             failed = true;

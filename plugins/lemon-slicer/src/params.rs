@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
-//! Lemon Slicer parameters and saved state.
+//! Mango Slicer parameters and saved state.
 //!
 //! Five parameters: pitch shift, attack, decay, declick, play to end; they are fields of the original's saved state.
 //! A copy of the whole saved state (the loop, its slices, every setting) is persisted next to them (`state`): what

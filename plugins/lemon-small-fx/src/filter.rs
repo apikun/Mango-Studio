@@ -56,9 +56,9 @@ const CONTROLS: [Control; 7] = [
 const RESPONSE: Rect = Rect::new(12.0, 129.0, 301.0, 66.0);
 
 pub const SPEC: &Spec = &Spec {
-    name: "Lemon Filter",
+    name: "Mango Filter",
     word: "FILTER",
-    about: "Lemon Studio's filter",
+    about: "Mango Studio's filter",
     settings: &SETTINGS,
     version: Some(dsp::VERSION),
     any_version: false,
@@ -75,6 +75,7 @@ pub const SPEC: &Spec = &Spec {
     labels: &[],
     text,
     parse,
+    shown: None,
     sound,
     rings: false,
 };
@@ -182,7 +183,7 @@ pub struct FilterKind;
 impl Kind for FilterKind {
     const SPEC: &'static Spec = SPEC;
     const CLAP_ID: &'static str = "org.openstudio.lemon-filter";
-    const CLAP_DESCRIPTION: &'static str = "Lemon Studio's filter";
+    const CLAP_DESCRIPTION: &'static str = "Mango Studio's filter";
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Filter, ClapFeature::Stereo];
     const VST3_CLASS_ID: [u8; 16] = *b"LemonStudioFiltr";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Fx, Vst3SubCategory::Filter];

@@ -22,13 +22,13 @@ pub fn run() {
     if cfg!(debug_assertions) || !from_cargo || std::env::var_os(SKIP).is_some_and(|v| v == "1") {
         return;
     }
-    eprintln!("Rebuilding Lemon Studio's plugins ({SKIP}=1 skips this)");
+    eprintln!("Rebuilding Mango Studio's plugins ({SKIP}=1 skips this)");
     let ok = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
         .args(["run", "--release", "-p", "bundle-plugins", "--", "--install"])
         .current_dir(Path::new(manifest).join("../.."))
         .status()
         .is_ok_and(|s| s.success());
     if !ok {
-        eprintln!("The plugins could not be rebuilt (see above); starting Lemon Studio with the plugins installed before");
+        eprintln!("The plugins could not be rebuilt (see above); starting Mango Studio with the plugins installed before");
     }
 }
