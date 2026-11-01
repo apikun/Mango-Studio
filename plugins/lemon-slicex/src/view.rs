@@ -617,9 +617,10 @@ fn tabs(ui: &mut Ui, look: &Look) {
 fn env_curve(ui: &mut Ui, g: Rect, e: &crate::ext::Env, amount: f32) {
     let (att, dec, rel) = e.seconds(0.5);
     let hold = (att + dec).max(0.05);
-    let total = hold * 1.22 + rel.max(0.02);
-    let at = |t: f64| g.x + 6.0 + (t / total) as f32 * (g.w - 12.0);
-    let ay = |v: f32| g.bottom() - 6.0 - v.clamp(0.0, 1.0) * (g.h - 34.0);
+    // The attack and decay fill the left half, ending at the sustain line in the middle; the release follows it.
+    let total = (hold * 2.0).max(hold + rel * 1.2).max(0.1);
+    let at = |t: f64| g.x + (t / total) as f32 * g.w;
+    let ay = |v: f32| g.bottom() - 17.0 - v.clamp(0.0, 1.0) * (g.h - 21.0);
     let col = if amount == 0.0 { SOFT.with_alpha(110) } else { brand::MAIN };
     let n = 64;
     let mut pts = vec![(at(0.0), ay(e.level(0.0, 0.5)))];
