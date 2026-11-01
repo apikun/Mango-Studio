@@ -517,6 +517,8 @@ pub struct Geo {
     dot: (f32, f32),
     /// The send knob's size against Wide's.
     send: f32,
+    /// Top of a darker band at the strip's foot (input and routing; Extra large).
+    foot: Option<f32>,
 }
 
 impl Geo {
@@ -549,6 +551,7 @@ const fn geo_compact(w: f32, region: f32, col: (f32, f32, f32), meter: (f32, f32
         clock: (x, -83.0),
         dot: (x, -65.0),
         send: 0.6,
+        foot: None,
     }
 }
 
@@ -580,6 +583,7 @@ pub const GEOS: [Geo; 8] = [
         clock: (9.0, -139.0),
         dot: (9.0, -121.0),
         send: 0.6,
+        foot: None,
     },
     // Wide (drawn by `strip`; these are only its sizes).
     Geo {
@@ -603,6 +607,7 @@ pub const GEOS: [Geo; 8] = [
         clock: (0.0, 0.0),
         dot: (0.0, 0.0),
         send: 1.0,
+        foot: None,
     },
     // Wide 2: a short meter beside the name, the pan knob under them, the stereo controls under the fader.
     Geo {
@@ -626,6 +631,7 @@ pub const GEOS: [Geo; 8] = [
         clock: (28.0, -68.0),
         dot: (10.0, -68.0),
         send: 0.85,
+        foot: None,
     },
     // Wide 3: Wide 2 a little wider, "Current" and "Master" over the first columns.
     Geo {
@@ -649,6 +655,7 @@ pub const GEOS: [Geo; 8] = [
         clock: (32.0, -72.0),
         dot: (12.0, -72.0),
         send: 1.0,
+        foot: None,
     },
     // Wide alt: the meter at the top, the stereo controls beside a long fader, the name low on the left.
     Geo {
@@ -672,6 +679,7 @@ pub const GEOS: [Geo; 8] = [
         clock: (10.0, -92.0),
         dot: (10.0, -76.0),
         send: 0.9,
+        foot: None,
     },
     // Extra large: number and name over the strip, the light and pan knob in a row, meter and fader side by side.
     Geo {
@@ -695,6 +703,7 @@ pub const GEOS: [Geo; 8] = [
         clock: (11.0, -183.0),
         dot: (11.0, -165.0),
         send: 1.0,
+        foot: Some(-107.0),
     },
 ];
 
@@ -730,6 +739,11 @@ fn strip_geo(ui: &mut Ui, s: &State, n: u16, left: f32, top: f32, bottom: f32, f
     if let Some(pb) = g.panel {
         head_panel(ui, Rect::new(left + 1.0, top + g.head_h + 1.0, w - 2.0, at(pb) - top - g.head_h - 1.0));
     }
+    if let Some(y) = g.foot {
+        let band = Rect::new(left + 3.0, at(y), w - 6.0, (bottom - 6.0 - at(y)).max(1.0));
+        let c = if super::lemon(ui) { Color::rgb(0x0c0c0c).with_alpha(150) } else { ui.t.s(0x1f2123) };
+        ui.c.fill_rect(band, c);
+    }
     let (m0, m1) = (at(g.meter.2), at(g.meter.3));
     let meter = Rect::new(left + g.meter.0, m0, g.meter.1, (m1 - m0).max(4.0));
     let ticks: Vec<f32> = (1..7).map(|k| meter.y + meter.h * k as f32 / 7.0).collect();
@@ -759,7 +773,9 @@ fn strip_geo(ui: &mut Ui, s: &State, n: u16, left: f32, top: f32, bottom: f32, f
     let (pin, clock) = ((left + g.pin.0, at(g.pin.1) - 5.0), (left + g.clock.0, at(g.clock.1)));
     let veil = Rect::new(pin.0 - 9.0, pin.1 - 3.0, 18.0, 21.0);
     io_icons(ui, n, pin, clock, veil, body);
-    ui.veil(Rect::new(clock.0 - 9.0, clock.1 - 9.0, 18.0, 18.0), body);
+    if !super::lemon(ui) {
+        ui.veil(Rect::new(clock.0 - 9.0, clock.1 - 9.0, 18.0, 18.0), body);
+    }
     arm(ui, track, n, left + g.dot.0, at(g.dot.1));
     routing(ui, s, n, left + w / 2.0, bottom - 38.0, g.send);
 }
@@ -813,7 +829,8 @@ fn strip_body(ui: &mut Ui, s: &State, n: u16, left: f32, w: f32, (head0, head1, 
         ui.c.fill_rect(hr, ui.t.s(0x2b2e30));
         let own = track.and_then(|m| m.color).map(super::rgb);
         let pill = Rect::new(hr.x + 3.0, hr.y + 2.0, hr.w - 6.0, row.h - 4.0);
-        if let (true, Some(col)) = (lemon, own) {
+        if head1 - head0 > 30.0 {
+        } else if let (true, Some(col)) = (lemon, own) {
             // Mango: a coloured track's number sits on a pill of its colour (lit for the black), outlined when selected.
             ui.c.fill_rrect(pill, lk::r_btn(t), readable_on_black(col));
             if selected {
@@ -831,7 +848,11 @@ fn strip_body(ui: &mut Ui, s: &State, n: u16, left: f32, w: f32, (head0, head1, 
             }
             ui.c.pop_clip();
         }
-        if !(lemon && own.is_some()) {
+        if head1 - head0 > 30.0 {
+            // Extra large: the number at the left of its row, over the name (`strip_geo`), as FL has them.
+            let c = if selected { t.accent } else if let Some(col) = own { readable_on_black(col) } else if hov { ui.t.tx(0xd0d6da) } else { ui.t.tx(0x9aa1a5) };
+            ui.c.text(num, left + 5.0, head0 + 1.0, c, &n.to_string());
+        } else if !(lemon && own.is_some()) {
             let c = if selected && lemon {
                 lk::ink_on_lit(ui.t)
             } else if selected || hov {
@@ -1016,20 +1037,26 @@ fn fader(ui: &mut Ui, s: &State, n: u16, f: &FrameInfo, mx: f32, y0: f32, track_
 fn io_icons(ui: &mut Ui, n: u16, pin: (f32, f32), clock: (f32, f32), veil: Rect, body: Color) {
     let master = n == 0;
     let (sx, pt) = pin;
-    let pin_c = if master { ui.t.h(0xf09a28) } else { ui.t.s(0x4d5357) };
+    // Mango's strips are shaded cards: a veil in one colour would show as a square on them, so the icons are faded
+    // into the card instead.
+    let lemon = super::lemon(ui);
+    let fade = |c: Color| if lemon { c.mix(Color::rgb(0x161616), f32::from(crate::app::OFF_VEIL) / 255.0) } else { c };
+    let pin_c = fade(if master { ui.t.h(0xf09a28) } else { ui.t.s(0x4d5357) });
     let mut g = Glyph::new();
     g.rrect(Rect::new(sx - 4.0, pt, 8.0, 9.0), 3.0);
     g.polygon(&[(sx - 2.5, pt + 8.0), (sx + 2.5, pt + 8.0), (sx, pt + 13.0)]);
     ui.c.glyph(pin_c, &g);
-    ui.c.fill_rect(Rect::new(sx - 1.0, pt + 1.0, 2.0, 9.0), if master { ui.t.h(0x7a3c08) } else { ui.t.s(0x23272a) });
+    ui.c.fill_rect(Rect::new(sx - 1.0, pt + 1.0, 2.0, 9.0), fade(if master { ui.t.h(0x7a3c08) } else { ui.t.s(0x23272a) }));
     ui.off(Rect::new(sx - 8.0, pt - 2.0, 16.0, 18.0), "Track audio input");
     let (cx, cy) = clock;
-    let clk = if master { ui.t.h(0xf09a28) } else { ui.t.tx(0xc4d4e0) };
+    let clk = fade(if master { ui.t.h(0xf09a28) } else { ui.t.tx(0xc4d4e0) });
     let mut g = Glyph::new();
     g.ring(cx, cy, 6.0, 1.6).rect(cx - 0.7, cy - 4.0, 1.4, 4.5).rect(cx - 0.7, cy - 0.7, 3.5, 1.4);
     ui.c.glyph(clk, &g);
     ui.off(Rect::new(cx - 8.0, cy - 8.0, 16.0, 16.0), "Track latency");
-    ui.veil(veil, body);
+    if !lemon {
+        ui.veil(veil, body);
+    }
 }
 
 /// The disk-record button at (x, y): arms the track.
