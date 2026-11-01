@@ -124,8 +124,15 @@ pub enum FxReq {
 }
 
 pub const LAYOUTS: [&str; 8] = ["Compact", "Compact 2", "Compact alt", "Wide", "Wide 2", "Wide 3", "Wide alt", "Extra large"];
-/// Index of "Wide" (the only layout drawn).
+/// Index of "Wide" (the default).
 pub const WIDE: u8 = 3;
+/// Where the chosen layout is kept (its name).
+const LAYOUT_KEY: &str = "mixer_layout";
+
+/// The layout chosen last time, else Wide.
+fn saved_layout() -> u8 {
+    crate::prefs::text(LAYOUT_KEY).and_then(|t| LAYOUTS.iter().position(|&l| l == t)).map_or(WIDE, |i| i as u8)
+}
 
 /// Mixer state that is not project data.
 pub struct MixerUi {
@@ -150,7 +157,7 @@ pub struct MixerUi {
 
 impl Default for MixerUi {
     fn default() -> Self {
-        MixerUi { sel: Vec::new(), layout: WIDE, slot_names: HashMap::new(), pending: Vec::new(), meters: Vec::new(),
+        MixerUi { sel: Vec::new(), layout: if cfg!(test) { WIDE } else { saved_layout() }, slot_names: HashMap::new(), pending: Vec::new(), meters: Vec::new(),
             meter_cfg: Default::default(), meter_at: None, solo: None, wheel_grab: None }
     }
 }
@@ -1256,7 +1263,7 @@ pub fn options_menu(s: &State, x: f32, y: f32) -> Popup {
     Popup { x, y, items, sub: None, scroll: [0; 2] }
 }
 
-/// Layout combo menu (§6.4): only Wide is drawn, the other layouts are greyed out.
+/// Layout combo menu (§6.4).
 pub fn layout_menu(s: &State, x: f32, y: f32) -> Popup {
     let mut items = Vec::new();
     for (i, &l) in LAYOUTS.iter().enumerate() {
@@ -1264,7 +1271,7 @@ pub fn layout_menu(s: &State, x: f32, y: f32) -> Popup {
             items.push(PItem::sep());
         }
         let on = Mark::Radio(s.mixer.layout == i as u8);
-        items.push(if i as u8 == WIDE { PItem::new(l, Cmd::Mixer(MCmd::Layout(i as u8))) } else { PItem::not_yet(l) }.mark(on));
+        items.push(PItem::new(l, Cmd::Mixer(MCmd::Layout(i as u8))).mark(on));
     }
     Popup { x, y, items, sub: None, scroll: [0; 2] }
 }
@@ -1472,8 +1479,12 @@ pub fn run(app: &mut App, c: MCmd) -> Option<String> {
             Some(format!("Inserted {}", name(s, n)))
         }
         MCmd::Route { dst, only, side } => route(s, dst, only, side),
-        // Wide is the layout shown; the others are greyed out in the menu.
-        MCmd::Layout(_) => None,
+        MCmd::Layout(l) => {
+            s.mixer.layout = l.min(LAYOUTS.len() as u8 - 1);
+            crate::prefs::set_text(LAYOUT_KEY, LAYOUTS[usize::from(s.mixer.layout)]);
+            s.mixer_scroll = 0.0;
+            None
+        }
         MCmd::CablePhysics => {
             let c = s.cables.get_mut();
             c.debug = !c.debug;
@@ -1864,7 +1875,7 @@ impl App {
         select(&mut self.state, t, false);
         // The master strip is fixed; an insert scrolls into the mixer's last painted view.
         if let Some(bar) = self.bar(crate::app::Scroll::MixerX).filter(|_| t > 0) {
-            let w = crate::views::mixer::STRIP_W;
+            let w = crate::views::mixer::strip_w(&self.state);
             let left = w * f32::from(t - 1);
             let scroll = self.state.mixer_scroll;
             if left < scroll {

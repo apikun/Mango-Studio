@@ -5885,7 +5885,7 @@ impl App {
                     }
                 }
                 Drag::Fader { track, y0, v0 } => {
-                    let per_px = views::mixer::FADER_PER_PX / f64::from(views::mixer::scale(self.state.win_rect(Win::Mixer)));
+                    let per_px = views::mixer::fader_per_px(&self.state, self.state.win_rect(Win::Mixer));
                     let v = (v0 - f64::from(y - y0) * per_px).clamp(0.0, 1.0);
                     if let Some(t) = self.state.project.mixer.iter_mut().find(|t| t.index == track) {
                         t.volume = Some(v);
@@ -16532,6 +16532,21 @@ mod tests {
         app.mouse_up();
         let v = app.state.project.mixer.iter().find(|m| m.index == 1).and_then(|m| m.volume).unwrap();
         assert!(v > 0.8, "fader moved up: {v}");
+
+        // Every layout draws its strips, and its faders follow the mouse.
+        for l in 0..crate::mixer::LAYOUTS.len() as u8 {
+            let mut app = App::new(None);
+            app.state.z = vec![Win::Mixer];
+            app.state.mixer.layout = l;
+            frame(&mut app, &mut a, None);
+            let f = hit_rect(&app, &Action::Fader(1));
+            app.mouse_move(f.cx(), f.cy());
+            app.mouse_down();
+            app.mouse_move(f.cx(), f.cy() - 10.0);
+            app.mouse_up();
+            let v = app.state.project.mixer.iter().find(|m| m.index == 1).and_then(|m| m.volume).unwrap();
+            assert!(v > 0.8, "{}: fader moved up: {v}", crate::mixer::LAYOUTS[usize::from(l)]);
+        }
     }
 
     /// Tiny windows (e.g. while restoring after Alt+Tab) must not panic in any view.
