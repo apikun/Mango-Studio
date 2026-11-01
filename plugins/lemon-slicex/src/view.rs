@@ -232,6 +232,7 @@ pub fn paint(c: &mut Canvas, _t: &Palette, m: &dyn Model, st: &ViewState, look: 
     pad_panel(&mut ui, look);
     layer_panel(&mut ui, look);
     emblem(&mut ui);
+    middle_frame(&mut ui);
     plate(&mut ui, look);
     art_panel(&mut ui, look);
     filter_panel(&mut ui, look);
@@ -312,13 +313,34 @@ fn view_buttons(ui: &mut Ui, look: &Look) {
 
 /// A raised rounded panel of the middle.
 fn plate_box(ui: &mut Ui, r: Rect) {
-    ui.c.fill_rect_gradient(r, PLATE.shade(0.06), PLATE_DARK, 4.0);
-    ui.c.stroke_rrect(r.inset(0.5), 4.0, 1.0, INK_DIM.with_alpha(160));
+    // A recessed box inside the middle's frame: the articulator's and the filter's.
+    ui.c.fill_rrect(r, 3.0, Color::rgb(0x6b7077));
+    ui.c.stroke_rrect(r.inset(0.5), 3.0, 1.0, Color::rgb(0x565a61));
+    ui.c.fill_rect(Rect::new(r.x + 2.0, r.y + 1.0, r.w - 4.0, 1.0), Color::rgb(0x7d8289));
+}
+
+/// The middle band as one raised piece, as the original has it: the plate at the left, the column of the articulator and
+/// the filter beside it, the envelope at the right, no gaps between them.
+fn middle_frame(ui: &mut Ui) {
+    let band = edges(6.0, 654.0, 112.0, 322.0);
+    ui.c.fill_rect_gradient(band, Color::rgb(0x91969c), Color::rgb(0x7d8288), 5.0);
+    ui.c.stroke_rrect(band.inset(0.5), 5.0, 1.0, Color::rgb(0x4a4e55));
+    ui.c.fill_rect(edges(157.0, 320.0, 114.0, 321.0), Color::rgb(0x777c83));
+    for x in [156.0, 320.0] {
+        ui.c.fill_rect(Rect::new(x, 114.0, 1.0, 207.0), Color::rgb(0x5d6168));
+    }
 }
 
 /// A title at the top-left of a panel.
 fn title(ui: &mut Ui, r: Rect, text: &str, ink: Color) {
     ui.c.text(SMALL.bold(), r.x + 8.0, r.y + 4.0, ink, text);
+}
+
+/// An italic title with a small curve icon before it, as the articulator's and the filter's have.
+fn italic_title(ui: &mut Ui, r: Rect, text: &str, ink: Color) {
+    let (x, y) = (r.x + 8.0, r.y + 7.0);
+    ui.c.polyline(&[(x, y + 4.0), (x + 4.0, y + 4.0), (x + 7.0, y), (x + 10.0, y + 4.0)], 1.2, ink);
+    ui.c.text(Font::new(11).bold().italic(), x + 14.0, r.y + 3.0, ink, text);
 }
 
 /// A small button of the middle panel: light when on, with its label.
@@ -519,7 +541,6 @@ fn emblem(ui: &mut Ui) {
 // The middle panel
 
 fn plate(ui: &mut Ui, _look: &Look) {
-    plate_box(ui, PLATE_R);
     // Two small tabs on the top edge, as the original's plate has.
     for x in [PLATE_R.x + 26.0, PLATE_R.x + 70.0] {
         ui.c.fill_rrect(Rect::new(x, PLATE_R.y - 2.0, 20.0, 5.0), 2.0, PLATE_DARK.shade(-0.08));
@@ -538,7 +559,7 @@ fn plate(ui: &mut Ui, _look: &Look) {
 
 fn art_panel(ui: &mut Ui, look: &Look) {
     plate_box(ui, ART_PANEL);
-    title(ui, ART_PANEL, "ARTICULATOR", INK);
+    italic_title(ui, ART_PANEL, "ARTICULATOR", Color::rgb(0xd8dde6));
     let sel = ui.st.sel;
     let st = look.state;
     let chosen = ui.st.chosen.min(st.slices.len().saturating_sub(1));
@@ -558,7 +579,7 @@ fn art_panel(ui: &mut Ui, look: &Look) {
 
 fn filter_panel(ui: &mut Ui, look: &Look) {
     plate_box(ui, FILTER_PANEL);
-    title(ui, FILTER_PANEL, "FILTER", INK);
+    italic_title(ui, FILTER_PANEL, "FILTER", Color::rgb(0xd8dde6));
     let sel = ui.st.sel;
     let a = &look.ext.artic[sel.art];
     // Modes: LP BP BS HP on the first row, OFF and the slopes on the second.
@@ -566,7 +587,7 @@ fn filter_panel(ui: &mut Ui, look: &Look) {
         tab(ui, Rect::new(196.0 + 29.0 * i as f32, 204.0, 27.0, 17.0), Target::Ext(Ctl::Mode(i as u8)), name, a.mode == i as u8, false);
     }
     let off = a.mode >= crate::ext::FILTER_OFF;
-    tab(ui, Rect::new(196.0, 224.0, 27.0, 17.0), Target::Ext(Ctl::Mode(crate::ext::FILTER_OFF)), "OFF", off, false);
+    tab(ui, Rect::new(196.0, 224.0, 27.0, 17.0), Target::Ext(Ctl::Mode(crate::ext::FILTER_OFF)), "OF", off, false);
     for i in 0..3u8 {
         tab(ui, Rect::new(225.0 + 29.0 * f32::from(i), 224.0, 27.0, 17.0), Target::Ext(Ctl::Slope(i + 1)), &format!("x{}", i + 1), a.slope == i + 1 && !off, off);
     }
