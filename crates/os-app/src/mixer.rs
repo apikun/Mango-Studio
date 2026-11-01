@@ -1371,11 +1371,15 @@ pub fn run(app: &mut App, c: MCmd) -> Option<String> {
             None
         }
         MCmd::RandomColor(n) => {
-            for t in targets(s, n) {
-                let c = crate::patterns::random_color(u64::from(t).wrapping_mul(0x9e37_79b9) ^ u64::from(rand_seed()));
-                if let Some(m) = track_mut(s, t) {
-                    m.color = Some(c);
-                }
+            // A clear colour each time: the hue moves at least 70° from the track's current one (FL's random colours
+            // are vivid, and a muted hash could land on a near twin of the last), the selected tracks spread apart.
+            let frac = (rand_seed() % 10_000) as f32 / 10_000.0;
+            for (i, t) in targets(s, n).into_iter().enumerate() {
+                let Some(m) = track_mut(s, t) else { continue };
+                let old = m.color.map_or(frac * 360.0, |c| os_theme::Color::rgb(u32::from(c.r) << 16 | u32::from(c.g) << 8 | u32::from(c.b)).hsl().0);
+                let h = (old + 70.0 + 220.0 * frac + 137.5 * i as f32) % 360.0;
+                let c = os_theme::Color::from_hsl_pub(h, 0.55, 0.5, 255);
+                m.color = Some(Rgb::new(c.r, c.g, c.b));
             }
             None
         }
@@ -1916,6 +1920,19 @@ mod tests {
         let mut app = App::new(None);
         app.state.project = crate::app::test_project();
         app
+    }
+
+    #[test]
+    fn random_color_changes_each_time() {
+        let mut app = app();
+        let col = |app: &App| track(&app.state, 1).and_then(|m| m.color);
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..6 {
+            run(&mut app, MCmd::RandomColor(1));
+            seen.insert(format!("{:?}", col(&app)));
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        }
+        assert!(seen.len() > 3, "{seen:?}");
     }
 
     fn asio(inputs: u16, outputs: u16) -> crate::device::DeviceInfo {

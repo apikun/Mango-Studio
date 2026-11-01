@@ -20461,6 +20461,27 @@ mod tests {
         c.pixmap.save_png(dir.join("mx_slot_menu.png")).unwrap();
     }
 
+    /// The mixer track menu's Random color, clicked twice, gives the track a new colour each time.
+    #[test]
+    fn mixer_random_color_from_the_menu() {
+        let Ok(mut c) = Canvas::new(1920, 1080, 1.0) else { return };
+        let mut app = App::new(None);
+        app.state.project = test_project();
+        app.state.z = vec![Win::Mixer];
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            app.state.playlist.popup = Some(crate::mixer::track_menu(&app.state, 3, 500.0, 200.0));
+            frame(&mut app, &mut c, None);
+            let r = app.hits.iter().rev().find(|h| h.hint == "Random color").map(|h| h.rect).expect("Random color row");
+            click(&mut app, &mut c, r);
+            seen.push(app.state.project.mixer.iter().find(|m| m.index == 3).and_then(|m| m.color));
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let mut d = seen.clone();
+        d.dedup();
+        assert!(d.len() > 2 && seen[0].is_some(), "{seen:?}");
+    }
+
     /// F8 and the toolbar's plugin button open the menu of every plugin: an effect goes into the selected mixer track's
     /// first empty slot, a generator to the bottom of the channel rack; F8 again closes the menu (spec:
     /// ui/plugin-menu.md §1).
