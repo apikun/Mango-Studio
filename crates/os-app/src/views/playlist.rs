@@ -867,39 +867,6 @@ fn offset(c: Color, d: i16) -> Color {
     Color { r: f(c.r), g: f(c.g), b: f(c.b), a: c.a }
 }
 
-/// The grid's vertical lines again over a clip's body, dark and soft, so the grid shows through the clip as it does in FL
-/// (a clip's body is opaque; the lines of `grid_lines` are under it).
-fn clip_grid(ui: &mut Ui, g: &PGeom, bar_w: f32, body: Rect) {
-    let area = body.intersect(&g.grid);
-    if area.w <= 1.0 || area.h <= 1.0 {
-        return;
-    }
-    let mut bar_step = 1;
-    while bar_w * (bar_step as f32) < 8.0 {
-        bar_step *= 2;
-    }
-    // The bars the body spans (one more each side: the drawing grid may differ by a pixel).
-    let b0 = ((((area.x - g.grid.x) + g.scroll_x) / bar_w).floor() as i32 - 1).div_euclid(bar_step) * bar_step;
-    let b1 = ((((area.right() - g.grid.x) + g.scroll_x) / bar_w).ceil() as i32) + 1;
-    let unit = pl::grid_ticks(g.ppq, bar_w) as f32 * g.ppt;
-    let per_bar = ((bar_w / unit).round() as i32).max(1);
-    let black = Color::rgb(0x000000);
-    ui.c.push_clip(area);
-    let mut b = b0;
-    while b < b1 {
-        let x = g.xs(f64::from(b) * f64::from(bar_w));
-        if bar_step == 1 && per_bar > 1 {
-            for q in 1..per_bar {
-                let beat = unit * q as f32 % (bar_w / 4.0) < 0.5;
-                ui.c.fill_rect(Rect::new(g.xs(f64::from(b) * f64::from(bar_w) + f64::from(q as f32 * unit)), area.y, 1.0, area.h), black.with_alpha(if beat { 46 } else { 24 }));
-            }
-        }
-        ui.c.fill_rect(Rect::new(x, area.y, if bar_step == 1 { 2.0 } else { 1.0 }, area.h), black.with_alpha(84));
-        b += bar_step;
-    }
-    ui.c.pop_clip();
-}
-
 /// One clip (§2): a near-black outline with rounded top corners, the title strip (pattern clips neutral, audio and
 /// automation clips in their channel's colour), the body in the track's colour, then the content.
 fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
@@ -995,7 +962,6 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
         ui.c.fill_rect(Rect::new(body_r.x, body_r.bottom() - 1.0, body_r.w, 1.0), dim(body.shade(-0.3)));
     }
 
-    clip_grid(ui, g, s.playlist_bar_w, body_r);
     ui.c.push_clip(inner.intersect(&g.grid));
     // Type icon (✕ when muted) and name; a narrow clip shows only its strip.
     let (ix, iy) = (inner.x + 3.0, inner.y + 2.0);
