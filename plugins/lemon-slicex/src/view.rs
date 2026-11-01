@@ -561,7 +561,12 @@ fn emblem(ui: &mut Ui) {
 // ---------------------------------------------------------------------------------------------------------------
 // The middle panel
 
-fn plate(ui: &mut Ui, _look: &Look) {
+/// The left of the middle band: the region settings of the chosen slice once a loop is loaded, the emblem before.
+fn plate(ui: &mut Ui, look: &Look) {
+    if look.frames > 0 && !look.state.slices.is_empty() {
+        return region_settings(ui, look);
+    }
+
     // Two small tabs on the top edge, as the original's plate has.
     for x in [PLATE_R.x + 26.0, PLATE_R.x + 70.0] {
         ui.c.fill_rrect(Rect::new(x, PLATE_R.y - 2.0, 20.0, 5.0), 2.0, PLATE_DARK.shade(-0.08));
@@ -576,6 +581,59 @@ fn plate(ui: &mut Ui, _look: &Look) {
     let y = (PLATE_R.y + 168.0 - lh / 2.0).round();
     lemon::spaced(ui.c, f, x, y, Color::rgb(0xf4f6fa), "SLIC", a);
     lemon::spaced(ui.c, f, x + w1 + 4.0, y, brand::MAIN, "EX", a);
+}
+
+/// The chosen slice's own settings: its name, key and cut group, and AMP, FILTER, SPEED and START, each with the
+/// articulator that moves it and by how much.
+fn region_settings(ui: &mut Ui, look: &Look) {
+    let st = look.state;
+    let chosen = ui.st.chosen.min(st.slices.len().saturating_sub(1));
+    let reg = look.ext.region(chosen);
+    let ink = Color::rgb(0xd8dde6);
+    // The panel's title, as the articulator's and the filter's.
+    let (tx, ty) = (PLATE_R.x + 10.0, PLATE_R.y + 8.0);
+    ui.c.polyline(&[(tx, ty + 4.0), (tx + 4.0, ty + 4.0), (tx + 7.0, ty), (tx + 10.0, ty + 4.0)], 1.2, ink);
+    ui.c.text(Font::new(11).bold().italic(), tx + 14.0, PLATE_R.y + 4.0, ink, "REGION SETTINGS");
+    // The region list.
+    let pick = edges(PLATE_R.x + 6.0, PLATE_R.right() - 6.0, 134.0, 152.0);
+    let t = Target::Ext(Ctl::RegPick);
+    let hov = ui.hover(pick, &t);
+    ui.c.fill_rrect(pick, 3.0, if hov { Color::rgb(0x5a6070) } else { Color::rgb(0x4b515f) });
+    let name = st.slices.get(chosen).map(|s| if s.name.is_empty() { format!("Marker #{}", chosen + 1) } else { s.name() }).unwrap_or_default();
+    ui.c.text_clip(LABEL.bold(), pick.x + 6.0, pick.y + 3.0, pick.w - 24.0, Color::rgb(0xf2f4f8), &name);
+    ui.c.fill_polygon(&[(pick.right() - 14.0, pick.cy() - 2.0), (pick.right() - 6.0, pick.cy() - 2.0), (pick.right() - 10.0, pick.cy() + 3.0)], Color::rgb(0xf2f4f8));
+    ui.hit(pick, t);
+    // The trigger key and the cut group.
+    let small = Font::new(9).bold();
+    ui.c.text(small, PLATE_R.x + 8.0, 162.0, INK_DIM, "KEY");
+    let key = edges(PLATE_R.x + 32.0, PLATE_R.x + 74.0, 157.0, 173.0);
+    let kst = ui.state(key, &Target::Key);
+    lemon::field(ui.c, key, kst);
+    let kcol = if st.slices.get(chosen).is_some_and(|s| s.root >= 0) { brand::MAIN } else { SOFT };
+    ui.c.text_center(SMALL.bold(), key, kcol, &key_name(st.key_of(chosen)));
+    ui.hit(key, Target::Key);
+    ui.c.text(small, PLATE_R.x + 84.0, 162.0, INK_DIM, "CUT");
+    let cut = edges(PLATE_R.x + 106.0, PLATE_R.x + 138.0, 157.0, 173.0);
+    let ct = Target::Ext(Ctl::RegCut);
+    let cst = ui.state(cut, &ct);
+    lemon::field(ui.c, cut, cst);
+    ui.c.text_center(SMALL.bold(), cut, if reg.cut > 0 { brand::MAIN } else { SOFT }, &if reg.cut > 0 { reg.cut.to_string() } else { "-".into() });
+    ui.hit(cut, ct);
+    // The four rows.
+    let values = [reg.amp, (reg.filter + 1.0) / 2.0, (reg.speed + 1.0) / 2.0, reg.start];
+    for (row, name) in ["AMP", "FILTER", "SPEED", "START"].iter().enumerate() {
+        let y = 182.0 + 34.0 * row as f32;
+        ui.c.text(small, PLATE_R.x + 6.0, y + 1.0, INK_DIM, name);
+        knob(ui, Target::Ext(Ctl::RegKnob(row as u8, 0)), PLATE_R.x + 24.0, y + 22.0, 9.0, values[row], "", 0.0, INK);
+        ui.c.text(Font::new(8).bold(), PLATE_R.x + 46.0, y + 18.0, INK_DIM, "ART");
+        let art = Rect::new(PLATE_R.x + 68.0, y + 14.0, 22.0, 17.0);
+        let at = Target::Ext(Ctl::RegArt(row as u8));
+        let ahov = ui.hover(art, &at);
+        ui.c.fill_rect(art, if ahov { Color::rgb(0x3d4350) } else { Color::rgb(0x2f343f) });
+        ui.c.text_center(SMALL.bold(), art, if reg.art[row] == crate::ext::ART_OWN { SOFT } else { brand::MAIN }, &(look.ext.art_for(chosen, row) + 1).to_string());
+        ui.hit(art, at);
+        knob(ui, Target::Ext(Ctl::RegKnob(row as u8, 1)), PLATE_R.x + 112.0, y + 22.0, 9.0, reg.amt[row], "", 0.0, INK);
+    }
 }
 
 fn art_panel(ui: &mut Ui, look: &Look) {

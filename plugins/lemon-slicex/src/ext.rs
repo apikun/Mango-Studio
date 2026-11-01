@@ -194,6 +194,32 @@ impl Artic {
 /// How the two decks' regions on one key layer: the layering modes (the original's list).
 pub const LAYERS: [&str; 7] = ["All", "All (gain compensated)", "Velocity-mapped", "Modulation X-mapped", "Modulation Y-mapped", "Random", "Cycle"];
 
+/// The settings of one slice (the original's region settings): its level, the filter's, speed and start offsets, which
+/// articulator moves each of the four, how much, and the cut group.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Region {
+    /// Level 0..1 (0.8 is as recorded), the filter's cutoff offset and the speed's (octaves), each -1..1, the start's
+    /// offset into the slice 0..1.
+    pub amp: f32,
+    pub filter: f32,
+    pub speed: f32,
+    pub start: f32,
+    /// The articulator that moves AMP, FILTER, SPEED and START (`ART_OWN`: the slice's own), and by how much (0..1).
+    pub art: [u8; 4],
+    pub amt: [f32; 4],
+    /// Slices of one cut group (1..8) stop each other; 0 = none.
+    pub cut: u8,
+}
+
+/// The articulator a region's setting takes unless one is chosen: the slice's own.
+pub const ART_OWN: u8 = 255;
+
+impl Default for Region {
+    fn default() -> Self {
+        Region { amp: 0.8, filter: 0.0, speed: 0.0, start: 0.0, art: [ART_OWN; 4], amt: [1.0; 4], cut: 0 }
+    }
+}
+
 /// What a selection in the wave editor snaps to.
 pub const SNAPS: [&str; 3] = ["Nothing", "Regions", "Zero-crossings"];
 
@@ -225,6 +251,8 @@ pub struct Ext {
     pub artic: [Artic; ARTICS],
     /// The articulator of each slice (missing = the first).
     pub slice_art: Vec<u8>,
+    /// The region settings of each slice (missing = the defaults).
+    pub regions: Vec<Region>,
     /// The modulation pad, 0..1 each way, and whether it moves smoothly to a new position.
     pub mod_x: f32,
     pub mod_y: f32,
@@ -262,6 +290,7 @@ impl Default for Ext {
         Ext {
             artic: std::array::from_fn(|_| Artic::default()),
             slice_art: Vec::new(),
+            regions: Vec::new(),
             mod_x: 0.5,
             mod_y: 0.5,
             smooth: true,
@@ -371,6 +400,17 @@ impl Ext {
         for v in [u8::from(self.show_regions), self.snap, u8::from(self.slide), u8::from(self.click_free), u8::from(self.freeze)] {
             o.b(v);
         }
+        o.n(self.regions.len());
+        for r in &self.regions {
+            for v in [r.amp, r.filter, r.speed, r.start] {
+                o.f(v);
+            }
+            for k in 0..4 {
+                o.b(r.art[k]);
+                o.f(r.amt[k]);
+            }
+            o.b(r.cut);
+        }
         o.0
     }
 
@@ -417,6 +457,24 @@ impl Ext {
         }
         if let (Some(r), Some(s), Some(sl), Some(c), Some(f)) = (i.b(), i.b(), i.b(), i.b(), i.b()) {
             (x.show_regions, x.snap, x.slide, x.click_free, x.freeze) = (r != 0, s.min(2), sl != 0, c != 0, f != 0);
+            if let Some(n) = i.n() {
+                for _ in 0..n.min(4096) {
+                    let Some(mut r) = (|| {
+                        let mut r = Region { amp: i.f()?.clamp(0.0, 1.0), filter: i.f()?.clamp(-1.0, 1.0), speed: i.f()?.clamp(-1.0, 1.0), start: i.f()?.clamp(0.0, 1.0), ..Region::default() };
+                        for k in 0..4 {
+                            let a = i.b()?;
+                            r.art[k] = if a == ART_OWN { a } else { a.min(ARTICS as u8 - 1) };
+                            r.amt[k] = i.f()?.clamp(0.0, 1.0);
+                        }
+                        r.cut = i.b()?.min(8);
+                        Some(r)
+                    })() else {
+                        break;
+                    };
+                    r.cut = r.cut.min(8);
+                    x.regions.push(r);
+                }
+            }
         }
         Some(x)
     }
@@ -424,6 +482,26 @@ impl Ext {
     /// The articulator slice `i` plays through.
     pub fn art_of(&self, i: usize) -> usize {
         self.slice_art.get(i).map_or(0, |&a| usize::from(a).min(ARTICS - 1))
+    }
+
+    /// Slice `i`'s region settings.
+    pub fn region(&self, i: usize) -> Region {
+        self.regions.get(i).copied().unwrap_or_default()
+    }
+
+    pub fn region_mut(&mut self, i: usize) -> &mut Region {
+        if self.regions.len() <= i {
+            self.regions.resize(i + 1, Region::default());
+        }
+        &mut self.regions[i]
+    }
+
+    /// The articulator that moves target row `row` (0..3: AMP, FILTER, SPEED, START) of slice `i`.
+    pub fn art_for(&self, i: usize, row: usize) -> usize {
+        match self.region(i).art[row.min(3)] {
+            ART_OWN => self.art_of(i),
+            a => usize::from(a).min(ARTICS - 1),
+        }
     }
 
     pub fn set_art(&mut self, slice: usize, art: usize) {
@@ -454,6 +532,10 @@ mod tests {
         x.artic[3].env[Target::Vol.index()] = Env { att: 12.0, dec: 300.0, sus: 0.5, rel: 40.0, tempo: true, bend: 3.5 };
         x.artic[3].lfo[Target::Pan.index()] = Lfo { shape: 3, rate: 0.5, tempo: true };
         x.set_art(5, 3);
+        x.region_mut(2).amp = 0.3;
+        x.region_mut(2).art[1] = 4;
+        x.region_mut(2).cut = 3;
+        x.region_mut(2).start = 0.25;
         x.deck_b = vec![1, 2, 3];
         x.master = 0.5;
         x.view = 2;
@@ -462,8 +544,8 @@ mod tests {
         assert_eq!(Ext::parse(&b), Some(x.clone()));
         assert_eq!(x.art_of(5), 3);
         assert_eq!(x.art_of(2), 0);
-        assert!(Ext::parse(&b[..b.len() - 214]).is_some_and(|e| e.master == 1.0), "an older state has no master volume");
-        assert!(Ext::parse(&b[..b.len() - 219]).is_none(), "cut short");
+        assert!(Ext::parse(&b[..b.len() - 329]).is_some_and(|e| e.master == 1.0), "an older state has no master volume");
+        assert!(Ext::parse(&b[..b.len() - 334]).is_none(), "cut short");
         assert!(Ext::parse(b"nope").is_none());
     }
 

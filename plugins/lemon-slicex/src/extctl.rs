@@ -15,11 +15,13 @@ pub struct Sel {
     pub art: usize,
     pub tgt: Target,
     pub src: Source,
+    /// The chosen slice: the region settings are its.
+    pub slice: usize,
 }
 
 impl Default for Sel {
     fn default() -> Self {
-        Sel { art: 0, tgt: Target::Vol, src: Source::Env }
+        Sel { art: 0, tgt: Target::Vol, src: Source::Env, slice: 0 }
     }
 }
 
@@ -60,6 +62,12 @@ pub enum Ctl {
     Options,
     /// Opens a loop into deck A (0) or B (1).
     LoadDeck(u8),
+    /// The region settings: row `0..3` (AMP, FILTER, SPEED, START)'s setting (`1`: the amount the articulator moves it
+    /// by) as a knob, the articulator chosen for the row, the cut group, and the list of regions.
+    RegKnob(u8, u8),
+    RegArt(u8),
+    RegCut,
+    RegPick,
     /// The master volume fader, and the pad's two axes as knobs.
     Master,
     RandLvl,
@@ -91,7 +99,7 @@ pub enum Ctl {
 impl Ctl {
     /// Whether it is a knob (a vertical drag moves it).
     pub fn is_knob(self) -> bool {
-        matches!(self, Ctl::Cut | Ctl::Res | Ctl::CutEnv | Ctl::Amt | Ctl::Att | Ctl::Dec | Ctl::Sus | Ctl::Rel | Ctl::LfoRate | Ctl::Master | Ctl::RandLvl | Ctl::LfoLvl | Ctl::PadX | Ctl::PadY)
+        matches!(self, Ctl::Cut | Ctl::Res | Ctl::CutEnv | Ctl::Amt | Ctl::Att | Ctl::Dec | Ctl::Sus | Ctl::Rel | Ctl::LfoRate | Ctl::Master | Ctl::RandLvl | Ctl::LfoLvl | Ctl::PadX | Ctl::PadY | Ctl::RegKnob(..))
     }
 
     /// Whether a click flips it or picks it (a button).
@@ -106,6 +114,7 @@ impl Ctl {
             Ctl::Sus => "SUS",
             Ctl::Rel => "REL",
             Ctl::LfoRate => "SPEED",
+            Ctl::RegKnob(r, w) => [["AMP", "FILTER", "SPEED", "START"], ["AMP MOD", "FILTER MOD", "SPEED MOD", "START MOD"]][usize::from(w.min(1))][usize::from(r.min(3))],
             Ctl::Master => "VOLUME",
             Ctl::RandLvl => "RANDOMNESS",
             Ctl::LfoLvl => "LFO",
@@ -145,6 +154,15 @@ pub fn get(x: &Ext, s: &Sel, c: Ctl) -> f32 {
     match c {
         Ctl::Cut => a.cut,
         Ctl::Res => a.res,
+        Ctl::RegKnob(r, w) => {
+            let g = x.region(s.slice);
+            let r = usize::from(r.min(3));
+            if w == 1 {
+                g.amt[r]
+            } else {
+                [g.amp, bipolar(g.filter), bipolar(g.speed), g.start][r]
+            }
+        }
         Ctl::Master => x.master / 1.25,
         Ctl::RandLvl => x.rand_level,
         Ctl::LfoLvl => x.lfo_level,
@@ -169,6 +187,20 @@ pub fn set(x: &mut Ext, s: &Sel, c: Ctl, n: f32) {
     match c {
         Ctl::Cut => a.cut = n,
         Ctl::Res => a.res = n,
+        Ctl::RegKnob(r, w) => {
+            let g = x.region_mut(s.slice);
+            let r = usize::from(r.min(3));
+            if w == 1 {
+                g.amt[r] = n;
+            } else {
+                match r {
+                    0 => g.amp = n,
+                    1 => g.filter = n * 2.0 - 1.0,
+                    2 => g.speed = n * 2.0 - 1.0,
+                    _ => g.start = n,
+                }
+            }
+        }
         Ctl::Master => x.master = n * 1.25,
         Ctl::RandLvl => x.rand_level = n,
         Ctl::LfoLvl => x.lfo_level = n,
@@ -194,6 +226,17 @@ pub fn text(x: &Ext, s: &Sel, c: Ctl) -> String {
     match c {
         Ctl::Cut => pct(a.cut),
         Ctl::Res => pct(a.res),
+        Ctl::RegKnob(r, w) => {
+            let g = x.region(s.slice);
+            let r = usize::from(r.min(3));
+            match (w, r) {
+                (1, _) => pct(g.amt[r]),
+                (_, 0) => pct(g.amp),
+                (_, 1) => format!("{:+.0}%", g.filter * 100.0),
+                (_, 2) => format!("{:+.1} semitones", g.speed * 12.0),
+                _ => pct(g.start),
+            }
+        }
         Ctl::Master => pct(x.master),
         Ctl::RandLvl => pct(x.rand_level),
         Ctl::LfoLvl => pct(x.lfo_level),
@@ -220,6 +263,13 @@ pub fn default_norm(c: Ctl, s: &Sel) -> f32 {
     match c {
         Ctl::Cut => d.cut,
         Ctl::Res => d.res,
+        Ctl::RegKnob(r, w) => {
+            if w == 1 {
+                1.0
+            } else {
+                [0.8, 0.5, 0.5, 0.0][usize::from(r.min(3))]
+            }
+        }
         Ctl::Master => 0.8,
         Ctl::RandLvl | Ctl::LfoLvl => 1.0,
         Ctl::PadX | Ctl::PadY => 0.5,
@@ -243,7 +293,7 @@ mod tests {
     #[test]
     fn knobs_read_back_what_they_wrote() {
         let mut x = Ext::default();
-        let s = Sel { art: 2, tgt: Target::Cut, src: Source::Lfo };
+        let s = Sel { art: 2, tgt: Target::Cut, src: Source::Lfo, slice: 0 };
         for c in [Ctl::Cut, Ctl::Res, Ctl::CutEnv, Ctl::Amt, Ctl::Att, Ctl::Dec, Ctl::Sus, Ctl::Rel, Ctl::LfoRate] {
             set(&mut x, &s, c, 0.3);
             assert!((get(&x, &s, c) - 0.3).abs() < 1e-3, "{c:?}: {}", get(&x, &s, c));
@@ -260,7 +310,7 @@ mod tests {
     #[test]
     fn the_lfo_speed_follows_tempo_mode() {
         let mut x = Ext::default();
-        let s = Sel { art: 0, tgt: Target::Pan, src: Source::Lfo };
+        let s = Sel { art: 0, tgt: Target::Pan, src: Source::Lfo, slice: 0 };
         set(&mut x, &s, Ctl::LfoRate, 1.0);
         assert!((x.artic[0].lfo[0].rate - 20.0).abs() < 1e-2);
         x.artic[0].lfo[0].tempo = true;

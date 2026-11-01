@@ -23,7 +23,7 @@ use os_ui::kit::menu::{Mark, MenuItem, MenuStyle};
 
 use crate::edit::{self, Clip, Range, Shift};
 use crate::ext::{Ext, Source};
-use crate::extctl::{self, Ctl};
+use crate::extctl::{self, Ctl, Sel};
 use crate::params::{self, SlicexParams, NAMES};
 use crate::state::{State, H_BEATS, H_BPM};
 use crate::view::{self, Target, ViewState};
@@ -151,6 +151,8 @@ pub enum Cmd {
     DefaultKeys,
     /// Select previous (-1) or next (1) region.
     Select(i32),
+    /// The region the region settings show.
+    Choose(usize),
     /// A sample edit, a selection change, a zoom, and the wave editor's switches.
     Edit(Ed),
     SaveAs(SaveKind),
@@ -176,6 +178,8 @@ pub enum Cmd {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuReq {
+    /// The region list of the region settings.
+    Regions,
     /// The Run script button's menu: the region presets.
     Script,
     /// The options button's menu (layering, crossfade, pad, articulator).
@@ -459,7 +463,36 @@ impl Logic {
 
     /// A press on a control of the added panels.
     fn ext_down(&mut self, c: Ctl, x: f32, y: f32, btn: Btn, m: Mods) -> Vec<Act> {
+        self.view.sel.slice = self.view.chosen;
         let sel = self.view.sel;
+        // The region settings' two small boxes: a click takes the next value, a right click the one before (or the slice's
+        // own articulator).
+        if let Ctl::RegArt(row) = c {
+            let (i, row) = (self.view.chosen, usize::from(row));
+            let cur = self.params.ext().art_for(i, row);
+            match btn {
+                Btn::Left => self.edit_ext(|e| e.region_mut(i).art[row] = ((cur + 1) % crate::ext::ARTICS) as u8),
+                Btn::Right => self.edit_ext(|e| e.region_mut(i).art[row] = crate::ext::ART_OWN),
+                Btn::Middle => {}
+            }
+            return vec![Act::Repaint];
+        }
+        if c == Ctl::RegCut {
+            let i = self.view.chosen;
+            let d = match btn {
+                Btn::Left => 1,
+                Btn::Right => 8,
+                Btn::Middle => 0,
+            };
+            self.edit_ext(|e| {
+                let r = e.region_mut(i);
+                r.cut = if btn == Btn::Middle { 0 } else { (r.cut + d) % 9 };
+            });
+            return vec![Act::Repaint];
+        }
+        if c == Ctl::RegPick {
+            return vec![Act::Menu(MenuReq::Regions, x, y)];
+        }
         if btn == Btn::Right {
             if let Ctl::Edit(i) = c {
                 return self.edit_button(i, btn, x, y);
@@ -664,6 +697,10 @@ impl Logic {
             Ctl::Crossfade(n) => format!("Crossfade\t{}", crate::ext::FADES[usize::from(n).min(4)]),
             Ctl::AutoDump => format!("Auto-dump\t{}", tab(x.auto_dump)),
             Ctl::Options => "Options".into(),
+            Ctl::RegKnob(r, w) => format!("{}\t{}", c.caption(), extctl::text(&x, &Sel { slice: self.view.chosen, ..sel }, Ctl::RegKnob(r, w))),
+            Ctl::RegArt(r) => format!("Articulator of {}\tclick: next, right-click: the slice's own", ["AMP", "FILTER", "SPEED", "START"][usize::from(r.min(3))]),
+            Ctl::RegCut => "Cut group\tslices of one group stop each other".into(),
+            Ctl::RegPick => "Choose the region".into(),
             Ctl::RandLvl | Ctl::LfoLvl => format!("{}\t{}", c.caption(), extctl::text(&x, &sel, c)),
             Ctl::LoadDeck(n) => format!("Load a loop into deck {}", if n == 0 { 'A' } else { 'B' }),
             Ctl::Key(k) => format!("Key {}", view::key_name(i32::from(k))),
@@ -957,6 +994,15 @@ impl Logic {
     pub fn menu(&self, req: &MenuReq) -> MenuDef<Cmd> {
         let mut m = MenuDef::new(MenuStyle::Context);
         match req {
+            MenuReq::Regions => {
+                let st = self.state();
+                let chosen = self.chosen(&st);
+                m.head("Regions", Cmd::None);
+                for (i, s) in st.slices.iter().enumerate() {
+                    let name = if s.name.is_empty() { format!("Marker #{}", i + 1) } else { s.name() };
+                    m.add(MenuItem::item(&name).mark(Mark::Radio(i == chosen)), Cmd::Choose(i));
+                }
+            }
             MenuReq::Script => {
                 let has = self.frames() > 0 && !self.state().slices.is_empty();
                 m.head("Run script", Cmd::None);
@@ -1232,6 +1278,7 @@ impl Logic {
                     self.commit(&st);
                 }
             }
+            Cmd::Choose(i) => self.view.chosen = i.min(self.state().slices.len().saturating_sub(1)),
             Cmd::Edit(e) => return self.run_edit(e),
             Cmd::SaveAs(k) => return vec![Act::Save(k)],
             Cmd::Sel(op) => self.run_sel(op),
@@ -1930,6 +1977,7 @@ impl Logic {
         let frames = self.frames();
         let can_dump = self.hosted && frames > 0 && !st.slices.is_empty();
         self.view.chosen = self.chosen(&st);
+        self.view.sel.slice = self.view.chosen;
         // A value shows over the wave while it is dragged; no tooltips otherwise.
         let hint = if self.hosted || (self.drag.is_none() && self.ext_drag.is_none()) { String::new() } else { self.hint.clone() };
         self.peaks();
@@ -2909,6 +2957,38 @@ mod tests {
         l.shared.voices.store(false, Ordering::Relaxed);
         l.tick();
         assert!(l.shared.previews.lock().unwrap().iter().any(|p| p.0 == 60 && p.2), "played again");
+        let _ = std::fs::remove_file(p);
+    }
+
+    /// The region settings: a knob moves the chosen slice's own setting, ART picks its articulator (a right click the
+    /// slice's own), CUT the cut group, and the list chooses the region; they are saved with the articulators.
+    #[test]
+    fn region_settings_belong_to_the_chosen_slice() {
+        let (mut l, p) = loaded();
+        paint(&mut l);
+        l.view.chosen = 1;
+        paint(&mut l);
+        let (x, y) = centre(&l, &Target::Ext(Ctl::RegKnob(0, 0)));
+        l.down(x, y, Btn::Left, Mods::default(), false);
+        for _ in 0..40 {
+            l.delta(0.0, 1.0, Mods::default());
+        }
+        l.up(Btn::Left);
+        let ext = l.params.ext();
+        assert!(ext.region(1).amp < 0.7 && ext.region(0).amp == 0.8, "{:?}", ext.region(1));
+        let (x, y) = centre(&l, &Target::Ext(Ctl::RegArt(2)));
+        l.down(x, y, Btn::Left, Mods::default(), false);
+        l.up(Btn::Left);
+        assert_eq!(l.params.ext().art_for(1, 2), 1, "the next articulator");
+        l.down(x, y, Btn::Right, Mods::default(), false);
+        assert_eq!(l.params.ext().region(1).art[2], crate::ext::ART_OWN);
+        let (x, y) = centre(&l, &Target::Ext(Ctl::RegCut));
+        l.down(x, y, Btn::Left, Mods::default(), false);
+        l.down(x, y, Btn::Left, Mods::default(), false);
+        assert_eq!(l.params.ext().region(1).cut, 2);
+        assert!(l.menu(&MenuReq::Regions).find("Marker #3").is_some());
+        l.pick(&MenuReq::Regions, Cmd::Choose(2), 0.0, 0.0);
+        assert_eq!(l.view.chosen, 2);
         let _ = std::fs::remove_file(p);
     }
 

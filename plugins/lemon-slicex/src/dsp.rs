@@ -139,6 +139,8 @@ struct Voice {
     /// The deck the slice is of: 0 = A, 1 = B, and the gain its layering gives it.
     deck: u8,
     layer_gain: f32,
+    /// Its region's cut group (0: none).
+    cut: u8,
     art: usize,
     /// Frames into the slice (sample frames).
     pos: f64,
@@ -163,6 +165,8 @@ struct Mods {
     res: f32,
     /// Octaves of speed on top of the pitch shift.
     speed: f32,
+    /// How far into the slice it starts (0..1).
+    start: f32,
 }
 
 /// The sources' values for a voice at `t` seconds.
@@ -212,6 +216,26 @@ fn modulate(a: &Artic, t: f64, v: &Voice, b: &Block, mx: f32, my: f32) -> Mods {
         cut: (a.cut + sum(Target::Cut)).clamp(0.0, 1.0),
         res: (a.res + sum(Target::Res)).clamp(0.0, 1.0),
         speed: sum(Target::Speed),
+        start: sum(Target::Start),
+    }
+}
+
+/// What a voice's four settings come to at `t`: each of AMP, FILTER, SPEED and START is its region's own setting with the
+/// articulator the region chose moving it by the region's amount; the pan is the slice's articulator's.
+fn voice_mods(kit: &Kit, v: &Voice, t: f64, b: &Block, mx: f32, my: f32) -> Mods {
+    let ext = &kit.ext;
+    let reg = ext.region(v.slice);
+    let art = |row: usize| &ext.artic[ext.art_for(v.slice, row).min(ARTICS - 1)];
+    let base = modulate(&ext.artic[v.art.min(ARTICS - 1)], t, v, b, mx, my);
+    let (amp, fil, spd, sta) = (modulate(art(0), t, v, b, mx, my), modulate(art(1), t, v, b, mx, my), modulate(art(2), t, v, b, mx, my), modulate(art(3), t, v, b, mx, my));
+    let lerp = |a: f32, b: f32, k: f32| a + (b - a) * k;
+    Mods {
+        pan: base.pan,
+        gain: reg.amp * 1.25 * lerp(1.0, amp.gain, reg.amt[0]),
+        cut: (art(1).cut + reg.filter * 0.5 + (fil.cut - art(1).cut) * reg.amt[1]).clamp(0.0, 1.0),
+        res: (art(1).res + (fil.res - art(1).res) * reg.amt[1]).clamp(0.0, 1.0),
+        speed: reg.speed + spd.speed * reg.amt[2],
+        start: (reg.start + sta.start * reg.amt[3]).clamp(0.0, 0.95),
     }
 }
 
@@ -313,7 +337,28 @@ impl Engine {
             self.ended.push((v.key, v.id));
         }
         let art = usize::from(kit.ext.art_of(usize::from(slice))).min(ARTICS - 1);
-        self.voices.push(Voice { key, id, slice: usize::from(slice), deck, layer_gain, art, pos: 0.0, gain: velocity.clamp(0.0, 1.0), rand, t: 0.0, filt: [[[0.0; 2]; 3]; 2], release: None, age: self.clock });
+        let reg = kit.ext.region(usize::from(slice));
+        // A slice of a cut group stops the others of it.
+        if reg.cut > 0 {
+            let n = ((RELEASE_S * f64::from(self.rate)).round() as u32).max(1);
+            for o in &mut self.voices {
+                if o.cut == reg.cut && o.release.is_none() {
+                    o.release = Some((n, n));
+                }
+            }
+        }
+        let mut v = Voice { key, id, slice: usize::from(slice), deck, layer_gain, cut: reg.cut, art, pos: 0.0, gain: velocity.clamp(0.0, 1.0), rand, t: 0.0, filt: [[[0.0; 2]; 3]; 2], release: None, age: self.clock };
+        // Where it starts in the slice.
+        let b = Block { rand_level: kit.ext.rand_level, lfo_level: kit.ext.lfo_level, ..Block::default() };
+        let start = voice_mods(kit, &v, 0.0, &b, self.mx, self.my).start;
+        if start > 0.0 {
+            if let Some((_, spans)) = kit.deck(deck) {
+                if let Some(sp) = spans.get(usize::from(slice)) {
+                    v.pos = f64::from(start) * sp.next.saturating_sub(sp.start) as f64;
+                }
+            }
+        }
+        self.voices.push(v);
     }
 
     /// The note ends: its voices fade out (over the volume envelope's release when it shapes the volume).
@@ -370,13 +415,13 @@ impl Engine {
             let click = if b.declick { DECLICK_S * sr } else { 0.0 };
             let frames = s.frames();
             let fade = v.layer_gain;
-            let art = &kit.ext.artic[v.art.min(ARTICS - 1)];
+            let art = &kit.ext.artic[kit.ext.art_for(v.slice, 1).min(ARTICS - 1)];
             let end = if b.to_end { frames } else { span.next };
             let len = end.saturating_sub(span.start) as f64;
             let filtered = art.mode < FILTER_OFF;
             let mut at = 0;
             'voice: while at < n {
-                let m = modulate(art, v.t, v, b, mx, my);
+                let m = voice_mods(kit, v, v.t, b, mx, my);
                 let step = base_step * f64::from(m.speed).exp2();
                 // The filter's cutoff (20 Hz .. 20 kHz) and damping for the next stretch.
                 let fc = (20.0 * 1000f32.powf(m.cut)).min(out_rate as f32 * 0.45);
@@ -589,5 +634,32 @@ mod tests {
         e.note_on(Some(&k), 60, 1.0, None);
         let o = play(&mut e, &k, 100, &plain());
         assert!(o[0].abs() < 0.05 && peak(&o[60..]) > 0.7);
+    }
+
+    /// A region's own settings: its level scales the slice, its start skips into it, its speed changes the pitch, and a cut
+    /// group stops the slices of the group that sound.
+    #[test]
+    fn a_regions_settings_shape_its_slice() {
+        let mut k = kit();
+        let mut ext = flat();
+        ext.region_mut(0).amp = 0.4;
+        ext.region_mut(1).start = 0.5;
+        ext.region_mut(0).speed = 1.0;
+        ext.region_mut(0).cut = 2;
+        ext.region_mut(1).cut = 2;
+        k.ext = Arc::new(ext);
+        let mut e = Engine::new(1000.0);
+        e.note_on(Some(&k), 61, 1.0, None);
+        // Slice 1 starts half way into frames 100..300 (frame 200, value 0.2).
+        let o = play(&mut e, &k, 2, &plain());
+        assert!((o[0] - 0.2 * 1.0).abs() < 0.01, "{}", o[0]);
+        // Slice 0 at 0.4 of 0.8: 0.5 level; an octave up: twice the speed.
+        let mut e = Engine::new(1000.0);
+        e.note_on(Some(&k), 60, 1.0, None);
+        let o = play(&mut e, &k, 4, &plain());
+        assert!((o[1] - 0.002 * 0.5).abs() < 1e-4 && (o[2] - 0.004 * 0.5).abs() < 1e-4, "{o:?}");
+        // The cut group: slice 1 stops slice 0.
+        e.note_on(Some(&k), 61, 1.0, None);
+        assert!(e.voices.iter().filter(|v| v.release.is_none()).count() == 1, "one voice left to play");
     }
 }
