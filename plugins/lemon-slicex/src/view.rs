@@ -63,7 +63,7 @@ const KEYS_BTN: Rect = edges(528.0, 550.0, 10.0, 28.0);
 const PLATE_R: Rect = edges(6.0, 156.0, 112.0, 322.0);
 const ART_PANEL: Rect = edges(162.0, 316.0, 112.0, 180.0);
 const FILTER_PANEL: Rect = edges(162.0, 316.0, 186.0, 322.0);
-const GRAPH: Rect = edges(324.0, 652.0, 148.0, 282.0);
+pub const GRAPH: Rect = edges(324.0, 652.0, 148.0, 282.0);
 const KNOB_BAR: Rect = edges(322.0, 654.0, 286.0, 322.0);
 /// The toolbar and the info strip under the middle panel, and the wave.
 pub const BPM_BOX: Rect = edges(130.0, 188.0, 372.0, 397.0);
@@ -616,12 +616,11 @@ fn tabs(ui: &mut Ui, look: &Look) {
 /// The envelope's curve: time across, level up.
 fn env_curve(ui: &mut Ui, g: Rect, e: &crate::ext::Env, amount: f32) {
     let (att, dec, rel) = e.seconds(0.5);
-    let hold = (att + dec).max(0.05);
-    // The attack and decay fill the left half, ending at the sustain line in the middle; the release follows it.
-    let total = (hold * 2.0).max(hold + rel * 1.2).max(0.1);
-    let at = |t: f64| g.x + (t / total) as f32 * g.w;
+    let geo = env_geometry(e, g);
+    let at = |t: f64| g.x + (t / ENV_AXIS_S).min(1.0) as f32 * g.w;
     let ay = |v: f32| g.bottom() - 17.0 - v.clamp(0.0, 1.0) * (g.h - 21.0);
     let col = if amount == 0.0 { SOFT.with_alpha(110) } else { brand::MAIN };
+    let hold = att + dec;
     let n = 64;
     let mut pts = vec![(at(0.0), ay(e.level(0.0, 0.5)))];
     for i in 1..=n {
@@ -630,14 +629,36 @@ fn env_curve(ui: &mut Ui, g: Rect, e: &crate::ext::Env, amount: f32) {
     }
     pts.push((at(hold + rel.max(0.02)), ay(0.0)));
     ui.c.polyline(&pts, 1.4, col);
-    // The point on the decay, and the sustain line with its tag where the release begins.
-    let mid = pts[(n / 2) as usize];
-    ui.c.fill_circle(mid.0, mid.1, 2.2, col);
-    let sx = at(hold);
-    ui.c.fill_rect(Rect::new(sx, g.y + 2.0, 1.0, g.h - 4.0), SOFT.with_alpha(110));
-    let tag = Rect::new(sx - 4.0, g.bottom() - 16.0, 9.0, 11.0);
-    ui.c.fill_rrect(tag, 2.0, Color::rgb(0x8d97ae));
-    ui.c.text_center(Font::new(7).bold(), tag, INK, "S");
+    // The sustain line with its tag, and the points that can be dragged: the peak (the attack), the middle of the decay
+    // (its bend) and the end (the sustain's time and level).
+    ui.c.fill_rect(Rect::new(geo.end.0, g.y + 2.0, 1.0, g.h - 4.0), SOFT.with_alpha(110));
+    ui.c.fill_rrect(geo.tag, 2.0, Color::rgb(0x8d97ae));
+    ui.c.text_center(Font::new(7).bold(), geo.tag, INK, "S");
+    if att > 0.0 {
+        ui.c.fill_circle(geo.peak.0, geo.peak.1, 2.2, col);
+    }
+    ui.c.fill_circle(geo.mid.0, geo.mid.1, 2.2, col);
+    ui.c.fill_circle(geo.end.0, geo.end.1, 3.0, Color::rgb(0x6fd35a));
+    ui.c.stroke_circle(geo.end.0, geo.end.1, 3.0, 1.0, Color::rgb(0x2b3245));
+}
+
+/// The seconds the envelope graph shows across its width.
+pub const ENV_AXIS_S: f64 = 3.0;
+
+/// Where the envelope's draggable points are in the graph `g`.
+pub struct EnvGeom {
+    pub peak: (f32, f32),
+    pub end: (f32, f32),
+    pub mid: (f32, f32),
+    pub tag: Rect,
+}
+
+pub fn env_geometry(e: &crate::ext::Env, g: Rect) -> EnvGeom {
+    let (att, dec, _) = e.seconds(0.5);
+    let at = |t: f64| g.x + (t / ENV_AXIS_S).min(1.0) as f32 * g.w;
+    let ay = |v: f32| g.bottom() - 17.0 - v.clamp(0.0, 1.0) * (g.h - 21.0);
+    let end = (at(att + dec), ay(e.sus));
+    EnvGeom { peak: (at(att), ay(1.0)), end, mid: (at(att + dec * 0.5), ay(e.level(att + dec * 0.5, 0.5))), tag: Rect::new(end.0 - 4.5, g.bottom() - 31.0, 9.0, 11.0) }
 }
 
 fn graph(ui: &mut Ui, look: &Look) {

@@ -74,13 +74,15 @@ pub struct Env {
     pub sus: f32,
     pub rel: f32,
     pub tempo: bool,
+    /// How the decay bends: 1 is a straight line, 2 the default's curve, more is steeper at first.
+    pub bend: f32,
 }
 
 pub const ENV_MAX_MS: f32 = 5000.0;
 
 impl Default for Env {
     fn default() -> Self {
-        Env { att: 0.0, dec: 1500.0, sus: 0.0, rel: 5.0, tempo: false }
+        Env { att: 0.0, dec: 1500.0, sus: 0.0, rel: 5.0, tempo: false, bend: 2.0 }
     }
 }
 
@@ -95,7 +97,12 @@ impl Env {
         }
         let p = ((t - att) / dec.max(1e-9)).min(1.0) as f32;
         // The decay bends: fast at first, as the curve in the original's panel.
-        self.sus + (1.0 - self.sus) * (1.0 - p) * (1.0 - p)
+        self.sus + (1.0 - self.sus) * (1.0 - p).powf(self.bend)
+    }
+
+    /// Seconds in one unit of the times (a millisecond, or a quarter of a beat's thousandth).
+    pub fn unit_seconds(&self, beat: f64) -> f64 {
+        if self.tempo { beat / 1000.0 * 4.0 } else { 0.001 }
     }
 
     /// The attack, decay and release in seconds.
@@ -341,6 +348,11 @@ impl Ext {
         o.b(u8::from(self.auto_dump));
         o.b(u8::from(self.a_on));
         o.b(u8::from(self.b_on));
+        for a in &self.artic {
+            for e in &a.env {
+                o.f(e.bend);
+            }
+        }
         o.0
     }
 
@@ -361,7 +373,7 @@ impl Ext {
                 for s in 0..SOURCES {
                     a.amount[t][s] = i.f()?;
                 }
-                a.env[t] = Env { att: i.f()?, dec: i.f()?, sus: i.f()?, rel: i.f()?, tempo: i.b()? != 0 };
+                a.env[t] = Env { att: i.f()?, dec: i.f()?, sus: i.f()?, rel: i.f()?, tempo: i.b()? != 0, ..Env::default() };
                 a.lfo[t] = Lfo { shape: i.b()?.min(4), rate: i.f()?, tempo: i.b()? != 0 };
             }
         }
@@ -378,6 +390,13 @@ impl Ext {
         x.auto_dump = i.b().is_some_and(|b| b != 0);
         x.a_on = i.b().is_none_or(|b| b != 0);
         x.b_on = i.b().is_none_or(|b| b != 0);
+        for a in &mut x.artic {
+            for e in &mut a.env {
+                if let Some(b) = i.f() {
+                    e.bend = b.clamp(0.3, 8.0);
+                }
+            }
+        }
         Some(x)
     }
 
@@ -411,7 +430,7 @@ mod tests {
         x.artic[3].slope = 3;
         x.artic[3].cut = 0.4;
         x.artic[3].set_amount(Target::Cut, Source::Lfo, -0.5);
-        x.artic[3].env[Target::Vol.index()] = Env { att: 12.0, dec: 300.0, sus: 0.5, rel: 40.0, tempo: true };
+        x.artic[3].env[Target::Vol.index()] = Env { att: 12.0, dec: 300.0, sus: 0.5, rel: 40.0, tempo: true, bend: 3.5 };
         x.artic[3].lfo[Target::Pan.index()] = Lfo { shape: 3, rate: 0.5, tempo: true };
         x.set_art(5, 3);
         x.deck_b = vec![1, 2, 3];
@@ -422,14 +441,14 @@ mod tests {
         assert_eq!(Ext::parse(&b), Some(x.clone()));
         assert_eq!(x.art_of(5), 3);
         assert_eq!(x.art_of(2), 0);
-        assert!(Ext::parse(&b[..b.len() - 17]).is_some_and(|e| e.master == 1.0), "an older state has no master volume");
-        assert!(Ext::parse(&b[..b.len() - 22]).is_none(), "cut short");
+        assert!(Ext::parse(&b[..b.len() - 209]).is_some_and(|e| e.master == 1.0), "an older state has no master volume");
+        assert!(Ext::parse(&b[..b.len() - 214]).is_none(), "cut short");
         assert!(Ext::parse(b"nope").is_none());
     }
 
     #[test]
     fn envelopes_rise_decay_and_sustain() {
-        let e = Env { att: 100.0, dec: 200.0, sus: 0.25, rel: 10.0, tempo: false };
+        let e = Env { att: 100.0, dec: 200.0, sus: 0.25, rel: 10.0, tempo: false, bend: 2.0 };
         assert!((e.level(0.05, 0.5) - 0.5).abs() < 1e-6, "half way up");
         assert!((e.level(0.1, 0.5) - 1.0).abs() < 1e-6, "the peak");
         assert!(e.level(0.15, 0.5) < 0.7, "decaying");

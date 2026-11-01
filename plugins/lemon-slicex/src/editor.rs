@@ -185,6 +185,19 @@ pub const BEATS_ID: &str = "beats";
 /// The type-in id of the chosen slice's name.
 pub const SLICE_NAME_ID: &str = "slice-name";
 
+/// The envelope graph's points that can be dragged.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum GraphPt {
+    /// The peak: its time is the attack.
+    Peak,
+    /// The middle of the decay: its height is the decay's bend.
+    Mid,
+    /// The end of the decay: its time and height are the decay's length and the sustain level.
+    End,
+    /// The "S" tag: the end's time alone.
+    Tag,
+}
+
 /// Something the window has to do after an event.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Act {
@@ -242,6 +255,8 @@ pub struct Logic {
     pad_drag: bool,
     /// The deck the open dialog's file goes to (0 = A, 1 = B).
     load_deck: u8,
+    /// A point of the envelope graph being dragged.
+    graph_drag: Option<GraphPt>,
     /// The host's side of the window, for a size change.
     pub ctx: Option<Arc<dyn GuiContext>>,
 }
@@ -249,7 +264,7 @@ pub struct Logic {
 impl Logic {
     pub fn new(params: Arc<SlicexParams>, shared: Arc<Shared>, ctx: Option<Arc<dyn GuiContext>>) -> Self {
         let vals = Vals::new(&*params, params.live.clone(), ctx.clone());
-        Logic { vals, params, shared, view: ViewState::default(), hits: Vec::new(), drag: None, hint: String::new(), copied: None, hosted: false, playing: None, peaks: (u64::MAX, Vec::new()), ext_drag: None, pad_drag: false, load_deck: 0, ctx }
+        Logic { vals, params, shared, view: ViewState::default(), hits: Vec::new(), drag: None, hint: String::new(), copied: None, hosted: false, playing: None, peaks: (u64::MAX, Vec::new()), ext_drag: None, pad_drag: false, load_deck: 0, graph_drag: None, ctx }
     }
 
     pub fn dragging(&self) -> bool {
@@ -301,6 +316,39 @@ impl Logic {
         self.params.set_pad(((x - p.x - 4.0) / (p.w - 8.0)).clamp(0.0, 1.0), ((p.bottom() - 4.0 - y) / (p.h - 8.0)).clamp(0.0, 1.0));
     }
 
+    /// The envelope's point `pt` follows the pointer at (x, y).
+    fn graph_to(&mut self, pt: GraphPt, x: f32, y: f32) {
+        let sel = self.view.sel;
+        let g = view::GRAPH;
+        let secs = (f64::from((x - g.x) / g.w) * view::ENV_AXIS_S).clamp(0.0, view::ENV_AXIS_S);
+        let level = ((g.bottom() - 17.0 - y) / (g.h - 21.0)).clamp(0.0, 1.0);
+        self.edit_ext(|e| {
+            let env = &mut e.artic[sel.art].env[sel.tgt.index()];
+            let unit = env.unit_seconds(0.5);
+            let (att, _, _) = env.seconds(0.5);
+            match pt {
+                GraphPt::Peak => {
+                    let hold = f64::from(env.att + env.dec) * unit;
+                    env.dec = ((hold - secs).max(0.0) / unit).min(f64::from(crate::ext::ENV_MAX_MS)) as f32;
+                    env.att = (secs.min(hold) / unit).min(f64::from(crate::ext::ENV_MAX_MS)) as f32;
+                }
+                GraphPt::Tag | GraphPt::End => {
+                    env.dec = ((secs - att).max(0.0) / unit).min(f64::from(crate::ext::ENV_MAX_MS)) as f32;
+                    if pt == GraphPt::End {
+                        env.sus = level;
+                    }
+                }
+                GraphPt::Mid => {
+                    // The level at the decay's middle fixes the bend: sus + (1 - sus) * 0.5^bend.
+                    if env.sus < 0.98 {
+                        let r = ((level - env.sus) / (1.0 - env.sus)).clamp(0.01, 0.99);
+                        env.bend = (r.ln() / 0.5f32.ln()).clamp(0.4, 6.0);
+                    }
+                }
+            }
+        });
+    }
+
     /// A press on a control of the added panels.
     fn ext_down(&mut self, c: Ctl, x: f32, y: f32, btn: Btn, m: Mods) -> Vec<Act> {
         let sel = self.view.sel;
@@ -314,6 +362,28 @@ impl Logic {
         if btn != Btn::Left && !(c.is_knob() && btn == Btn::Middle) {
             return vec![];
         }
+        let chosen = self.view.chosen;
+        if c == Ctl::Amt && sel.src == Source::Env {
+            let e = self.params.ext().artic[sel.art].env[sel.tgt.index()];
+            let geo = view::env_geometry(&e, view::GRAPH);
+            let near = |p: (f32, f32)| (p.0 - x).hypot(p.1 - y) <= 9.0;
+            let pt = if geo.tag.outset(3.0).contains(x, y) {
+                Some(GraphPt::Tag)
+            } else if near(geo.end) {
+                Some(GraphPt::End)
+            } else if near(geo.mid) {
+                Some(GraphPt::Mid)
+            } else if near(geo.peak) {
+                Some(GraphPt::Peak)
+            } else {
+                None
+            };
+            if pt.is_some() {
+                self.graph_drag = pt;
+                self.view.pressed = Some(Target::Ext(c));
+                return vec![Act::Repaint];
+            }
+        }
         if c.is_knob() {
             if m.alt || btn == Btn::Middle {
                 let d = extctl::default_norm(c, &sel);
@@ -324,7 +394,6 @@ impl Logic {
             self.view.pressed = Some(Target::Ext(c));
             return vec![Act::Lock];
         }
-        let chosen = self.view.chosen;
         match c {
             Ctl::Pad => {
                 self.pad_drag = true;
@@ -587,6 +656,7 @@ impl Logic {
         self.play(None);
         self.ext_drag = None;
         self.pad_drag = false;
+        self.graph_drag = None;
         if let Some(d) = self.drag.take() {
             self.vals.end(&d.id);
         }
@@ -596,6 +666,10 @@ impl Logic {
 
     pub fn moved(&mut self, x: f32, y: f32, _m: Mods) -> Vec<Act> {
         self.view.mouse = Some((x, y));
+        if let Some(pt) = self.graph_drag {
+            self.graph_to(pt, x, y);
+            return vec![Act::Repaint];
+        }
         if self.pad_drag {
             self.pad_to(x, y);
             self.hint = self.ext_hint(Ctl::Pad);
@@ -1847,6 +1921,43 @@ mod tests {
         assert!(l.down(x, y, Btn::Left, Mods::default(), false).contains(&Act::Resize(view::W, view::H - 66)));
         assert_eq!(l.size(), (view::W, view::H - 66));
         let _ = std::fs::remove_file(p);
+    }
+
+    /// The envelope graph's points follow the pointer: the S tag moves the decay's end in time, the end point also sets
+    /// the sustain level, the middle point bends the decay, the peak sets the attack.
+    #[test]
+    fn the_envelopes_points_can_be_dragged() {
+        let mut l = logic();
+        let env = |l: &Logic| l.params.ext().artic[0].env[crate::ext::Target::Vol.index()];
+        let g = view::GRAPH;
+        let at = |s: f64| g.x + (s / view::ENV_AXIS_S) as f32 * g.w;
+        // The S tag: from 1.5 s to 1 s, the sustain level stays.
+        let geo = view::env_geometry(&env(&l), g);
+        l.down(geo.tag.cx(), geo.tag.cy(), Btn::Left, Mods::default(), false);
+        l.moved(at(1.0), geo.tag.cy(), Mods::default());
+        l.up(Btn::Left);
+        assert!((env(&l).dec - 1000.0).abs() < 8.0, "{}", env(&l).dec);
+        assert_eq!(env(&l).sus, 0.0);
+        // The end point: also up to half the level.
+        paint(&mut l);
+        let geo = view::env_geometry(&env(&l), g);
+        let mid_y = g.bottom() - 17.0 - 0.5 * (g.h - 21.0);
+        l.down(geo.end.0, geo.end.1, Btn::Left, Mods::default(), false);
+        l.moved(at(2.0), mid_y, Mods::default());
+        l.up(Btn::Left);
+        assert!((env(&l).dec - 2000.0).abs() < 8.0 && (env(&l).sus - 0.5).abs() < 0.02, "{:?}", env(&l));
+        // The middle point: a straight decay is halfway between the levels.
+        paint(&mut l);
+        let geo = view::env_geometry(&env(&l), g);
+        let straight = g.bottom() - 17.0 - 0.75 * (g.h - 21.0);
+        l.down(geo.mid.0, geo.mid.1, Btn::Left, Mods::default(), false);
+        l.moved(geo.mid.0, straight, Mods::default());
+        l.up(Btn::Left);
+        assert!((env(&l).bend - 1.0).abs() < 0.1, "{}", env(&l).bend);
+        // Elsewhere on the graph a vertical drag still sets the source's amount.
+        paint(&mut l);
+        assert!(l.down(g.x + 5.0, g.bottom() - 40.0, Btn::Left, Mods::default(), false).contains(&Act::Lock));
+        l.up(Btn::Left);
     }
 
     #[test]
