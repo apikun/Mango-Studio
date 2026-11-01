@@ -726,7 +726,13 @@ fn menu_bar(ui: &mut Ui, c: &Ctx) {
 fn volume(ui: &mut Ui, c: &Ctx) {
     use crate::knobs::KnobId;
     let (t, a, s) = (ui.t, c.a, c.s);
-    ui.hit(a.span(303.0, 337.0, 45.0, 77.0), Action::Knob(KnobId::MasterVol), s.knob_text(KnobId::MasterVol));
+    let hr = if super::lemon(ui) { a.span(304.0, 336.0, 45.0, 77.0) } else { a.span(303.0, 337.0, 45.0, 77.0) };
+    ui.hit(hr, Action::Knob(KnobId::MasterVol), s.knob_text(KnobId::MasterVol));
+    if super::lemon(ui) {
+        // The Mango skin: a level bar like the mixer's.
+        super::mixer::centre_bar(ui, a.x(320.0), a.y(61.0), 16.0, 10.0, s.knob(KnobId::MasterVol), super::mixer::Bar::Level);
+        return;
+    }
     super::knob(ui, a.x(319.0), a.y(61.0), 14.0, s.knob(KnobId::MasterVol), false, t.glyph, t.button_hi);
 }
 
@@ -734,8 +740,14 @@ fn volume(ui: &mut Ui, c: &Ctx) {
 fn pitch(ui: &mut Ui, c: &Ctx) {
     use crate::knobs::KnobId;
     let (t, a, s) = (ui.t, c.a, c.s);
-    ui.hit(a.span(340.0, 376.0, 45.0, 77.0), Action::Knob(KnobId::MasterPitch), s.knob_text(KnobId::MasterPitch));
+    let hr = if super::lemon(ui) { a.span(342.0, 374.0, 45.0, 77.0) } else { a.span(340.0, 376.0, 45.0, 77.0) };
+    ui.hit(hr, Action::Knob(KnobId::MasterPitch), s.knob_text(KnobId::MasterPitch));
     let (cx, cy) = (a.x(358.0), a.y(61.0));
+    if super::lemon(ui) {
+        // The Mango skin: a bar from its centre, like the mixer's pan.
+        super::mixer::centre_bar(ui, cx, cy, 16.0, 10.0, s.knob(KnobId::MasterPitch), super::mixer::Bar::Centre);
+        return;
+    }
     super::knob(ui, cx, cy, 14.0, s.knob(KnobId::MasterPitch), true, t.glyph, t.button_hi);
     for k in 0..20 {
         let ang = 0.75 * std::f32::consts::PI + 1.5 * std::f32::consts::PI * k as f32 / 19.0;
