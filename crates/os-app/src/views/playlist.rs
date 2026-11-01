@@ -262,7 +262,7 @@ pub fn paint(ui: &mut Ui, s: &State, r: Rect, f: &FrameInfo) {
     // start, named like the clip will be. Under the playhead, after FL's.
     if let Some(d) = &s.browser_drag {
         if let Some(dg) = drop_ghost(s, grid, d.x, d.y) {
-            let rad = lk::r_btn(t).min(dg.rect.w / 2.0).min(dg.rect.h / 2.0);
+            let rad = 0.0_f32; // square, like the clips
             ui.c.fill_rrect(dg.rect, rad, t.tx(0xffffff).with_alpha(26));
             ui.c.stroke_rrect(dg.rect, rad, 1.0, t.tx(0xd0d8dc).with_alpha(130));
             if dg.rect.w > 24.0 && dg.rect.h > TITLE_H {
@@ -920,7 +920,7 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
     let lemon = super::lemon(ui);
     // Rect fills with the top corners knocked out (cheaper than rounded paths for hundreds of clips).
     if lemon {
-        ui.c.fill_rrect(r, lk::r_btn(t).min(r.w / 2.0).min(r.h / 2.0), outline);
+        ui.c.fill_rect(r, outline); // square, as FL's clips are
     } else {
         ui.c.fill_rect(r, outline);
     }
@@ -934,7 +934,7 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
     let title_h = TITLE_H - 2.0;
     // Edge colour behind the strip (its top corners in the outline's colour), then the highlight row and the gradient.
     // Lemon (spec: ui/lemon-design.md §7): a rounded tile with a flat title strip.
-    let ir = (lk::r_btn(t) - 1.0).min(inner.w / 2.0).min(inner.h / 2.0);
+    let ir = 0.0_f32;
     if lemon {
         ui.c.fill_rrect(inner, ir, dim(top));
     } else {
