@@ -415,7 +415,7 @@ pub mod plug {
 }
 
 /// Plugin knob, as a bar: a narrow dark slot as tall as the knob's diameter, filled from the bottom with `arc`'s gradient up
-/// to the value (from the middle outwards when `bipolar`), with a thin light line at the value's edge. `r` = the knob's
+/// to the value (from the middle outwards when `bipolar`), `r` = the knob's
 /// radius (the bar's height is twice it), `w` is kept for the callers and unused. Disabled: an empty slot.
 #[allow(clippy::too_many_arguments)]
 pub fn dial(c: &mut Canvas, cx: f32, cy: f32, r: f32, _w: f32, value: f32, bipolar: bool, arc: Color, st: State) {
@@ -446,9 +446,6 @@ pub fn bar_knob(c: &mut Canvas, cx: f32, cy: f32, r: f32, value: f32, bipolar: b
         let top = if lit { arc.mix(Color::rgb(0xffffff), 0.5) } else { arc.mix(Color::rgb(0xffffff), 0.28) };
         let bottom = if lit { arc.mix(Color::rgb(0xffffff), 0.12) } else { arc };
         c.fill_rect_gradient(Rect::new(inner.x, y0, inner.w, y1 - y0), top, bottom, (inner.w / 2.0).min((y1 - y0) / 2.0));
-        // The value's edge.
-        let edge = if bipolar && v < 0.5 { y1 - 1.0 } else { y0 };
-        c.fill_rect(Rect::new(inner.x, edge.round(), inner.w, 1.0), Color::rgb(0xfff2dc).with_alpha(190));
     }
 }
 

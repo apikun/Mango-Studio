@@ -447,7 +447,6 @@ fn fader(ui: &mut Ui, t: Target, cx: f32, norm: f32) {
     let hov = ui.hover(hr, &t) || ui.st.pressed.as_ref() == Some(&t);
     let handle = Rect::new(cx - 8.0, y - 4.0, 16.0, 8.0);
     ui.c.fill_rrect(handle, 2.0, if hov { LIGHT } else { SOFT });
-    ui.c.fill_rect(Rect::new(handle.x + 3.0, handle.cy() - 0.5, handle.w - 6.0, 1.0), INK_DIM);
     ui.hit(hr, t);
 }
 
