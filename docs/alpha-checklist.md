@@ -78,7 +78,7 @@ Greyed-out controls and partial features. These can land alongside the blockers.
 - [ ] **Editable mixer latency settings.** Plugin delay compensation reads, uses and saves them, but they can't be
   edited
 - [ ] **Browser: Favorites, the plugin database and Browser find**
-- [ ] **JACK on Linux**
+- [x] **JACK on Linux**
 - [ ] **ASIO output pairs.** The master always plays to the driver's first two outputs
 
 ## Shipping a build
