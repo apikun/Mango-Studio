@@ -520,6 +520,10 @@ fn emblem(ui: &mut Ui) {
 
 fn plate(ui: &mut Ui, _look: &Look) {
     plate_box(ui, PLATE_R);
+    // Two small tabs on the top edge, as the original's plate has.
+    for x in [PLATE_R.x + 26.0, PLATE_R.x + 70.0] {
+        ui.c.fill_rrect(Rect::new(x, PLATE_R.y - 2.0, 20.0, 5.0), 2.0, PLATE_DARK.shade(-0.08));
+    }
     // The emblem alone, as the original's plate has its own: the mango, and "SLICEX" with its last letters lit.
     mango_mark(ui, PLATE_R.cx(), PLATE_R.y + 84.0, 56.0);
     let f = Font::condensed(30, 0).bold();
@@ -604,6 +608,14 @@ fn env_curve(ui: &mut Ui, g: Rect, e: &crate::ext::Env, amount: f32) {
     }
     pts.push((at(hold + rel.max(0.02)), ay(0.0)));
     ui.c.polyline(&pts, 1.4, col);
+    // The point on the decay, and the sustain line with its tag where the release begins.
+    let mid = pts[(n / 2) as usize];
+    ui.c.fill_circle(mid.0, mid.1, 2.2, col);
+    let sx = at(hold);
+    ui.c.fill_rect(Rect::new(sx, g.y + 2.0, 1.0, g.h - 4.0), SOFT.with_alpha(110));
+    let tag = Rect::new(sx - 4.0, g.bottom() - 16.0, 9.0, 11.0);
+    ui.c.fill_rrect(tag, 2.0, Color::rgb(0x8d97ae));
+    ui.c.text_center(Font::new(7).bold(), tag, INK, "S");
 }
 
 fn graph(ui: &mut Ui, look: &Look) {
