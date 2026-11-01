@@ -141,10 +141,20 @@ pub enum Cmd {
     Dump(bool),
     /// The chosen slice's root key (−1 = its own).
     Root(i32),
+    /// File > New: an empty Slicex. Load sample into deck A (0) or B (1).
+    NewLoop,
+    LoadDeck(u8),
+    /// Regions > Delete: the chosen slice goes. Assign trigger notes to all: every slice plays on its own key.
+    DeleteSlice,
+    DefaultKeys,
+    /// Select previous (-1) or next (1) region.
+    Select(i32),
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuReq {
+    /// One of the toolbar's menus (`view::MENUS`).
+    Toolbar(u8),
     Param(String),
     Slicing,
     Dump,
@@ -278,6 +288,13 @@ impl Logic {
     /// A press on a control of the added panels.
     fn ext_down(&mut self, c: Ctl, x: f32, y: f32, btn: Btn, m: Mods) -> Vec<Act> {
         let sel = self.view.sel;
+        if btn == Btn::Right {
+            match c {
+                Ctl::Edit(7) if self.frames() > 0 => return vec![Act::Menu(MenuReq::Slicing, x, y)],
+                Ctl::Edit(8) => return vec![Act::Menu(MenuReq::Dump, x, y)],
+                _ => {}
+            }
+        }
         if btn != Btn::Left && !(c.is_knob() && btn == Btn::Middle) {
             return vec![];
         }
@@ -323,6 +340,13 @@ impl Logic {
                 let l = &mut e.artic[sel.art].lfo[sel.tgt.index()];
                 l.shape = (l.shape + 1) % 5;
             }),
+            Ctl::Menu(i) => return vec![Act::Menu(MenuReq::Toolbar(i), x, y)],
+            Ctl::Edit(7) => {
+                self.slice(Slicing::Auto(1));
+                return vec![Act::Repaint];
+            }
+            Ctl::Edit(8) => return self.dump(false).map(Act::Notes).into_iter().collect(),
+            Ctl::Loop | Ctl::Edit(_) | Ctl::Info(_) => {}
             Ctl::View(n) => {
                 self.edit_ext(|e| e.view = n.min(3));
                 let (w, h) = self.size();
@@ -478,8 +502,8 @@ impl Logic {
                 self.load_deck = 0;
                 acts.push(Act::OpenDialog)
             }
-            (Target::Slicing, Btn::Left | Btn::Right) if has => acts.push(Act::Menu(MenuReq::Slicing, view::SLICE.x, view::SLICE.bottom())),
-            (Target::Dump, Btn::Left | Btn::Right) => acts.push(Act::Menu(MenuReq::Dump, view::DUMP.x, view::DUMP.bottom())),
+            (Target::Slicing, Btn::Left | Btn::Right) if has => acts.push(Act::Menu(MenuReq::Slicing, x, y)),
+            (Target::Dump, Btn::Left | Btn::Right) => acts.push(Act::Menu(MenuReq::Dump, x, y)),
             (Target::Well, Btn::Left) if has => {
                 let st = self.state();
                 let i = slice_at(&st, view::frame_at(x, self.frames()));
@@ -613,6 +637,7 @@ impl Logic {
     pub fn menu(&self, req: &MenuReq) -> MenuDef<Cmd> {
         let mut m = MenuDef::new(MenuStyle::Context);
         match req {
+            MenuReq::Toolbar(i) => self.toolbar_menu(&mut m, usize::from(*i)),
             MenuReq::Param(id) => {
                 m.head(&Self::name(id), Cmd::None);
                 m.add(MenuItem::item("Reset"), Cmd::Reset(id.clone()));
@@ -672,9 +697,137 @@ impl Logic {
         m
     }
 
+    /// The toolbar menu `i` as the original has it. What the sample editor does not do yet is listed but greyed.
+    fn toolbar_menu(&self, m: &mut MenuDef<Cmd>, i: usize) {
+        let st = self.state();
+        let has = self.frames() > 0 && !st.slices.is_empty();
+        let off = |m: &mut MenuDef<Cmd>, names: &[&str]| {
+            for n in names {
+                m.add(MenuItem::item(n).enabled(false), Cmd::None);
+            }
+        };
+        let sub_off = |m: &mut MenuDef<Cmd>, name: &str, names: &[&str]| {
+            let mut s = MenuDef::new(MenuStyle::Context);
+            for n in names {
+                s.add(MenuItem::item(n).enabled(false), Cmd::None);
+            }
+            m.submenu(name, s, Cmd::None);
+        };
+        match i {
+            0 => {
+                m.add(MenuItem::item("New"), Cmd::NewLoop);
+                m.add(MenuItem::item("Load sample A..."), Cmd::LoadDeck(0));
+                m.add(MenuItem::item("Load sample B..."), Cmd::LoadDeck(1));
+                m.sep(Cmd::None);
+                off(m, &["Save sample as...", "Export regions", "Export display as", "Recent projects"]);
+            }
+            1 => {
+                m.add(MenuItem::item("Edit properties").enabled(false), Cmd::None);
+                m.sep(Cmd::None);
+                let mut r = MenuDef::new(MenuStyle::Context);
+                r.add(MenuItem::item("16 bit integer").mark(Mark::Radio(false)).enabled(false), Cmd::None);
+                r.add(MenuItem::item("32 bit float").mark(Mark::Radio(true)).enabled(false), Cmd::None);
+                m.submenu("Resolution", r, Cmd::None);
+                let mut c = MenuDef::new(MenuStyle::Context);
+                c.add(MenuItem::item("Mono").mark(Mark::Radio(false)).enabled(false), Cmd::None);
+                c.add(MenuItem::item("Stereo").mark(Mark::Radio(true)).enabled(false), Cmd::None);
+                m.submenu("Channels", c, Cmd::None);
+            }
+            2 => off(
+                m,
+                &["Undo", "Undo history", "Cut", "Copy", "Paste insert", "Paste replace", "Paste mix", "Paste stretch", "Clear", "Delete", "Trim", "Insert silence", "Click-free (smooth) editing"],
+            ),
+            3 => {
+                sub_off(m, "Envelope", &["Cancel all envelopes", "Add points at selection", "Add points at regions", "Flip vertically"]);
+                sub_off(m, "Amp", &["Mixdown amp envelopes", "Amp tool", "Reverse polarity", "Normalize", "Fade in", "Fade out", "Declick in", "Declick out"]);
+                sub_off(m, "Waveform", &["Center"]);
+                sub_off(m, "Time", &["Reverse", "Time stretch / pitch shift", "Drum (loop) stretch", "Claw machine", "Scratch"]);
+                sub_off(m, "Channels", &["Swap channels", "Convert left or right to mono"]);
+                sub_off(m, "Synthesis", &["Generate noise"]);
+                sub_off(m, "Scripting", &["Run script", "Run last script"]);
+                sub_off(m, "Noise", &["Acquire noise threshold", "Gate noise", "Trim side noise", "Trim all noise and slice up"]);
+                sub_off(m, "Spectral", &["Convolution reverb", "Blur", "Equalize", "Clean up (denoise)"]);
+                sub_off(m, "Regions", &["Normalize all regions", "Declick in all regions", "Declick out all regions", "Perfect all regions", "Tune loop"]);
+                sub_off(m, "Analysis", &["Convert to score and dump to piano roll"]);
+                sub_off(m, "Sequencing", &["Send to Playlist as audio clip", "Send to selected channel"]);
+            }
+            4 => {
+                off(m, &["Add region", "Add marker", "Set loop", "Set first downbeat"]);
+                m.add(MenuItem::item("Delete").enabled(has), Cmd::DeleteSlice);
+                m.sep(Cmd::None);
+                m.add(MenuItem::item("Assign trigger notes to all").enabled(has), Cmd::DefaultKeys);
+                m.sep(Cmd::None);
+                let mut a = MenuDef::new(MenuStyle::Context);
+                for (n, name) in ["Dull (few slices)", "Medium", "Sharp (many slices)"].into_iter().enumerate() {
+                    a.add(MenuItem::item(name).enabled(self.frames() > 0), Cmd::Slice(Slicing::Auto(n)));
+                }
+                m.submenu("Auto slice", a, Cmd::None);
+                let mut g = MenuDef::new(MenuStyle::Context);
+                for (n, name) in [(4, "Small grid"), (2, "Medium grid"), (1, "Large grid")] {
+                    g.add(MenuItem::item(name).enabled(self.frames() > 0), Cmd::Slice(Slicing::Beats(n)));
+                }
+                m.submenu("Grid slicing", g, Cmd::None);
+                let cues = st.path().to_lowercase().ends_with(".wav");
+                m.add(MenuItem::item("Use the sample's own markers").enabled(cues), Cmd::Slice(Slicing::BuiltIn));
+                m.add(MenuItem::item("No slicing").enabled(self.frames() > 0), Cmd::Slice(Slicing::None));
+                m.sep(Cmd::None);
+                m.add(MenuItem::item("Zero-cross check all regions").enabled(has), Cmd::Slice(Slicing::ZeroCross));
+                off(m, &["Detect beats", "Detect pitch regions", "Freeze all"]);
+            }
+            5 => off(m, &["Audio", "Spectrum", "Dual view", "Regions", "Loop"]),
+            6 => off(m, &["Snap to grid", "Snap to regions", "Snap to samples", "Snap to zero-crossing", "Snap to pitch period"]),
+            7 => {
+                m.add(MenuItem::item("Select previous region").enabled(has), Cmd::Select(-1));
+                m.add(MenuItem::item("Select next region").enabled(has), Cmd::Select(1));
+                m.sep(Cmd::None);
+                off(m, &["Deselect", "Select before", "Select after", "Select zoomed part"]);
+            }
+            _ => off(m, &["Zoom in 2x", "Zoom out 2x", "Zoom out full", "Zoom on selection"]),
+        }
+    }
+
     pub fn pick(&mut self, _req: &MenuReq, cmd: Cmd, x: f32, y: f32) -> Vec<Act> {
         match cmd {
             Cmd::None => {}
+            Cmd::NewLoop => {
+                let st = crate::state::State::default();
+                if let Ok(mut l) = self.shared.loaded_path.lock() {
+                    l.clear();
+                }
+                if let Ok(mut cur) = self.shared.sample.lock() {
+                    *cur = None;
+                }
+                if let Ok(mut p) = self.params.sample_path.write() {
+                    p.clear();
+                }
+                self.view.chosen = 0;
+                self.commit(&st);
+            }
+            Cmd::LoadDeck(n) => {
+                self.load_deck = n.min(1);
+                return vec![Act::OpenDialog];
+            }
+            Cmd::DeleteSlice => {
+                let mut st = self.state();
+                let i = self.chosen(&st);
+                if i < st.slices.len() && st.slices.len() > 1 {
+                    st.slices.remove(i);
+                    self.commit(&st);
+                }
+            }
+            Cmd::DefaultKeys => {
+                let mut st = self.state();
+                for s in &mut st.slices {
+                    s.root = -1;
+                }
+                self.commit(&st);
+            }
+            Cmd::Select(d) => {
+                let n = self.state().slices.len() as i32;
+                if n > 0 {
+                    self.view.chosen = (self.view.chosen as i32 + d).clamp(0, n - 1) as usize;
+                }
+            }
             Cmd::Reset(id) => self.reset(&id),
             Cmd::CopyValue(id) => self.copied = Some(self.vals.norm(&id)),
             Cmd::PasteValue(id) => {
@@ -1465,7 +1618,7 @@ mod tests {
         for (id, _) in NAMES {
             assert!(l.hits.iter().any(|h| matches!(&h.t, Target::Knob(i) | Target::Switch(i) if i == id)), "{id}");
         }
-        for t in [Target::Load, Target::Slicing, Target::Dump, Target::Well, Target::Key, Target::Rev, Target::Bpm, Target::Beats, Target::Logo] {
+        for t in [Target::Well, Target::Key, Target::Rev, Target::Bpm, Target::Beats, Target::Logo, Target::Ext(Ctl::Menu(0)), Target::Ext(Ctl::Menu(8)), Target::Ext(Ctl::Edit(7)), Target::Ext(Ctl::Edit(8)), Target::Ext(Ctl::PlaySlice)] {
             centre(&l, &t);
         }
     }
@@ -1532,8 +1685,7 @@ mod tests {
     fn decks_layers_and_articulators() {
         let (mut l, p) = loaded();
         let q = loop_file("deck-b", &[]);
-        let (x, y) = centre(&l, &Target::Ext(Ctl::LoadDeck(1)));
-        assert!(l.down(x, y, Btn::Left, Mods::default(), false).contains(&Act::OpenDialog));
+        assert!(l.pick(&MenuReq::Toolbar(0), Cmd::LoadDeck(1), 0.0, 0.0).contains(&Act::OpenDialog));
         l.load(&q.to_string_lossy());
         paint(&mut l);
         assert!(l.shared.kit.lock().unwrap().as_ref().unwrap().b.is_some());
@@ -1575,8 +1727,8 @@ mod tests {
         l.down(x, y, Btn::Left, Mods::default(), false);
         paint(&mut l);
         let (x, y) = centre(&l, &Target::Ext(Ctl::Keys));
-        assert!(l.down(x, y, Btn::Left, Mods::default(), false).contains(&Act::Resize(view::W, view::H - 68)));
-        assert_eq!(l.size(), (view::W, view::H - 68));
+        assert!(l.down(x, y, Btn::Left, Mods::default(), false).contains(&Act::Resize(view::W, view::H - 70)));
+        assert_eq!(l.size(), (view::W, view::H - 70));
         let _ = std::fs::remove_file(p);
     }
 

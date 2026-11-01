@@ -71,6 +71,12 @@ pub enum Ctl {
     /// The view buttons: what the window shows (0..3), and the keyboard.
     View(u8),
     Keys,
+    /// The toolbar: the loop button, the menu buttons (0..8), the sample edit functions (0..10) and the info strip's
+    /// switches (0..4).
+    Loop,
+    Menu(u8),
+    Edit(u8),
+    Info(u8),
 }
 
 impl Ctl {

@@ -22,7 +22,7 @@ use crate::state::State;
 
 /// Editor size in logical pixels.
 pub const W: u32 = 660;
-pub const H: u32 = 612;
+pub const H: u32 = 624;
 
 /// A rect from its left, right, top and bottom edges (right and bottom exclusive).
 const fn edges(x0: f32, x1: f32, y0: f32, y1: f32) -> Rect {
@@ -64,32 +64,26 @@ const ART_PANEL: Rect = edges(162.0, 316.0, 112.0, 180.0);
 const FILTER_PANEL: Rect = edges(162.0, 316.0, 186.0, 322.0);
 const GRAPH: Rect = edges(324.0, 652.0, 148.0, 282.0);
 const KNOB_BAR: Rect = edges(322.0, 654.0, 286.0, 322.0);
-/// The toolbar, the info strip and the wave.
-pub const LOAD: Rect = edges(90.0, 140.0, 331.0, 355.0);
-const LOAD_B: Rect = edges(144.0, 194.0, 331.0, 355.0);
-pub const SLICE: Rect = edges(202.0, 268.0, 331.0, 355.0);
-pub const DUMP: Rect = edges(272.0, 324.0, 331.0, 355.0);
-const PLAY: Rect = edges(10.0, 38.0, 331.0, 355.0);
-const STOP: Rect = edges(42.0, 70.0, 331.0, 355.0);
-pub const BPM_BOX: Rect = edges(196.0, 258.0, 373.0, 389.0);
-pub const BEATS_BOX: Rect = edges(588.0, 648.0, 373.0, 389.0);
-const DECK_A: Rect = edges(316.0, 338.0, 371.0, 390.0);
-const DECK_B: Rect = edges(342.0, 364.0, 371.0, 390.0);
-pub const WELL_R: Rect = edges(6.0, 654.0, 394.0, 506.0);
-pub const WAVE: Rect = edges(12.0, 648.0, 398.0, 502.0);
+/// The toolbar and the info strip under the middle panel, and the wave.
+pub const BPM_BOX: Rect = edges(130.0, 188.0, 381.0, 397.0);
+pub const BEATS_BOX: Rect = edges(486.0, 540.0, 381.0, 397.0);
+const DECK_A: Rect = edges(196.0, 214.0, 382.0, 398.0);
+const DECK_B: Rect = edges(216.0, 234.0, 382.0, 398.0);
+pub const WELL_R: Rect = edges(6.0, 654.0, 404.0, 516.0);
+pub const WAVE: Rect = edges(12.0, 648.0, 408.0, 512.0);
 /// The chosen slice's strip.
-pub const NAME: Rect = edges(96.0, 262.0, 513.0, 537.0);
-pub const KEY_BOX: Rect = edges(306.0, 366.0, 513.0, 537.0);
-const REVERSE: Rect = edges(430.0, 510.0, 513.0, 537.0);
+pub const NAME: Rect = edges(96.0, 262.0, 523.0, 547.0);
+pub const KEY_BOX: Rect = edges(306.0, 366.0, 523.0, 547.0);
+const REVERSE: Rect = edges(430.0, 510.0, 523.0, 547.0);
 /// The keyboard: white keys 12 px wide from key `KEYS_FROM`.
-const KEYS_Y: f32 = 544.0;
+const KEYS_Y: f32 = 554.0;
 const KEYS_H: f32 = 62.0;
 const KEY_W: f32 = 12.0;
 const KEYS_FROM: i32 = 24;
 
 /// The window's bands below the top strip (from, to), in the full layout: the middle panel, the audio editor and the
 /// keyboard.
-const BANDS: [(f32, f32); 3] = [(112.0, 326.0), (326.0, 544.0), (544.0, 612.0)];
+const BANDS: [(f32, f32); 3] = [(112.0, 326.0), (326.0, 554.0), (554.0, 624.0)];
 const TOP_H: f32 = 112.0;
 
 /// The bands a view shows with how far each moves up from the full layout, and the window's height: view 0 shows all,
@@ -584,38 +578,210 @@ fn graph(ui: &mut Ui, look: &Look) {
 // ---------------------------------------------------------------------------------------------------------------
 // The toolbar, the info strip, the wave, the slice strip and the keyboard
 
-/// A toolbar button: a raised face with its label (and a small arrow when it opens a menu).
-fn tool(ui: &mut Ui, r: Rect, t: Target, label: &str, menu: bool, disabled: bool) {
-    let mut st = ui.state(r, &t);
-    st.disabled = disabled;
-    let ink = lemon::plug_button(ui.c, r, 4.0, st);
-    let tr = if menu { Rect::new(r.x, r.y, r.w - 8.0, r.h) } else { r };
-    ui.c.text_center(PILL, tr, ink, label);
-    if menu {
-        let (x, y) = (r.right() - 9.0, r.cy());
-        ui.c.fill_polygon(&[(x - 3.0, y - 1.5), (x + 3.0, y - 1.5), (x, y + 2.0)], ink);
+/// A glyph of the toolbar and the info strip.
+#[derive(Clone, Copy, PartialEq)]
+enum Gl {
+    Loop,
+    Play,
+    Stop,
+    File,
+    Format,
+    Edit,
+    Tools,
+    Regions,
+    View,
+    Snap,
+    Select,
+    Zoom,
+    Undo,
+    Normalize,
+    FadeIn,
+    FadeOut,
+    Run,
+    Stretch,
+    Marker,
+    AutoSlice,
+    Score,
+    SaveAs,
+    Drag,
+    Scrub,
+    Decks,
+    WaveSpec,
+    ClickFree,
+    AutoScroll,
+}
+
+/// The menu buttons in the order of `MENUS`: their glyphs and names.
+pub const MENUS: [&str; 9] = ["File", "Format", "Edit", "Tools", "Regions", "View", "Snap", "Select", "Zoom"];
+const MENU_GLYPHS: [Gl; 9] = [Gl::File, Gl::Format, Gl::Edit, Gl::Tools, Gl::Regions, Gl::View, Gl::Snap, Gl::Select, Gl::Zoom];
+/// The sample edit functions in order: what each does (its name in the hint).
+pub const EDITS: [&str; 11] = [
+    "Undo",
+    "Normalize",
+    "Fade in",
+    "Fade out",
+    "Run script",
+    "Drum (loop) stretch",
+    "Add / remove marker",
+    "Auto-slice",
+    "Dump score",
+    "Save as",
+    "Drag sample",
+];
+const EDIT_GLYPHS: [Gl; 11] = [Gl::Undo, Gl::Normalize, Gl::FadeIn, Gl::FadeOut, Gl::Run, Gl::Stretch, Gl::Marker, Gl::AutoSlice, Gl::Score, Gl::SaveAs, Gl::Drag];
+/// The switches at the right of the info strip.
+pub const SWITCHES: [&str; 5] = ["Scrub", "Deck display", "Wave / spectrum", "Click-free editing", "Auto-scroll"];
+const SWITCH_GLYPHS: [Gl; 5] = [Gl::Scrub, Gl::Decks, Gl::WaveSpec, Gl::ClickFree, Gl::AutoScroll];
+
+const TB_Y: f32 = 332.0;
+const TB_H: f32 = 22.0;
+const BTN_FACE: Color = Color::rgb(0x2a3141);
+const BTN_EDGE: Color = Color::rgb(0x161a23);
+
+/// The transport buttons (loop, play, stop), the menu buttons and the edit buttons.
+const LOOP: Rect = edges(28.0, 52.0, TB_Y, TB_Y + TB_H);
+const PLAY: Rect = edges(54.0, 78.0, TB_Y, TB_Y + TB_H);
+const STOP: Rect = edges(80.0, 104.0, TB_Y, TB_Y + TB_H);
+const fn menu_cell(i: usize) -> Rect {
+    Rect::new(158.0 + 25.0 * i as f32, TB_Y, 22.0, TB_H)
+}
+const fn edit_cell(i: usize) -> Rect {
+    Rect::new(404.0 + 22.5 * i as f32, TB_Y, 21.0, TB_H)
+}
+const fn switch_cell(i: usize) -> Rect {
+    Rect::new(566.0 + 17.0 * i as f32, 380.0, 16.0, 16.0)
+}
+
+/// Draws a glyph in `r`.
+fn glyph(ui: &mut Ui, r: Rect, g: Gl, ink: Color) {
+    let (cx, cy) = (r.cx(), r.cy());
+    let ic = |ui: &mut Ui, i: &os_ui::tabler::TablerIcon| ui.c.icon(i, Rect::new(cx - 8.0, cy - 8.0, 16.0, 16.0), ink);
+    use os_ui::tabler as tb;
+    match g {
+        Gl::Loop => ic(ui, &tb::REPEAT),
+        Gl::Play => ui.c.fill_polygon(&[(cx - 4.0, cy - 6.0), (cx - 4.0, cy + 6.0), (cx + 6.0, cy)], ink),
+        Gl::Stop => ui.c.fill_rect(Rect::new(cx - 5.0, cy - 5.0, 10.0, 10.0), ink),
+        Gl::File => ic(ui, &tb::DEVICE_FLOPPY),
+        Gl::Format => ic(ui, &tb::FILE),
+        Gl::Edit => ic(ui, &tb::CUT),
+        Gl::Tools => ic(ui, &tb::TOOL),
+        Gl::Regions => ic(ui, &tb::SLICE),
+        Gl::View => {
+            // An eye: the lids and the pupil.
+            let pts: Vec<(f32, f32)> = (0..=16).map(|i| {
+                let a = std::f32::consts::PI * i as f32 / 16.0;
+                (cx - 7.0 + 14.0 * i as f32 / 16.0, cy - a.sin() * 4.5)
+            }).chain((0..=16).rev().map(|i| {
+                let a = std::f32::consts::PI * i as f32 / 16.0;
+                (cx - 7.0 + 14.0 * i as f32 / 16.0, cy + a.sin() * 4.5)
+            })).collect();
+            ui.c.polyline(&pts, 1.4, ink);
+            ui.c.fill_circle(cx, cy, 2.4, ink);
+        }
+        Gl::Snap => ic(ui, &tb::MAGNET),
+        Gl::Select => ic(ui, &tb::MARQUEE_2),
+        Gl::Zoom => ic(ui, &tb::SEARCH),
+        Gl::Undo => ic(ui, &tb::ARROW_BACK_UP),
+        Gl::Normalize => {
+            ui.c.line(cx - 7.0, cy, cx + 7.0, cy, 1.4, ink);
+            ui.c.line(cx, cy - 6.0, cx, cy + 6.0, 1.4, ink);
+            ui.c.fill_polygon(&[(cx - 7.0, cy - 3.0), (cx - 7.0, cy + 3.0), (cx - 3.0, cy)], ink);
+            ui.c.fill_polygon(&[(cx + 7.0, cy - 3.0), (cx + 7.0, cy + 3.0), (cx + 3.0, cy)], ink);
+        }
+        Gl::FadeIn => ui.c.fill_polygon(&[(cx - 7.0, cy + 6.0), (cx + 7.0, cy - 6.0), (cx + 7.0, cy + 6.0)], ink),
+        Gl::FadeOut => ui.c.fill_polygon(&[(cx - 7.0, cy - 6.0), (cx + 7.0, cy + 6.0), (cx - 7.0, cy + 6.0)], ink),
+        Gl::Run => {
+            ui.c.text_center(Font::new(8).bold(), Rect::new(r.x, r.y, r.w, r.h - 8.0), ink, "RUN");
+            ui.c.fill_polygon(&[(cx - 4.0, cy + 4.0), (cx + 4.0, cy + 4.0), (cx, cy + 8.0)], ink);
+        }
+        Gl::Stretch => {
+            ui.c.fill_rect(Rect::new(cx - 7.0, cy - 5.0, 5.0, 10.0), ink);
+            ui.c.fill_rect(Rect::new(cx + 2.0, cy - 5.0, 5.0, 10.0), ink.with_alpha(130));
+            ui.c.line(cx - 7.0, cy + 7.0, cx + 7.0, cy + 7.0, 1.2, ink);
+        }
+        Gl::Marker => {
+            ui.c.line(cx - 3.0, cy - 7.0, cx - 3.0, cy + 7.0, 1.4, ink);
+            ui.c.fill_polygon(&[(cx - 3.0, cy - 7.0), (cx + 6.0, cy - 4.0), (cx - 3.0, cy - 1.0)], ink);
+        }
+        Gl::AutoSlice => {
+            ui.c.fill_rect(Rect::new(cx - 7.0, cy - 3.0, 14.0, 6.0), ink.with_alpha(130));
+            for dx in [-3.0, 1.0, 5.0] {
+                ui.c.line(cx + dx, cy - 7.0, cx + dx, cy + 7.0, 1.4, ink);
+            }
+        }
+        Gl::Score => {
+            for (dx, dy) in [(-6.0, 1.0), (-1.0, -3.0), (3.0, 2.0)] {
+                ui.c.fill_rect(Rect::new(cx + dx, cy + dy, 4.0, 2.0), ink);
+            }
+            ui.c.fill_rect(Rect::new(cx - 7.0, cy + 6.0, 14.0, 1.0), ink.with_alpha(130));
+        }
+        Gl::SaveAs => ic(ui, &tb::DEVICE_FLOPPY),
+        Gl::Drag => ic(ui, &tb::FILE_EXPORT),
+        Gl::Scrub => {
+            ui.c.stroke_circle(cx, cy, 5.5, 1.2, ink);
+            ui.c.fill_circle(cx, cy, 1.6, ink);
+        }
+        Gl::Decks => {
+            ui.c.stroke_circle(cx, cy, 5.5, 1.2, ink);
+            ui.c.line(cx, cy - 5.5, cx, cy + 5.5, 1.2, ink);
+        }
+        Gl::WaveSpec => {
+            ui.c.stroke_circle(cx, cy, 5.5, 1.2, ink);
+            ui.c.line(cx - 3.0, cy, cx + 3.0, cy, 1.2, ink);
+            ui.c.line(cx, cy - 3.0, cx, cy + 3.0, 1.2, ink);
+        }
+        Gl::ClickFree => {
+            ui.c.stroke_circle(cx, cy, 5.5, 1.2, ink);
+            ui.c.line(cx - 3.0, cy + 2.0, cx + 3.0, cy - 2.0, 1.2, ink);
+        }
+        Gl::AutoScroll => {
+            ui.c.stroke_circle(cx, cy, 5.5, 1.2, ink);
+            ui.c.fill_polygon(&[(cx - 2.0, cy - 3.0), (cx - 2.0, cy + 3.0), (cx + 3.0, cy)], ink);
+        }
     }
-    ui.hit(r, t);
+}
+
+/// A toolbar button: a dark raised face with its glyph; `menu` adds the small arrow under it.
+fn icon_button(ui: &mut Ui, r: Rect, t: Target, g: Gl, menu: bool, enabled: bool, on: bool) {
+    let hov = enabled && ui.hover(r, &t);
+    let pressed = ui.st.pressed.as_ref() == Some(&t);
+    let face = if on { Color::rgb(0x4a5675) } else if pressed { BTN_FACE.shade(-0.1) } else if hov { BTN_FACE.shade(0.16) } else { BTN_FACE };
+    ui.c.fill_rrect(r, 3.0, face);
+    ui.c.stroke_rrect(r.inset(0.5), 3.0, 1.0, BTN_EDGE);
+    let ink = if !enabled { Color::rgb(0x5d667c) } else if hov || on { Color::rgb(0xffffff) } else { Color::rgb(0xcfd6e6) };
+    glyph(ui, r, g, ink);
+    if menu {
+        let (x, y) = (r.cx(), r.bottom() + 5.0);
+        ui.c.fill_polygon(&[(x - 3.0, y - 1.5), (x + 3.0, y - 1.5), (x, y + 1.5)], if enabled { SOFT } else { Color::rgb(0x5d667c) });
+    }
+    ui.hit(if menu { Rect::new(r.x, r.y, r.w, r.h + 10.0) } else { r }, t);
 }
 
 fn toolbar(ui: &mut Ui, look: &Look) {
-    ui.c.fill_rect(edges(6.0, 654.0, 326.0, 360.0), Color::rgb(0x394258));
+    ui.c.fill_rect(edges(6.0, 654.0, 326.0, 370.0), Color::rgb(0x394258));
     let has = look.frames > 0;
-    tool(ui, PLAY, Target::Ext(Ctl::PlaySlice), "", false, !has);
-    tool(ui, STOP, Target::Ext(Ctl::Stop), "", false, !has);
-    let ink = if has { LIGHT } else { INK_DIM };
-    ui.c.fill_polygon(&[(PLAY.cx() - 4.0, PLAY.cy() - 6.0), (PLAY.cx() - 4.0, PLAY.cy() + 6.0), (PLAY.cx() + 6.0, PLAY.cy())], ink);
-    ui.c.fill_rect(Rect::new(STOP.cx() - 5.0, STOP.cy() - 5.0, 10.0, 10.0), ink);
-    tool(ui, LOAD, Target::Load, "LOAD A", false, false);
-    tool(ui, LOAD_B, Target::Ext(Ctl::LoadDeck(1)), "LOAD B", false, false);
-    tool(ui, SLICE, Target::Slicing, "SLICING", true, !has);
-    tool(ui, DUMP, Target::Dump, "DUMP", true, !look.can_dump);
+    icon_button(ui, LOOP, Target::Ext(Ctl::Loop), Gl::Loop, false, false, false);
+    icon_button(ui, PLAY, Target::Ext(Ctl::PlaySlice), Gl::Play, false, has, false);
+    icon_button(ui, STOP, Target::Ext(Ctl::Stop), Gl::Stop, false, has, false);
+    // The menus; the ones that do something already are lit up, the rest wait for the sample editor.
+    for (i, g) in MENU_GLYPHS.iter().enumerate() {
+        icon_button(ui, menu_cell(i), Target::Ext(Ctl::Menu(i as u8)), *g, true, true, false);
+    }
+    // The sample edit functions: auto-slice and dump score work, the others are not built yet.
+    for (i, g) in EDIT_GLYPHS.iter().enumerate() {
+        let enabled = match i {
+            7 => has,
+            8 => look.can_dump,
+            _ => false,
+        };
+        icon_button(ui, edit_cell(i), Target::Ext(Ctl::Edit(i as u8)), *g, i == 4, enabled, false);
+    }
 }
 
 /// A caption over a value, on the info strip.
 fn info_field(ui: &mut Ui, x: f32, cap: &str, text: &str, w: f32) {
-    ui.c.text(Font::new(8).bold(), x, 362.0, SOFT, cap);
-    ui.c.text_clip(LABEL, x, 374.0, w, LIGHT, text);
+    ui.c.text(Font::new(8).bold(), x, 372.0, SOFT.with_alpha(180), cap);
+    ui.c.text_clip(LABEL, x, 383.0, w, LIGHT, text);
 }
 
 fn value_box(ui: &mut Ui, r: Rect, t: Target, text: &str, enabled: bool) {
@@ -627,21 +793,31 @@ fn value_box(ui: &mut Ui, r: Rect, t: Target, text: &str, enabled: bool) {
 }
 
 fn info(ui: &mut Ui, look: &Look) {
-    ui.c.fill_rect(edges(6.0, 654.0, 360.0, 392.0), Color::rgb(0x333b50));
+    ui.c.fill_rect(edges(6.0, 654.0, 370.0, 402.0), Color::rgb(0x333b50));
     let has = look.frames > 0;
-    info_field(ui, 12.0, "SAMPLERATE", &if has { format!("{} Hz", look.rate) } else { String::new() }, 90.0);
-    info_field(ui, 100.0, "FORMAT", if has { "32 bit float" } else { "" }, 80.0);
-    ui.c.text(Font::new(8).bold(), BPM_BOX.x, 362.0, SOFT, "TEMPO");
+    info_field(ui, 12.0, "SAMPLERATE", &if has { format!("{} Hz", look.rate) } else { String::new() }, 70.0);
+    ui.c.text(Font::new(8).bold(), 84.0, 372.0, SOFT.with_alpha(180), "FORMAT");
+    if has {
+        ui.c.text(LABEL, 84.0, 383.0, LIGHT, "32");
+        // Stereo: two small cassettes.
+        ui.c.stroke_rrect(Rect::new(104.0, 384.0, 10.0, 8.0), 1.5, 1.0, SOFT);
+    }
+    ui.c.text(Font::new(8).bold(), BPM_BOX.x, 372.0, SOFT.with_alpha(180), "TEMPO");
     value_box(ui, BPM_BOX, Target::Bpm, &format!("{:.3}", look.state.bpm()), has);
-    ui.c.text(Font::new(8).bold(), 316.0, 362.0, SOFT, "DECK");
+    ui.c.text(Font::new(8).bold(), 196.0, 372.0, SOFT.with_alpha(180), "DECK");
     let x = look.ext;
     let (a_on, b_on) = (x.layer != 2, x.layer != 1);
     tab(ui, DECK_A, Target::Ext(Ctl::DeckToggle(0)), "A", a_on, false);
     tab(ui, DECK_B, Target::Ext(Ctl::DeckToggle(1)), "B", b_on, look.decks[1].is_empty());
     let name = if look.decks[0].is_empty() { "(no loop)".to_string() } else { look.decks[0].clone() };
-    info_field(ui, 376.0, "TITLE", &name, 190.0);
-    ui.c.text(Font::new(8).bold(), BEATS_BOX.x, 362.0, SOFT, "LENGTH (BEATS)");
+    info_field(ui, 250.0, "TITLE", &name, 226.0);
+    ui.c.text(Font::new(8).bold(), BEATS_BOX.x, 372.0, SOFT.with_alpha(180), "LENGTH / SEL");
     value_box(ui, BEATS_BOX, Target::Beats, &format!("{:.2}", look.state.beats()), has);
+    for (i, g) in SWITCH_GLYPHS.iter().enumerate() {
+        let r = switch_cell(i);
+        glyph(ui, r, *g, Color::rgb(0x707a92));
+        ui.hit(r, Target::Ext(Ctl::Info(i as u8)));
+    }
 }
 
 /// The loop in its well: the waveform, the slices' lines (the chosen slice lit), their numbers along the top.
@@ -653,7 +829,7 @@ fn well(ui: &mut Ui, look: &Look, hint: &str) {
     }
     let st = look.state;
     if look.frames == 0 || look.peaks.is_empty() {
-        let msg = if st.path.is_empty() { "No loop: LOAD A opens one".to_string() } else { format!("{} could not be read", st.path()) };
+        let msg = if st.path.is_empty() { "No loop: File > Load sample opens one".to_string() } else { format!("{} could not be read", st.path()) };
         ui.c.text_center(LABEL, WAVE, SOFT, &msg);
     } else {
         let n = st.slices.len();
@@ -697,17 +873,17 @@ fn well(ui: &mut Ui, look: &Look, hint: &str) {
 
 /// The chosen slice: its number, name, key and reverse switch.
 fn slice_strip(ui: &mut Ui, look: &Look) {
-    ui.c.fill_rect(edges(6.0, 654.0, 508.0, 542.0), Color::rgb(0x333b50));
+    ui.c.fill_rect(edges(6.0, 654.0, 518.0, 552.0), Color::rgb(0x333b50));
     let st = look.state;
     let n = st.slices.len();
     let chosen = ui.st.chosen.min(n.saturating_sub(1));
     let slice = st.slices.get(chosen);
     let head = if n == 0 { "SLICE".to_string() } else { format!("SLICE {} OF {n}", chosen + 1) };
-    ui.c.text(SMALL.bold(), 12.0, 520.0, SOFT, &head);
+    ui.c.text(SMALL.bold(), 12.0, 530.0, SOFT, &head);
     lemon::field(ui.c, NAME, Kst { disabled: slice.is_none(), ..Kst::NORMAL });
     let name = slice.map(|s| s.name()).filter(|s| !s.is_empty()).unwrap_or_else(|| if slice.is_some() { "(no name)".into() } else { String::new() });
     ui.c.text_center(LABEL, NAME, if slice.is_some_and(|s| !s.name.is_empty()) { brand::TEXT } else { SOFT }, &name);
-    ui.c.text(SMALL.bold(), 272.0, 520.0, SOFT, "KEY");
+    ui.c.text(SMALL.bold(), 272.0, 530.0, SOFT, "KEY");
     let mut kst = ui.state(KEY_BOX, &Target::Key);
     kst.disabled = slice.is_none();
     lemon::field(ui.c, KEY_BOX, kst);
@@ -781,10 +957,10 @@ mod tests {
     #[test]
     fn the_layout_fits_the_window() {
         let win = edges(0.0, W as f32, 0.0, H as f32);
-        for r in [KEYS_BTN, PAD, MOD_PANEL, LAYER_PANEL, LOGO, PLATE_R, ART_PANEL, FILTER_PANEL, GRAPH, KNOB_BAR, LOAD, LOAD_B, SLICE, DUMP, PLAY, STOP, BPM_BOX, BEATS_BOX, WELL_R, WAVE, NAME, KEY_BOX, REVERSE] {
+        for r in [KEYS_BTN, PAD, MOD_PANEL, LAYER_PANEL, LOGO, PLATE_R, ART_PANEL, FILTER_PANEL, GRAPH, KNOB_BAR, LOOP, PLAY, STOP, BPM_BOX, BEATS_BOX, WELL_R, WAVE, NAME, KEY_BOX, REVERSE] {
             assert!(r.x >= 0.0 && r.right() <= win.right() && r.y >= 0.0 && r.bottom() <= win.bottom(), "{r:?}");
         }
-        for (a, b) in [(MOD_PANEL, LAYER_PANEL), (LAYER_PANEL, LOGO), (PLATE_R, ART_PANEL), (ART_PANEL, FILTER_PANEL), (LOAD, LOAD_B), (LOAD_B, SLICE), (SLICE, DUMP)] {
+        for (a, b) in [(MOD_PANEL, LAYER_PANEL), (LAYER_PANEL, LOGO), (PLATE_R, ART_PANEL), (ART_PANEL, FILTER_PANEL), (LOOP, PLAY), (PLAY, STOP)] {
             let apart = a.right() <= b.x || b.right() <= a.x || a.bottom() <= b.y || b.bottom() <= a.y;
             assert!(apart, "{a:?} {b:?}");
         }
@@ -798,11 +974,11 @@ mod tests {
     #[test]
     fn views_stack_their_bands() {
         assert_eq!(window_size(0, true), (W, H));
-        assert_eq!(window_size(1, true).1, H - 218);
+        assert_eq!(window_size(1, true).1, H - 228);
         assert_eq!(window_size(2, true).1, H - 214);
-        assert_eq!(window_size(0, false).1, H - 68);
+        assert_eq!(window_size(0, false).1, H - 70);
         assert_eq!(window_size(3, true).1, 112);
         let (bands, _) = arrange(2, true);
-        assert_eq!(bands, vec![(326.0, 544.0, -214.0), (544.0, 612.0, -214.0)]);
+        assert_eq!(bands, vec![(326.0, 554.0, -214.0), (554.0, 624.0, -214.0)]);
     }
 }
