@@ -1048,11 +1048,8 @@ fn toolbar(ui: &mut Ui, look: &Look) {
     }
     // The sample edit functions: auto-slice and dump score work, the others are not built yet.
     for (i, g) in EDIT_GLYPHS.iter().enumerate() {
-        let enabled = match i {
-            8 => look.can_dump,
-            10 => has && look.hosted,
-            _ => has,
-        };
+        // Bright as the original's whether or not a loop is loaded; with none, a press says to load one.
+        let enabled = true;
         icon_button(ui, edit_cell(i), Target::Ext(Ctl::Edit(i as u8)), *g, i == 4, enabled, false);
     }
 }
@@ -1207,7 +1204,8 @@ fn switches_row(ui: &mut Ui, look: &Look) {
     let has = look.frames > 0;
     let regions = has && !look.state.slices.is_empty();
     // Left: the zoom menu, the whole loop in view, a marker at the selection, the previous and the next region.
-    let left = [(Gl::Menu, has), (Gl::Refresh, has), (Gl::Marks, has), (Gl::Prev, regions), (Gl::Next, regions)];
+    let _ = (has, regions);
+    let left = [(Gl::Menu, true), (Gl::Refresh, true), (Gl::Marks, true), (Gl::Prev, true), (Gl::Next, true)];
     for (i, (g, enabled)) in left.iter().enumerate() {
         let r = Rect::new(8.0 + 22.0 * i as f32, ROW_R.y, 20.0, ROW_R.h);
         let t = Target::Ext(Ctl::Row(i as u8));

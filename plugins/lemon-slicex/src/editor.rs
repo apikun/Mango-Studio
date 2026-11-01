@@ -604,6 +604,15 @@ impl Logic {
     /// The sample edit buttons: a click does the edit; a right click the other one (or the menu).
     fn edit_button(&mut self, i: u8, btn: Btn, x: f32, y: f32) -> Vec<Act> {
         let right = btn == Btn::Right;
+        // Undo works on what was done; the rest need a loop.
+        if self.frames() == 0 && i != 0 {
+            self.say("Load a loop first: drag one here, or File > Load sample");
+            return vec![Act::Repaint];
+        }
+        if i == 8 && !self.hosted && !right {
+            self.say("Dump score sends the slices to the piano roll of Mango Studio");
+            return vec![Act::Repaint];
+        }
         match (i, right) {
             (0, _) => self.run_edit(Ed::Undo),
             (1, false) => self.run_edit(Ed::Normalize),
