@@ -966,7 +966,29 @@ fn led(ui: &mut Ui, track: Option<&os_model::MixerTrack>, n: u16, hit: Rect, x: 
 fn pan_knob(ui: &mut Ui, s: &State, n: u16, x: f32, y: f32, r: f32, halo: f32) {
     let pan = KnobId::MixPan(n);
     ui.hit(Rect::new(x - (halo - 1.0), y - (halo - 1.0), 2.0 * (halo - 1.0), 2.0 * (halo - 1.0)), Action::Knob(pan), s.knob_text(pan));
-    mixer_knob(ui, x, y, r, halo, s.knob(pan), Some(true));
+    if super::lemon(ui) {
+        centre_bar(ui, x, y, halo, s.knob(pan));
+    } else {
+        mixer_knob(ui, x, y, r, halo, s.knob(pan), Some(true));
+    }
+}
+
+/// The Mango skin's pan and separation: a horizontal bar like its faders, a rounded trough `2 * half` wide with the
+/// value growing left or right from the centre (0.5) in mango.
+fn centre_bar(ui: &mut Ui, x: f32, y: f32, half: f32, value: f32) {
+    let h = if half >= 12.0 { 10.0 } else { 8.0 };
+    let r = Rect::new(x - half, y - h / 2.0, 2.0 * half, h);
+    let hov = ui.hovering(r.outset(4.0));
+    ui.c.fill_rrect(r, h / 2.0, ui.t.s(0x141618));
+    let v = value.clamp(0.0, 1.0);
+    let (a, b) = (x.min(r.x + v * r.w), x.max(r.x + v * r.w));
+    let main = ui.t.brand_sel(os_theme::design::lemon::MAIN);
+    let col = if hov { main.shade(0.12) } else { main };
+    if b - a >= 1.0 {
+        ui.c.fill_rrect(Rect::new(a, r.y + 1.0, b - a, h - 2.0), (h - 2.0) / 2.0, col);
+    }
+    // The centre mark, over the fill.
+    ui.c.fill_rect(Rect::new(x - 0.5, r.y - 1.0, 1.0, h + 2.0), ui.t.tx(0x8c8c8c));
 }
 
 /// Reverse polarity (⇕), lit when on.
@@ -1002,7 +1024,11 @@ fn swap(ui: &mut Ui, track: Option<&os_model::MixerTrack>, n: u16, sx: f32, y: f
 fn sep_knob(ui: &mut Ui, s: &State, n: u16, x: f32, y: f32, r: f32, halo: f32) {
     let sep = KnobId::MixSep(n);
     ui.hit(Rect::new(x - halo + 0.5, y - halo + 0.5, 2.0 * halo - 1.0, 2.0 * halo - 1.0), Action::Knob(sep), s.knob_text(sep));
-    mixer_knob(ui, x, y, r, halo, s.knob(sep), Some(true));
+    if super::lemon(ui) {
+        centre_bar(ui, x, y, halo, s.knob(sep));
+    } else {
+        mixer_knob(ui, x, y, r, halo, s.knob(sep), Some(true));
+    }
 }
 
 /// Fader: track, gain marks, handle (green on the selected strip, with the track lit below it). In the Mango skin the
