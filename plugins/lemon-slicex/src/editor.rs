@@ -20,6 +20,8 @@ use os_plugkit::vals::Vals;
 use os_plugkit::MenuDef;
 use os_ui::kit::menu::{Mark, MenuItem, MenuStyle};
 
+use crate::ext::{Ext, Source};
+use crate::extctl::{self, Ctl};
 use crate::params::{self, SlicexParams, NAMES};
 use crate::state::{State, H_BEATS, H_BPM};
 use crate::view::{self, Target, ViewState};
@@ -206,12 +208,15 @@ pub struct Logic {
     playing: Option<u8>,
     /// The waveform's columns and the kit version they were made for.
     peaks: (u64, Vec<(f32, f32)>),
+    /// A knob of the added panels being dragged (its control and position), and whether the pad is.
+    ext_drag: Option<(Ctl, f32)>,
+    pad_drag: bool,
 }
 
 impl Logic {
     pub fn new(params: Arc<SlicexParams>, shared: Arc<Shared>, ctx: Option<Arc<dyn GuiContext>>) -> Self {
         let vals = Vals::new(&*params, params.live.clone(), ctx);
-        Logic { vals, params, shared, view: ViewState::default(), hits: Vec::new(), drag: None, hint: String::new(), copied: None, hosted: false, playing: None, peaks: (u64::MAX, Vec::new()) }
+        Logic { vals, params, shared, view: ViewState::default(), hits: Vec::new(), drag: None, hint: String::new(), copied: None, hosted: false, playing: None, peaks: (u64::MAX, Vec::new()), ext_drag: None, pad_drag: false }
     }
 
     pub fn dragging(&self) -> bool {
@@ -241,6 +246,99 @@ impl Logic {
     /// The loop changed: store it and play it.
     fn commit(&mut self, st: &State) {
         self.shared.set_state(&self.params, st);
+    }
+
+    /// Changes what Slicex adds and plays the result.
+    fn edit_ext(&mut self, f: impl FnOnce(&mut Ext)) {
+        let mut x = self.params.ext();
+        f(&mut x);
+        self.params.set_ext(x);
+        self.shared.rebuild(&self.params);
+    }
+
+    /// The pad follows the pointer at (x, y).
+    fn pad_to(&mut self, x: f32, y: f32) {
+        let p = view::PAD;
+        self.params.set_pad(((x - p.x - 4.0) / (p.w - 8.0)).clamp(0.0, 1.0), ((p.bottom() - 4.0 - y) / (p.h - 8.0)).clamp(0.0, 1.0));
+    }
+
+    /// A press on a control of the added panels.
+    fn ext_down(&mut self, c: Ctl, x: f32, y: f32, btn: Btn, m: Mods) -> Vec<Act> {
+        let sel = self.view.sel;
+        if btn != Btn::Left && !(c.is_knob() && btn == Btn::Middle) {
+            return vec![];
+        }
+        if c.is_knob() {
+            if m.alt || btn == Btn::Middle {
+                let d = extctl::default_norm(c, &sel);
+                self.edit_ext(|e| extctl::set(e, &sel, c, d));
+                return vec![];
+            }
+            self.ext_drag = Some((c, extctl::get(&self.params.ext(), &sel, c)));
+            self.view.pressed = Some(Target::Ext(c));
+            return vec![Act::Lock];
+        }
+        let chosen = self.view.chosen;
+        match c {
+            Ctl::Pad => {
+                self.pad_drag = true;
+                self.view.pressed = Some(Target::Ext(c));
+                self.pad_to(x, y);
+            }
+            Ctl::Art(i) => {
+                self.view.sel.art = i;
+                if !self.state().slices.is_empty() {
+                    self.edit_ext(|e| e.set_art(chosen, i));
+                }
+            }
+            Ctl::Mode(n) => self.edit_ext(|e| e.artic[sel.art].mode = n),
+            Ctl::Slope(n) => self.edit_ext(|e| e.artic[sel.art].slope = n),
+            Ctl::Tgt(i) => self.view.sel.tgt = crate::ext::ALL_TARGETS[i.min(crate::ext::TARGETS - 1)],
+            Ctl::Src(i) => self.view.sel.src = crate::ext::ALL_SOURCES[i.min(crate::ext::SOURCES - 1)],
+            Ctl::Tempo => self.edit_ext(|e| {
+                let t = sel.tgt.index();
+                if sel.src == Source::Lfo {
+                    let l = &mut e.artic[sel.art].lfo[t];
+                    l.tempo = !l.tempo;
+                    l.rate = if l.tempo { 1.0 } else { 2.0 };
+                } else {
+                    let v = &mut e.artic[sel.art].env[t];
+                    v.tempo = !v.tempo;
+                }
+            }),
+            Ctl::LfoShape(_) => self.edit_ext(|e| {
+                let l = &mut e.artic[sel.art].lfo[sel.tgt.index()];
+                l.shape = (l.shape + 1) % 5;
+            }),
+            Ctl::Smooth => self.edit_ext(|e| e.smooth = !e.smooth),
+            Ctl::Layer(n) => self.edit_ext(|e| e.layer = n.min(2)),
+            Ctl::SameDeck => self.edit_ext(|e| e.same_deck = !e.same_deck),
+            Ctl::Crossfade => self.edit_ext(|e| e.crossfade = !e.crossfade),
+            _ => {}
+        }
+        vec![Act::Repaint]
+    }
+
+    fn ext_hint(&self, c: Ctl) -> String {
+        let (x, sel) = (self.params.ext(), self.view.sel);
+        let tab = |on: bool| if on { "on" } else { "off" };
+        let a = &x.artic[sel.art];
+        match c {
+            k if k.is_knob() => format!("{}: {}", k.caption(), extctl::text(&x, &sel, k)),
+            Ctl::Pad => format!("Modulation pad\tX {:.0}%  Y {:.0}%", x.mod_x * 100.0, x.mod_y * 100.0),
+            Ctl::Smooth => format!("Smooth pad moves\t{}", tab(x.smooth)),
+            Ctl::Art(i) => format!("Articulator {}\tgives it to the chosen slice", i + 1),
+            Ctl::Mode(n) => format!("Filter: {}", crate::ext::FILTER_MODES[usize::from(n).min(4)]),
+            Ctl::Slope(n) => format!("Filter slope\t{} dB", 12 * u32::from(n)),
+            Ctl::Tgt(i) => format!("Target: {}", crate::ext::ALL_TARGETS[i.min(5)].name()),
+            Ctl::Src(i) => format!("Source: {}", crate::ext::ALL_SOURCES[i.min(5)].name()),
+            Ctl::Tempo => format!("Times in beats\t{}", tab(if sel.src == Source::Lfo { a.lfo[sel.tgt.index()].tempo } else { a.env[sel.tgt.index()].tempo })),
+            Ctl::LfoShape(_) => "LFO shape: click for the next".into(),
+            Ctl::Layer(n) => format!("Layers: {}", crate::ext::LAYERS[usize::from(n).min(2)]),
+            Ctl::SameDeck => format!("Deck B plays deck A's slice number\t{}", tab(x.same_deck)),
+            Ctl::Crossfade => format!("The pad's X fades from A to B\t{}", tab(x.crossfade)),
+            _ => String::new(),
+        }
     }
 
     fn hint_for(&self, t: Option<&Target>) -> String {
@@ -274,6 +372,7 @@ impl Logic {
                 format!("Reverse slice\t{}", if st.slices.get(i).is_some_and(|s| s.reversed()) { "on" } else { "off" })
             }
             Some(Target::Logo) => "Mango Slicex".into(),
+            Some(Target::Ext(c)) => self.ext_hint(*c),
             None => String::new(),
         }
     }
@@ -301,6 +400,10 @@ impl Logic {
         let mut acts = vec![Act::Repaint];
         let has = self.frames() > 0;
         match (&t, btn) {
+            (Target::Ext(c), _) => {
+                let mut a = self.ext_down(*c, x, y, btn, m);
+                acts.append(&mut a);
+            }
             (Target::Knob(id) | Target::Switch(id), Btn::Left) if m.alt => self.reset(id),
             (Target::Knob(id) | Target::Switch(id), Btn::Middle) => self.reset(id),
             (Target::Knob(id), Btn::Left) => {
@@ -347,6 +450,14 @@ impl Logic {
 
     /// Mouse movement during a locked drag (logical px since the last event).
     pub fn delta(&mut self, _dx: f32, dy: f32, m: Mods) -> Vec<Act> {
+        if let Some((c, v)) = self.ext_drag {
+            let v = (v - dy * if m.ctrl { FINE } else { 1.0 } / KNOB_PX).clamp(0.0, 1.0);
+            let sel = self.view.sel;
+            self.edit_ext(|e| extctl::set(e, &sel, c, v));
+            self.ext_drag = Some((c, v));
+            self.hint = self.ext_hint(c);
+            return vec![Act::Repaint];
+        }
         let Some(Drag { id, v }) = self.drag.clone() else { return vec![] };
         let f = if m.ctrl { FINE } else { 1.0 };
         let v = (v - dy * f / KNOB_PX).clamp(0.0, 1.0);
@@ -359,6 +470,8 @@ impl Logic {
 
     pub fn up(&mut self, _btn: Btn) -> Vec<Act> {
         self.play(None);
+        self.ext_drag = None;
+        self.pad_drag = false;
         if let Some(d) = self.drag.take() {
             self.vals.end(&d.id);
         }
@@ -368,7 +481,12 @@ impl Logic {
 
     pub fn moved(&mut self, x: f32, y: f32, _m: Mods) -> Vec<Act> {
         self.view.mouse = Some((x, y));
-        if self.drag.is_none() {
+        if self.pad_drag {
+            self.pad_to(x, y);
+            self.hint = self.ext_hint(Ctl::Pad);
+            return vec![Act::Repaint];
+        }
+        if self.drag.is_none() && self.ext_drag.is_none() {
             let t = self.hit(x, y);
             self.hint = self.hint_for(t.as_ref());
         }
@@ -386,6 +504,12 @@ impl Logic {
         let Some(t) = self.hit(x, y) else { return vec![] };
         let d = notches.signum();
         match &t {
+            Target::Ext(c) if c.is_knob() => {
+                let (sel, v) = (self.view.sel, extctl::get(&self.params.ext(), &self.view.sel, *c));
+                let step = if m.ctrl { 0.01 } else { 0.05 };
+                let c = *c;
+                self.edit_ext(|e| extctl::set(e, &sel, c, v + d * step));
+            }
             Target::Knob(id) => {
                 let step = if m.ctrl || id != params::PITCH_ID { 1.0 } else { 10.0 };
                 let plain = self.vals.plain(id) + d * step;
@@ -614,7 +738,10 @@ impl Logic {
         self.view.chosen = self.chosen(&st);
         let hint = if self.hosted { String::new() } else { self.hint.clone() };
         self.peaks();
-        let look = view::Look { state: &st, frames, peaks: &self.peaks.1, can_dump };
+        let ext = self.params.ext();
+        let a_name = std::path::Path::new(&st.path()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let b_name = if ext.deck_b.is_empty() { String::new() } else { crate::state::State::parse(&ext.deck_b).map(|s| std::path::Path::new(&s.path()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()).unwrap_or_default() };
+        let look = view::Look { state: &st, frames, peaks: &self.peaks.1, can_dump, ext: &ext, decks: [a_name, b_name] };
         self.hits = view::paint(c, palette, &self.vals, &self.view, &look, &hint);
     }
 }

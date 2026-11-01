@@ -15,12 +15,14 @@ use os_ui::kit::lemon::{self, plug};
 use os_ui::kit::{inst, State as Kst};
 use os_ui::{Canvas, Color, Font, Rect};
 
+use crate::ext::{Ext, Source, ALL_SOURCES, ALL_TARGETS, FILTER_MODES, LAYERS, LFO_SHAPES};
+use crate::extctl::{self, Ctl, Sel};
 use crate::params::{ATTACK_ID, DECAY_ID, DECLICK_ID, PITCH_ID, TO_END_ID};
 use crate::state::State;
 
 /// Editor size in logical pixels.
 pub const W: u32 = 640;
-pub const H: u32 = 300;
+pub const H: u32 = 504;
 
 /// Every card 6 px from the editor's edges and from its neighbours.
 const GAP: f32 = 6.0;
@@ -43,18 +45,26 @@ pub const LOAD: Rect = edges(438.0, 492.0, HEAD_Y - 11.0, HEAD_Y + 11.0);
 pub const SLICE: Rect = edges(498.0, 564.0, HEAD_Y - 11.0, HEAD_Y + 11.0);
 pub const DUMP: Rect = edges(570.0, RIGHT, HEAD_Y - 11.0, HEAD_Y + 11.0);
 /// The slice well and the picture inside it.
-pub const WELL: Rect = edges(GAP, RIGHT, HEAD.1 + GAP, 186.0);
-pub const WAVE: Rect = edges(GAP + 6.0, RIGHT - 6.0, HEAD.1 + GAP + 6.0, 180.0);
+pub const WELL: Rect = edges(GAP, RIGHT, 270.0, 390.0);
+pub const WAVE: Rect = edges(GAP + 6.0, RIGHT - 6.0, 276.0, 384.0);
+/// The cards above the well: the modulation pad and the layering, then the articulator, its filter and the sources.
+pub const MOD_CARD: Rect = edges(GAP, 180.0, 42.0, 126.0);
+pub const LAYER_CARD: Rect = edges(186.0, RIGHT, 42.0, 126.0);
+pub const ART_CARD: Rect = edges(GAP, 132.0, 132.0, 264.0);
+pub const FILTER_CARD: Rect = edges(138.0, 318.0, 132.0, 264.0);
+pub const ENV_CARD: Rect = edges(324.0, RIGHT, 132.0, 264.0);
+/// The modulation pad.
+pub const PAD: Rect = edges(14.0, 84.0, 62.0, 120.0);
 /// The cards under the well.
-const ROW: (f32, f32) = (192.0, BOTTOM);
+const ROW: (f32, f32) = (396.0, BOTTOM);
 pub const SLICE_CARD: Rect = edges(GAP, 216.0, ROW.0, ROW.1);
 pub const PLAY_CARD: Rect = edges(222.0, 432.0, ROW.0, ROW.1);
 pub const SWITCH_CARD: Rect = edges(438.0, RIGHT, ROW.0, ROW.1);
 /// A card's title band.
 const BAND: f32 = 18.0;
 /// The cards' control line and the captions' top (one line for every card).
-const CTRL_Y: f32 = 244.0;
-const CAPTION_Y: f32 = 270.0;
+const CTRL_Y: f32 = 448.0;
+const CAPTION_Y: f32 = 474.0;
 /// The slice's name field.
 pub const NAME: Rect = edges(GAP + 8.0, 216.0 - 8.0, ROW.0 + BAND + 6.0, ROW.0 + BAND + 24.0);
 pub const KEY_BOX: Rect = edges(48.0, 108.0, CTRL_Y - 10.0, CTRL_Y + 10.0);
@@ -100,6 +110,8 @@ pub enum Target {
     Key,
     Rev,
     Logo,
+    /// A control of what Slicex adds (`extctl`).
+    Ext(Ctl),
 }
 
 #[derive(Clone, Debug)]
@@ -114,6 +126,8 @@ pub struct ViewState {
     pub mouse: Option<(f32, f32)>,
     pub pressed: Option<Target>,
     pub chosen: usize,
+    /// The articulator and the tabs the panels show.
+    pub sel: Sel,
 }
 
 /// What a paint shows besides the parameters.
@@ -125,6 +139,10 @@ pub struct Look<'a> {
     pub peaks: &'a [(f32, f32)],
     /// The dump is offered (hosted by Lemon Studio, a loop with slices).
     pub can_dump: bool,
+    /// The articulators, layering and pad.
+    pub ext: &'a Ext,
+    /// The loaded decks' file names (A, B).
+    pub decks: [String; 2],
 }
 
 struct Ui<'a> {
@@ -167,6 +185,11 @@ pub fn paint(c: &mut Canvas, t: &Palette, m: &dyn Model, st: &ViewState, look: &
     ui.c.begin_frame(None);
     ui.c.clear(plug::BG);
     header(&mut ui, look);
+    pad_card(&mut ui, look);
+    layer_card(&mut ui, look);
+    art_card(&mut ui, look);
+    filter_card(&mut ui, look);
+    env_card(&mut ui, look);
     well(&mut ui, look, hint);
     slice_card(&mut ui, look);
     titled(&mut ui, PLAY_CARD, "PLAY");
@@ -329,6 +352,187 @@ fn switch(ui: &mut Ui, target: Target, cx: f32, on: bool, caption: &str, disable
     ui.hit(hr, target);
 }
 
+
+// ---------------------------------------------------------------------------------------------------------------
+// What Slicex adds: the modulation pad, the layering, the articulators, their filter and the sources.
+
+/// A small button with its label, lit when on.
+fn small(ui: &mut Ui, r: Rect, c: Ctl, label: &str, on: bool, disabled: bool) {
+    let t = Target::Ext(c);
+    let mut st = ui.state(r, &t);
+    st.on = on;
+    st.disabled = disabled;
+    let ink = lemon::plug_button(ui.c, r, 4.0, st);
+    ui.c.text_center(PILL, r, ink, label);
+    ui.hit(r, t);
+}
+
+/// A knob of the added panels with its caption under it.
+fn ext_knob(ui: &mut Ui, look: &Look, c: Ctl, cx: f32, cy: f32, r: f32, cap_y: f32, bipolar: bool) {
+    let target = Target::Ext(c);
+    let hr = Rect::new(cx - r - 3.0, cy - r - 3.0, 2.0 * r + 6.0, 2.0 * r + 6.0);
+    let st = ui.state(hr, &target);
+    lemon::dial(ui.c, cx, cy, r, 2.8, extctl::get(look.ext, &ui.st.sel, c), bipolar, brand::MAIN, st);
+    inst::caption(ui.c, ui.t, cx, cap_y, c.caption(), false);
+    ui.hit(hr, target);
+}
+
+fn pad_card(ui: &mut Ui, look: &Look) {
+    titled(ui, MOD_CARD, "MODULATION");
+    lemon::plug_well(ui.c, PAD, 4.0);
+    ui.c.fill_rect(Rect::new(PAD.cx(), PAD.y + 3.0, 1.0, PAD.h - 6.0), plug::PANEL_LINE);
+    ui.c.fill_rect(Rect::new(PAD.x + 3.0, PAD.cy(), PAD.w - 6.0, 1.0), plug::PANEL_LINE);
+    let x = &look.ext;
+    let (px, py) = (PAD.x + 4.0 + x.mod_x * (PAD.w - 8.0), PAD.bottom() - 4.0 - x.mod_y * (PAD.h - 8.0));
+    ui.c.fill_circle(px, py, 4.0, brand::MAIN);
+    ui.hit(PAD, Target::Ext(Ctl::Pad));
+    ui.c.text(SMALL.bold(), 92.0, 64.0, plug::DIM, &format!("X {:.0}%", x.mod_x * 100.0));
+    ui.c.text(SMALL.bold(), 92.0, 78.0, plug::DIM, &format!("Y {:.0}%", x.mod_y * 100.0));
+    small(ui, edges(92.0, 170.0, 98.0, 116.0), Ctl::Smooth, "SMOOTH", x.smooth, false);
+}
+
+fn layer_card(ui: &mut Ui, look: &Look) {
+    titled(ui, LAYER_CARD, "LAYERING");
+    let x = look.ext;
+    for (i, name) in LAYERS.iter().enumerate() {
+        let r = edges(194.0 + 52.0 * i as f32, 240.0 + 52.0 * i as f32, 66.0, 84.0);
+        small(ui, r, Ctl::Layer(i as u8), &name.to_uppercase(), x.layer == i as u8, false);
+    }
+    small(ui, edges(362.0, 442.0, 66.0, 84.0), Ctl::SameDeck, "SAME DECK", x.same_deck, false);
+    small(ui, edges(448.0, 528.0, 66.0, 84.0), Ctl::Crossfade, "CROSSFADE", x.crossfade, false);
+    for (i, d) in look.decks.iter().enumerate() {
+        let name = if d.is_empty() { "(empty)" } else { d.as_str() };
+        let y = 94.0 + 14.0 * i as f32;
+        ui.c.text(SMALL.bold(), 194.0, y, plug::DIM, if i == 0 { "DECK A" } else { "DECK B" });
+        ui.c.text_clip(SMALL, 244.0, y, LAYER_CARD.right() - 252.0, if d.is_empty() { plug::FAINT } else { brand::TEXT }, name);
+    }
+}
+
+fn art_card(ui: &mut Ui, look: &Look) {
+    titled(ui, ART_CARD, "ARTICULATOR");
+    let sel = ui.st.sel;
+    let st = look.state;
+    let chosen = ui.st.chosen.min(st.slices.len().saturating_sub(1));
+    let mine = (!st.slices.is_empty()).then(|| look.ext.art_of(chosen));
+    for i in 0..8usize {
+        let (col, row) = ((i % 4) as f32, (i / 4) as f32);
+        let r = edges(12.0 + 28.0 * col, 36.0 + 28.0 * col, 156.0 + 30.0 * row, 180.0 + 30.0 * row);
+        small(ui, r, Ctl::Art(i), &(i + 1).to_string(), sel.art == i, false);
+        if mine == Some(i) {
+            ui.c.fill_circle(r.right() - 4.0, r.y + 4.0, 2.5, brand::MAIN);
+        }
+    }
+    let line = match mine {
+        Some(a) => format!("Slice {} plays through {}", chosen + 1, a + 1),
+        None => "Load a loop to assign slices".to_string(),
+    };
+    ui.c.text_clip(SMALL, ART_CARD.x + 8.0, 222.0, ART_CARD.w - 16.0, plug::DIM, &line);
+    ui.c.text_clip(SMALL, ART_CARD.x + 8.0, 236.0, ART_CARD.w - 16.0, plug::FAINT, "Pick a number to assign it");
+}
+
+fn filter_card(ui: &mut Ui, look: &Look) {
+    titled(ui, FILTER_CARD, "FILTER");
+    let sel = ui.st.sel;
+    let a = &look.ext.artic[sel.art];
+    for (i, name) in FILTER_MODES.iter().enumerate() {
+        let r = edges(144.0 + 34.0 * i as f32, 174.0 + 34.0 * i as f32, 154.0, 172.0);
+        small(ui, r, Ctl::Mode(i as u8), name, a.mode == i as u8, false);
+    }
+    let off = a.mode >= crate::ext::FILTER_OFF;
+    for i in 0..3u8 {
+        let r = edges(144.0 + 34.0 * f32::from(i), 174.0 + 34.0 * f32::from(i), 178.0, 196.0);
+        small(ui, r, Ctl::Slope(i + 1), &format!("x{}", i + 1), a.slope == i + 1 && !off, off);
+    }
+    for (i, c) in [Ctl::CutEnv, Ctl::Cut, Ctl::Res].into_iter().enumerate() {
+        ext_knob(ui, look, c, 168.0 + 60.0 * i as f32, 228.0, 16.0, 250.0, c == Ctl::CutEnv);
+    }
+}
+
+/// The envelope's curve for the panel's graph: time across, level up.
+fn env_curve(ui: &mut Ui, g: Rect, e: &crate::ext::Env, amount: f32) {
+    let (att, dec, rel) = e.seconds(0.5);
+    let hold = (att + dec * 1.3).max(0.05);
+    let total = hold + rel.max(0.02) + hold * 0.15;
+    let at = |t: f64| g.x + 4.0 + (t / total) as f32 * (g.w - 8.0);
+    let ay = |v: f32| g.bottom() - 4.0 - v.clamp(0.0, 1.0) * (g.h - 8.0);
+    let col = if amount == 0.0 { plug::FAINT } else { brand::MAIN };
+    let n = 48;
+    let mut last = (at(0.0), ay(0.0));
+    for i in 1..=n {
+        let t = hold * f64::from(i) / f64::from(n);
+        let p = (at(t), ay(e.level(t, 0.5)));
+        ui.c.line(last.0, last.1, p.0, p.1, 1.6, col);
+        last = p;
+    }
+    let end = (at(hold + rel.max(0.02)), ay(0.0));
+    ui.c.line(last.0, last.1, end.0, end.1, 1.6, col);
+}
+
+fn env_card(ui: &mut Ui, look: &Look) {
+    let sel = ui.st.sel;
+    let a = &look.ext.artic[sel.art];
+    titled(ui, ENV_CARD, &format!("ARTICULATOR {}  -  {} / {}", sel.art + 1, sel.tgt.name(), sel.src.name()));
+    for (i, tg) in ALL_TARGETS.iter().enumerate() {
+        let x = 330.0 + 49.0 * i as f32;
+        small(ui, edges(x, x + 46.0, 152.0, 168.0), Ctl::Tgt(i), tg.name(), sel.tgt == *tg, false);
+    }
+    for (i, s) in ALL_SOURCES.iter().enumerate() {
+        let x = 330.0 + 49.0 * i as f32;
+        let used = a.amount(sel.tgt, *s) != 0.0;
+        let r = edges(x, x + 46.0, 172.0, 188.0);
+        small(ui, r, Ctl::Src(i), s.name(), sel.src == *s, false);
+        if used && sel.src != *s {
+            ui.c.fill_circle(r.right() - 4.0, r.y + 4.0, 2.0, brand::MAIN);
+        }
+    }
+    let g = edges(330.0, 440.0, 194.0, 258.0);
+    lemon::plug_well(ui.c, g, 4.0);
+    let amount = a.amount(sel.tgt, sel.src);
+    let t = sel.tgt.index();
+    let xs = |k: usize| 458.0 + 34.0 * k as f32;
+    match sel.src {
+        Source::Env => {
+            env_curve(ui, g, &a.env[t], amount);
+            for (k, c) in [Ctl::Att, Ctl::Dec, Ctl::Sus, Ctl::Rel, Ctl::Amt].into_iter().enumerate() {
+                ext_knob(ui, look, c, xs(k), 222.0, 11.0, 244.0, c == Ctl::Amt);
+            }
+            small(ui, edges(400.0, 438.0, 244.0, 256.0), Ctl::Tempo, "TEMPO", a.env[t].tempo, false);
+        }
+        Source::Lfo => {
+            let l = a.lfo[t];
+            let col = if amount == 0.0 { plug::FAINT } else { brand::MAIN };
+            let probe = crate::ext::Lfo { shape: l.shape, rate: 1.0, tempo: false };
+            let mut last = (g.x + 4.0, g.cy());
+            for i in 0..=60 {
+                let ph = f64::from(i) / 60.0 * 2.0;
+                let v = probe.value(ph, 0.5, 0.37);
+                let p = (g.x + 4.0 + (i as f32 / 60.0) * (g.w - 8.0), g.cy() - v * (g.h / 2.0 - 8.0));
+                if i > 0 {
+                    ui.c.line(last.0, last.1, p.0, p.1, 1.6, col);
+                }
+                last = p;
+            }
+            ui.c.text(SMALL.bold(), g.x + 6.0, g.y + 3.0, plug::DIM, LFO_SHAPES[usize::from(l.shape).min(4)]);
+            ui.hit(g, Target::Ext(Ctl::LfoShape(0)));
+            ext_knob(ui, look, Ctl::LfoRate, xs(0), 222.0, 11.0, 244.0, false);
+            ext_knob(ui, look, Ctl::Amt, xs(1), 222.0, 11.0, 244.0, true);
+            small(ui, edges(400.0, 438.0, 244.0, 256.0), Ctl::Tempo, "TEMPO", l.tempo, false);
+        }
+        other => {
+            let what = match other {
+                Source::Vel => "The note's velocity",
+                Source::ModX => "The pad's X",
+                Source::ModY => "The pad's Y",
+                _ => "A number picked at every note",
+            };
+            ui.c.text_clip(SMALL, g.x + 6.0, g.y + 6.0, g.w - 12.0, plug::DIM, what);
+            ui.c.text_clip(SMALL, g.x + 6.0, g.y + 22.0, g.w - 12.0, plug::DIM, &format!("moves {}", sel.tgt.name()));
+            ui.c.text_clip(SMALL.bold(), g.x + 6.0, g.y + 40.0, g.w - 12.0, if amount == 0.0 { plug::FAINT } else { brand::MAIN }, &extctl::text(look.ext, &sel, Ctl::Amt));
+            ext_knob(ui, look, Ctl::Amt, xs(0), 222.0, 11.0, 244.0, true);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,7 +540,7 @@ mod tests {
     /// Every card and button starts on the 6 px grid, inside the editor, 6 px from its neighbours.
     #[test]
     fn the_layout_keeps_its_grid() {
-        for r in [LOGO, WELL, SLICE_CARD, PLAY_CARD, SWITCH_CARD, LOAD, SLICE, DUMP] {
+        for r in [LOGO, WELL, SLICE_CARD, PLAY_CARD, SWITCH_CARD, LOAD, SLICE, DUMP, MOD_CARD, LAYER_CARD, ART_CARD, FILTER_CARD, ENV_CARD] {
             assert!(r.x >= GAP && r.right() <= RIGHT && r.y >= GAP && r.bottom() <= BOTTOM, "{r:?}");
             assert_eq!(r.x % 6.0, 0.0, "{r:?}");
         }
@@ -344,7 +548,11 @@ mod tests {
             assert_eq!(b.x - a.right(), GAP, "{a:?} {b:?}");
         }
         assert_eq!(SLICE_CARD.y - WELL.bottom(), GAP);
-        assert_eq!(WELL.y - HEAD.1, GAP);
+        assert_eq!(MOD_CARD.y - HEAD.1, GAP);
+        assert_eq!(WELL.y - ART_CARD.bottom(), GAP);
+        for (a, b) in [(MOD_CARD, LAYER_CARD), (ART_CARD, FILTER_CARD), (FILTER_CARD, ENV_CARD)] {
+            assert_eq!(b.x - a.right(), GAP, "{a:?} {b:?}");
+        }
         assert_eq!((key_name(60), key_name(36), key_name(61)), ("C5".into(), "C3".into(), "C#5".into()));
     }
 }

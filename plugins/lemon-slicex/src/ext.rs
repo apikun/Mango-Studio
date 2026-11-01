@@ -98,6 +98,12 @@ impl Env {
         self.sus + (1.0 - self.sus) * (1.0 - p) * (1.0 - p)
     }
 
+    /// The attack, decay and release in seconds.
+    pub fn seconds(&self, beat: f64) -> (f64, f64, f64) {
+        let k = if self.tempo { beat / 1000.0 * 4.0 } else { 0.001 };
+        (f64::from(self.att) * k, f64::from(self.dec) * k, f64::from(self.rel) * k)
+    }
+
     /// The release in seconds.
     pub fn release(&self, beat: f64) -> f64 {
         f64::from(self.rel) * if self.tempo { beat / 1000.0 * 4.0 } else { 0.001 }

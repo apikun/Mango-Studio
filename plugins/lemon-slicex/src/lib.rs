@@ -12,6 +12,7 @@ pub mod dsp;
 pub mod dump;
 pub mod editor;
 pub mod ext;
+pub mod extctl;
 pub mod params;
 pub mod slicing;
 pub mod state;
