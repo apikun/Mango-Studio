@@ -38,8 +38,10 @@ fifteen effects; these are the gaps a project made in FL Studio runs into most.
   original's slots in opened projects
 - [x] **Flanger and phaser.** Lemon Flanger and Lemon Phaser recreate Fruity Flanger and Fruity Phaser
 - [ ] **Vocoder (Vocodex)**
-- [ ] **Peak Controller.** Common for sidechain pumping in projects; nothing in the code handles it yet
-- [ ] **Formula Controller**
+- [x] **Peak Controller.** Common for sidechain pumping in projects. Lemon Peak Controller plays projects' Fruity Peak
+  Controller slots and the engine plays their controller links (mixer and plugin targets, formulas)
+- [x] **Formula Controller.** Lemon Formula Controller plays projects' Fruity Formula Controller slots, with the
+  original's formula language, and their controller links drive linked controls as the Peak Controller's do
 - [ ] **Patcher.** The mixer slot menu's Patcherize and Patcherize all are greyed out
 - [x] **Transient Processor, Chorus and Stereo Shaper compared with FL Studio 2026's exports.** Six of the seven
   small effects match sample for sample in the tests (98 cases for these three: `os-engine/tests/fx_null.rs`); the
