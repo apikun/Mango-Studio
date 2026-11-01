@@ -445,7 +445,7 @@ fn strip(ui: &mut Ui, s: &State, n: u16, left: f32, bottom: f32, f: &FrameInfo, 
     let (body, hov) = strip_body(ui, s, n, left, STRIP_W, (ly.y(HEAD_Y0), ly.y(HEAD_Y1), ly.y(PANEL_Y1)), bottom, Font::new(17));
 
     // Dark head panel (name, LED, pan) with a rounded bottom.
-    head_panel(ui, Rect::new(left + 1.0, ly.y(PANEL_Y0), STRIP_W - 2.0, ly.y(PANEL_Y1) - ly.y(PANEL_Y0)));
+    head_panel(ui, Rect::new(left + 1.0, ly.y(PANEL_Y0), STRIP_W - 2.0, ly.y(PANEL_Y1) - ly.y(PANEL_Y0)), track.and_then(|m| m.color).map(super::rgb));
 
     // Meter slot with its tick marks; the selected strip gets a green frame.
     let meter = Rect::new(mx - 7.5, ly.y(METER_Y0), 16.0, ly.y(METER_Y1) - ly.y(METER_Y0));
@@ -737,7 +737,7 @@ fn strip_geo(ui: &mut Ui, s: &State, n: u16, left: f32, top: f32, bottom: f32, f
     let hov1 = at(g.panel.unwrap_or(g.meter.3));
     let (body, hov) = strip_body(ui, s, n, left, w, (top, top + g.head_h, hov1), bottom, Font::new(g.num_font));
     if let Some(pb) = g.panel {
-        head_panel(ui, Rect::new(left + 1.0, top + g.head_h + 1.0, w - 2.0, at(pb) - top - g.head_h - 1.0));
+        head_panel(ui, Rect::new(left + 1.0, top + g.head_h + 1.0, w - 2.0, at(pb) - top - g.head_h - 1.0), track.and_then(|m| m.color).map(super::rgb));
     }
     if let Some(y) = g.foot {
         let band = Rect::new(left + 3.0, at(y), w - 6.0, (bottom - 6.0 - at(y)).max(1.0));
@@ -756,6 +756,7 @@ fn strip_geo(ui: &mut Ui, s: &State, n: u16, left: f32, top: f32, bottom: f32, f
         None => {
             // Extra large: the name on the header's second row.
             let (name, c) = name_and_colour(ui, s, n, hov);
+            let c = track.and_then(|m| m.color).filter(|_| n != 0).map_or(c, |o| ink_on(super::rgb(o)));
             let r = Rect::new(left + 4.0, top + g.head_h / 2.0, w - 6.0, g.head_h / 2.0);
             ui.c.text_clip(Font::new(14), r.x, r.y + 1.0, r.w, c, &name);
         }
@@ -797,6 +798,10 @@ fn strip_body(ui: &mut Ui, s: &State, n: u16, left: f32, w: f32, (head0, head1, 
         (false, false) => ui.t.s(0x232527),
     };
     let lemon = super::lemon(ui);
+    // A coloured track tints its whole strip, as FL does.
+    let own = track.and_then(|m| m.color).map(super::rgb);
+    let tint = |c: Color, k: f32| own.map_or(c, |o| c.mix(o, k));
+    let body = tint(body, 0.3);
     if lemon {
         // Lemon (spec: ui/lemon-design.md §8): each strip is a rounded card on the dark gap colour. Mango, black: the gap
         // black, the card lit from the top down and rimmed, the selected one lighter with a mango rim, so every strip
@@ -809,6 +814,7 @@ fn strip_body(ui: &mut Ui, s: &State, n: u16, left: f32, w: f32, (head0, head1, 
         } else {
             (Color::rgb(0x202020), Color::rgb(0x121212), super::MANGO_MIXER_RIM)
         };
+        let (top, low) = (tint(top, 0.3), tint(low, 0.22));
         let rad = lk::r_panel(t).min(face.w / 2.0);
         ui.c.fill_rrect(face.outset(1.0), rad + 1.0, rim);
         ui.c.fill_rect_gradient(face, top, low, rad);
@@ -827,9 +833,14 @@ fn strip_body(ui: &mut Ui, s: &State, n: u16, left: f32, w: f32, (head0, head1, 
         let hr = Rect::new(left, head0, w, head1 - head0 + 1.0);
         let row = Rect::new(left, head0, w, 21.0);
         ui.c.fill_rect(hr, ui.t.s(0x2b2e30));
-        let own = track.and_then(|m| m.color).map(super::rgb);
         let pill = Rect::new(hr.x + 3.0, hr.y + 2.0, hr.w - 6.0, row.h - 4.0);
-        if head1 - head0 > 30.0 {
+        if let Some(col) = own {
+            // The header in the track's colour, as FL; the selected one underlined.
+            ui.c.fill_rect(hr, col);
+            if selected {
+                ui.c.fill_rect(Rect::new(hr.x, hr.bottom() - 2.0, hr.w, 2.0), t.accent);
+            }
+        } else if head1 - head0 > 30.0 {
         } else if let (true, Some(col)) = (lemon, own) {
             // Mango: a coloured track's number sits on a pill of its colour (lit for the black), outlined when selected.
             ui.c.fill_rrect(pill, lk::r_btn(t), readable_on_black(col));
@@ -850,9 +861,11 @@ fn strip_body(ui: &mut Ui, s: &State, n: u16, left: f32, w: f32, (head0, head1, 
         }
         if head1 - head0 > 30.0 {
             // Extra large: the number at the left of its row, over the name (`strip_geo`), as FL has them.
-            let c = if selected { t.accent } else if let Some(col) = own { readable_on_black(col) } else if hov { ui.t.tx(0xd0d6da) } else { ui.t.tx(0x9aa1a5) };
+            let c = if let Some(col) = own { ink_on(col) } else if selected { t.accent } else if hov { ui.t.tx(0xd0d6da) } else { ui.t.tx(0x9aa1a5) };
             ui.c.text(num, left + 5.0, head0 + 1.0, c, &n.to_string());
-        } else if !(lemon && own.is_some()) {
+        } else if let Some(col) = own {
+            ui.c.text_center(num, row, ink_on(col), &n.to_string());
+        } else {
             let c = if selected && lemon {
                 lk::ink_on_lit(ui.t)
             } else if selected || hov {
@@ -870,8 +883,9 @@ fn strip_body(ui: &mut Ui, s: &State, n: u16, left: f32, w: f32, (head0, head1, 
 
 /// The dark head panel behind the meter, name, light and pan knob, with a rounded bottom. Mango's black skin makes it a
 /// soft charcoal, not black: the name and the light on it were hard to see on the near-black the skin maps this grey to.
-fn head_panel(ui: &mut Ui, r: Rect) {
+fn head_panel(ui: &mut Ui, r: Rect, own: Option<Color>) {
     let panel = if super::lemon(ui) { Color::rgb(0x2b2e31) } else { ui.t.s(0x1d1f21) };
+    let panel = own.map_or(panel, |o| panel.mix(o, 0.25));
     let rad = 9.0_f32.min(r.w / 2.0);
     ui.c.fill_rrect(r, rad, panel);
     ui.c.fill_rect(Rect::new(r.x, r.y, r.w, 12.0_f32.min(r.h)), panel);
@@ -1128,6 +1142,12 @@ fn mixer_knob(ui: &mut Ui, cx: f32, cy: f32, r: f32, halo: f32, value: f32, arc:
     let hov = ui.hovering(Rect::new(cx - halo, cy - halo, 2.0 * halo, 2.0 * halo));
     let look = os_ui::kit::KnobLook::Mixer { halo, arc: arc.is_some() };
     os_ui::kit::knob(ui.c, ui.t, cx, cy, r, value, arc.unwrap_or(false), look, os_ui::kit::State::hover(hov));
+}
+
+/// Text that reads on a track's colour: near black on light colours, white on dark ones.
+fn ink_on(c: Color) -> Color {
+    let luma = 0.299 * f32::from(c.r) + 0.587 * f32::from(c.g) + 0.114 * f32::from(c.b);
+    if luma > 150.0 { Color::rgb(0x141414) } else { Color::rgb(0xf4f4f4) }
 }
 
 /// A track colour on the Mango skin's black strips (its number's pill): its hue kept, lit to at least 68 % lightness and given some
