@@ -894,7 +894,9 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
     // Body colour: the track's colour, else the source's (§2 "Body colour source").
     let color = pl::track_info(s, c.track).and_then(|t| t.color).or_else(|| pl::source_color(s, c.source)).map(rgb);
     let darken = |c: Color| c.mix(ui.t.s(0x000000), 0.55);
-    let tint = pl::clip_tint(s, c.source).map(rgb);
+    // A pattern clip's title strip takes the pattern's (or its track's) colour, as in FL's newer versions; the older
+    // measured look (a neutral strip) stays for a pattern with no colour.
+    let tint = pl::clip_tint(s, c.source).map(rgb).or_else(|| if kind == PickKind::Pattern { color } else { None });
 
     // Title strip: (edge rows, highlight row, gradient top, gradient bottom, text).
     let (edge, high, top, bottom, text, body) = if selected {
@@ -906,7 +908,7 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
     } else {
         let body = color.map_or(cc(t, DEFAULT_BODY), darken);
         match (kind, tint) {
-            (PickKind::Audio | PickKind::Automation, Some(c)) => {
+            (PickKind::Audio | PickKind::Automation | PickKind::Pattern, Some(c)) => {
                 (offset(c, -42), offset(c, -8), offset(c, -17), offset(c, -26), cc(t, TITLE_TEXT), body)
             }
             _ => (cc(t, CLIP_BORDER), cc(t, TITLE_TOP), cc(t, TITLE_TOP), cc(t, TITLE_BOTTOM), cc(t, TITLE_TEXT), body),
@@ -991,7 +993,8 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
     let content = if c.muted { dim(text).with_alpha(90) } else { dim(cc(t, NOTE)) };
     if !(c.muted && kind == PickKind::Pattern) {
         match (kind, c.source) {
-            (PickKind::Pattern, ClipSource::Pattern(n)) => pattern_notes(ui, s, g, c, n, body_at, content),
+            // The notes lighter than the theme's grey, so they read on the clip's colour.
+            (PickKind::Pattern, ClipSource::Pattern(n)) => pattern_notes(ui, s, g, c, n, body_at, content.mix(Color::rgb(0xffffff), 0.45)),
             (PickKind::Audio, ClipSource::Channel(ch)) => {
                 // The channel colour lifted by 80 (§2); without one the measured default.
                 let wave = tint.map_or(cc(t, WAVE), |c| offset(c, 80));
@@ -1034,7 +1037,7 @@ fn pattern_notes(ui: &mut Ui, s: &State, g: &PGeom, c: &Clip, n: u16, body: Body
     pitches.sort_unstable();
     pitches.dedup();
     let pitch_count = pitches.len() as f32;
-    let h = (((br.h - 4.0).max(1.0) / pitch_count * 0.45).clamp(1.5, 2.5)).min(br.h.max(1.0));
+    let h = (((br.h - 4.0).max(1.0) / pitch_count * 0.6).clamp(2.0, 3.5)).min(br.h.max(1.0));
     let usable = (br.h - 4.0 - h).max(0.0);
     let pad = (br.h - h - usable) / 2.0;
     let step = (g.ppq / 4).max(1);
