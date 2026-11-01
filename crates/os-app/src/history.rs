@@ -843,6 +843,7 @@ pub fn track_io(s: &mut State, track: u16) {
 /// parameter menu's Set... and Paste value): a step, "Plugin parameter", unless Undo knob tweaks is off or the value
 /// stays. A plugin editor's own changes make none.
 pub fn param(s: &mut State, key: usize, index: usize, before: Option<f64>, to: f64) {
+    s.plugin_edited |= before.is_some_and(|v| v != to);
     let Some(v) = before.filter(|&v| v != to && prefs::check(&prefs::UNDO_KNOB_TWEAKS)) else { return };
     record(s, PLUGIN_PARAMETER, Snap::Param(key, index, v));
     // A plugin may take the value on its next idle, so the button's release does not judge the step (`settle`).
@@ -852,6 +853,7 @@ pub fn param(s: &mut State, key: usize, index: usize, before: Option<f64>, to: f
 /// A gesture starts in the plugin's own window on parameter `index` of instance `key`, which has `before` as its value:
 /// a step, "Plugin parameter", unless Undo knob tweaks is off. Returns the step's place (`plugin_end` finds it by it).
 pub fn plugin_begin(s: &mut State, key: usize, index: usize, before: f64) -> Option<usize> {
+    s.plugin_edited = true;
     if !prefs::check(&prefs::UNDO_KNOB_TWEAKS) {
         return None;
     }
@@ -864,6 +866,7 @@ pub fn plugin_begin(s: &mut State, key: usize, index: usize, before: f64) -> Opt
 /// The editor sent a value for parameter `index` of instance `key` without a gesture (an editor that does not report
 /// them): one step for a run of such values, until another step comes.
 pub fn plugin_run(s: &mut State, key: usize, index: usize, before: f64) {
+    s.plugin_edited = true;
     let h = &s.history;
     if !prefs::check(&prefs::UNDO_KNOB_TWEAKS) || (h.param_run == Some((key, index)) && h.done == h.steps.len()) {
         return;
