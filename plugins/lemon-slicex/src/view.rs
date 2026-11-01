@@ -22,7 +22,7 @@ use crate::state::State;
 
 /// Editor size in logical pixels.
 pub const W: u32 = 660;
-pub const H: u32 = 630;
+pub const H: u32 = 628;
 
 /// A rect from its left, right, top and bottom edges (right and bottom exclusive).
 const fn edges(x0: f32, x1: f32, y0: f32, y1: f32) -> Rect {
@@ -74,22 +74,23 @@ const DECK_B: Rect = edges(216.0, 234.0, 382.0, 398.0);
 const SCROLL_R: Rect = edges(6.0, 654.0, 402.0, 416.0);
 pub const WELL_R: Rect = edges(6.0, 654.0, 416.0, 512.0);
 pub const WAVE: Rect = edges(12.0, 648.0, 420.0, 508.0);
-const ROW_R: Rect = edges(6.0, 654.0, 512.0, 534.0);
-pub const NAME: Rect = edges(266.0, 370.0, 514.0, 532.0);
-pub const KEY_BOX: Rect = edges(402.0, 444.0, 514.0, 532.0);
-const REVERSE: Rect = edges(452.0, 512.0, 514.0, 532.0);
-const LANE: Rect = edges(6.0, 654.0, 534.0, 562.0);
-/// The keyboard: every key from 0 to 127, white keys `KEY_W` wide in the lower row, black keys over them in the upper.
-const KEYS_Y: f32 = 566.0;
-const KEY_X0: f32 = 12.0;
-const KEY_W: f32 = 8.4;
-const BLACK_H: f32 = 20.0;
-const WHITE_Y: f32 = 590.0;
-const WHITE_H: f32 = 32.0;
+const ROW_R: Rect = edges(6.0, 654.0, 512.0, 530.0);
+const LANE: Rect = edges(6.0, 654.0, 530.0, 562.0);
+/// The chosen slice's name, key and reverse switch sit in the logo plate.
+pub const NAME: Rect = edges(14.0, 148.0, 274.0, 290.0);
+pub const KEY_BOX: Rect = edges(40.0, 84.0, 296.0, 314.0);
+const REVERSE: Rect = edges(92.0, 148.0, 296.0, 314.0);
+/// The keyboard: every key from 0 to 127 as small rounded squares, the black keys in the upper row, the white in the lower.
+const KEYS_Y: f32 = 570.0;
+const KEY_X0: f32 = 34.0;
+const KEY_W: f32 = 8.15;
+const BLACK_H: f32 = 18.0;
+const WHITE_Y: f32 = 598.0;
+const WHITE_H: f32 = 22.0;
 
 /// The window's bands below the top strip (from, to), in the full layout: the middle panel, the audio editor and the
 /// keyboard.
-const BANDS: [(f32, f32); 3] = [(112.0, 326.0), (326.0, 562.0), (562.0, 630.0)];
+const BANDS: [(f32, f32); 3] = [(112.0, 326.0), (326.0, 562.0), (562.0, 628.0)];
 const TOP_H: f32 = 112.0;
 
 /// The bands a view shows with how far each moves up from the full layout, and the window's height: view 0 shows all,
@@ -451,14 +452,35 @@ fn emblem(ui: &mut Ui) {
 
 fn plate(ui: &mut Ui, look: &Look) {
     plate_box(ui, PLATE_R);
-    // The emblem again, big and dim, and what is loaded.
-    let f = Font::condensed(30, 0).bold();
+    mango_mark(ui, PLATE_R.cx(), PLATE_R.y + 62.0, 42.0);
+    let f = Font::condensed(26, 0).bold();
     let lh = ui.c.line_height(f);
-    mango_mark(ui, PLATE_R.cx(), PLATE_R.y + 76.0, 52.0);
-    lemon::spaced(ui.c, f, PLATE_R.x + 18.0, (PLATE_R.cy() + 36.0 - lh / 2.0).round(), TAB_ON.with_alpha(150), "SLICEX", 2.0);
-    let n = look.state.slices.len();
-    let line = if n == 0 { "No loop yet".to_string() } else { format!("{n} slices") };
-    ui.c.text_clip(SMALL.bold(), PLATE_R.x + 12.0, PLATE_R.bottom() - 22.0, PLATE_R.w - 24.0, INK_DIM, &line);
+    lemon::spaced(ui.c, f, PLATE_R.x + 24.0, (PLATE_R.y + 134.0 - lh / 2.0).round(), TAB_ON.with_alpha(150), "SLICEX", 2.0);
+    // The chosen slice: its number, name, key and reverse switch.
+    let st = look.state;
+    let n = st.slices.len();
+    let chosen = ui.st.chosen.min(n.saturating_sub(1));
+    let slice = st.slices.get(chosen);
+    let head = if n == 0 { "SLICE".to_string() } else { format!("SLICE {} OF {n}", chosen + 1) };
+    ui.c.text(SMALL.bold(), 14.0, 262.0, INK_DIM, &head);
+    lemon::field(ui.c, NAME, Kst { disabled: slice.is_none(), ..Kst::NORMAL });
+    let name = slice.map(|s| s.name()).filter(|s| !s.is_empty()).unwrap_or_else(|| if slice.is_some() { "(no name)".into() } else { String::new() });
+    ui.c.text_center(SMALL, NAME, if slice.is_some_and(|s| !s.name.is_empty()) { brand::TEXT } else { SOFT }, &name);
+    ui.c.text(SMALL.bold(), 14.0, 301.0, INK_DIM, "KEY");
+    let mut kst = ui.state(KEY_BOX, &Target::Key);
+    kst.disabled = slice.is_none();
+    lemon::field(ui.c, KEY_BOX, kst);
+    if let Some(s) = slice {
+        let col = if s.root >= 0 { brand::MAIN } else if kst.hover { brand::TEXT } else { SOFT };
+        ui.c.text_center(SMALL.bold(), KEY_BOX, col, &key_name(st.key_of(chosen)));
+    }
+    ui.hit(KEY_BOX, Target::Key);
+    let mut rst = ui.state(REVERSE, &Target::Rev);
+    rst.on = slice.is_some_and(|s| s.reversed());
+    rst.disabled = slice.is_none();
+    let ink = lemon::plug_button(ui.c, REVERSE, 4.0, rst);
+    ui.c.text_center(PILL, REVERSE, ink, "REVERSE");
+    ui.hit(REVERSE, Target::Rev);
 }
 
 fn art_panel(ui: &mut Ui, look: &Look) {
@@ -637,6 +659,8 @@ enum Gl {
     Prev,
     Next,
     Link,
+    Slope,
+    Regions2,
     NoiseT,
     Flag,
     Freeze,
@@ -688,7 +712,8 @@ const fn switch_cell(i: usize) -> Rect {
 /// Draws a glyph in `r`.
 fn glyph(ui: &mut Ui, r: Rect, g: Gl, ink: Color) {
     let (cx, cy) = (r.cx(), r.cy());
-    let ic = |ui: &mut Ui, i: &os_ui::tabler::TablerIcon| ui.c.icon(i, Rect::new(cx - 8.0, cy - 8.0, 16.0, 16.0), ink);
+    let hs = (r.h * 0.4).min(8.0);
+    let ic = |ui: &mut Ui, i: &os_ui::tabler::TablerIcon| ui.c.icon(i, Rect::new(cx - hs, cy - hs, 2.0 * hs, 2.0 * hs), ink);
     use os_ui::tabler as tb;
     match g {
         Gl::Loop => ic(ui, &tb::REPEAT),
@@ -712,7 +737,7 @@ fn glyph(ui: &mut Ui, r: Rect, g: Gl, ink: Color) {
             ui.c.fill_circle(cx, cy, 2.4, ink);
         }
         Gl::Snap => ic(ui, &tb::MAGNET),
-        Gl::Menu => ui.c.fill_polygon(&[(cx - 4.0, cy - 2.0), (cx + 4.0, cy - 2.0), (cx, cy + 3.0)], ink),
+        Gl::Menu => ui.c.fill_polygon(&[(cx - 3.5, cy - 2.0), (cx + 3.5, cy - 2.0), (cx, cy + 2.5)], ink),
         Gl::Refresh => ic(ui, &tb::ROTATE_CLOCKWISE_2),
         Gl::Marks => {
             for dx in [-5.0, 0.0, 5.0] {
@@ -729,6 +754,13 @@ fn glyph(ui: &mut Ui, r: Rect, g: Gl, ink: Color) {
             ui.c.fill_rect(Rect::new(cx + 4.4, cy - 5.0, 1.6, 10.0), ink);
         }
         Gl::Link => ic(ui, &tb::LINK),
+        Gl::Slope => ui.c.fill_polygon(&[(cx - 5.0, cy + 4.0), (cx + 5.0, cy - 4.0), (cx + 5.0, cy + 4.0)], ink),
+        Gl::Regions2 => {
+            for dy in [-4.0, 0.0, 4.0] {
+                ui.c.line(cx - 5.0, cy + dy, cx + 5.0, cy + dy, 1.2, ink);
+            }
+            ui.c.fill_rect(Rect::new(cx - 6.0, cy - 5.0, 2.0, 10.0), ink);
+        }
         Gl::NoiseT => {
             for dy in [-4.0, 0.0, 4.0] {
                 ui.c.line(cx - 6.0, cy + dy, cx + 6.0, cy + dy, 1.4, ink);
@@ -958,16 +990,22 @@ fn scroll_bar(ui: &mut Ui) {
     ui.c.fill_rect(Rect::new(l + 12.0, SCROLL_R.y + 3.0, r - l - 24.0, SCROLL_R.h - 6.0), Color::rgb(0x434d66));
 }
 
-/// The row under the wave: the editor's switches at both ends, the chosen slice between them.
+/// The row under the wave: the editor's switches at both ends.
 fn switches_row(ui: &mut Ui, look: &Look) {
-    ui.c.fill_rect(ROW_R, Color::rgb(0x353e53));
+    ui.c.fill_rect(ROW_R, Color::rgb(0x252d3b));
+    ui.c.fill_rect(Rect::new(ROW_R.x, ROW_R.y, ROW_R.w, 1.0), BTN_EDGE);
     let has = look.frames > 0 && !look.state.slices.is_empty();
-    // Left: a menu arrow, refresh, add marks, then the previous and next region.
-    let left = [Gl::Menu, Gl::Refresh, Gl::Marks, Gl::Prev, Gl::Next, Gl::Link];
+    // Left: a menu arrow, refresh, add marks, then the next and previous region and two more.
+    let left = [Gl::Menu, Gl::Refresh, Gl::Marks, Gl::Next, Gl::Slope, Gl::Prev, Gl::Link];
     for (i, g) in left.iter().enumerate() {
-        let r = Rect::new(10.0 + 24.0 * i as f32, 513.0, 20.0, 20.0);
+        let r = Rect::new(8.0 + 22.0 * i as f32, ROW_R.y, 20.0, ROW_R.h);
         let enabled = matches!(g, Gl::Prev | Gl::Next) && has;
-        let ink = if enabled { LIGHT } else { Color::rgb(0x5d667c) };
+        let ink = match g {
+            Gl::Refresh | Gl::Marks => Color::rgb(0xe3e7ef),
+            _ if enabled => Color::rgb(0xe3e7ef),
+            Gl::Menu => Color::rgb(0xcfd6e6),
+            _ => Color::rgb(0x59627a),
+        };
         let t = Target::Ext(Ctl::Row(i as u8));
         let hov = enabled && ui.hover(r, &t);
         if hov {
@@ -976,50 +1014,26 @@ fn switches_row(ui: &mut Ui, look: &Look) {
         glyph(ui, r, *g, ink);
         ui.hit(r, t);
     }
-    // Right: the switches of the original: Noise T., Regions, Freeze, Step, Snap, Slide. Regions' flag is lit.
-    let right = [Gl::NoiseT, Gl::Flag, Gl::Freeze, Gl::Step, Gl::Snap, Gl::Slide];
+    // Right: the switches of the original. The flag is lit, the step curve pink.
+    let right = [Gl::NoiseT, Gl::Regions2, Gl::Flag, Gl::Freeze, Gl::Step, Gl::Snap, Gl::Slide];
     for (i, g) in right.iter().enumerate() {
-        let r = Rect::new(532.0 + 20.0 * i as f32, 513.0, 20.0, 20.0);
+        let r = Rect::new(ROW_R.right() - 8.0 - 22.0 * (7 - i) as f32, ROW_R.y, 20.0, ROW_R.h);
         let ink = match g {
-            Gl::Flag => brand::MAIN,
-            Gl::Step => Color::rgb(0xd0527a),
-            _ => Color::rgb(0x707a92),
+            Gl::Flag => Color::rgb(0xf0b030),
+            Gl::Step => Color::rgb(0xf0408a),
+            Gl::Snap | Gl::Freeze => Color::rgb(0xcfd6e6),
+            _ => Color::rgb(0x8d97ae),
         };
         glyph(ui, r, *g, ink);
-        ui.hit(r, Target::Ext(Ctl::Row(6 + i as u8)));
+        ui.hit(r, Target::Ext(Ctl::Row(7 + i as u8)));
     }
-    // The chosen slice.
-    let st = look.state;
-    let n = st.slices.len();
-    let chosen = ui.st.chosen.min(n.saturating_sub(1));
-    let slice = st.slices.get(chosen);
-    let head = if n == 0 { "SLICE".to_string() } else { format!("SLICE {} OF {n}", chosen + 1) };
-    ui.c.text(SMALL.bold(), 178.0, 519.0, SOFT, &head);
-    lemon::field(ui.c, NAME, Kst { disabled: slice.is_none(), ..Kst::NORMAL });
-    let name = slice.map(|s| s.name()).filter(|s| !s.is_empty()).unwrap_or_else(|| if slice.is_some() { "(no name)".into() } else { String::new() });
-    ui.c.text_center(SMALL, NAME, if slice.is_some_and(|s| !s.name.is_empty()) { brand::TEXT } else { SOFT }, &name);
-    ui.c.text(SMALL.bold(), 376.0, 519.0, SOFT, "KEY");
-    let mut kst = ui.state(KEY_BOX, &Target::Key);
-    kst.disabled = slice.is_none();
-    lemon::field(ui.c, KEY_BOX, kst);
-    if let Some(s) = slice {
-        let col = if s.root >= 0 { brand::MAIN } else if kst.hover { brand::TEXT } else { SOFT };
-        ui.c.text_center(SMALL.bold(), KEY_BOX, col, &key_name(st.key_of(chosen)));
-    }
-    ui.hit(KEY_BOX, Target::Key);
-    let mut rst = ui.state(REVERSE, &Target::Rev);
-    rst.on = slice.is_some_and(|s| s.reversed());
-    rst.disabled = slice.is_none();
-    let ink = lemon::plug_button(ui.c, REVERSE, 4.0, rst);
-    ui.c.text_center(PILL, REVERSE, ink, "REVERSE");
-    ui.hit(REVERSE, Target::Rev);
 }
 
-/// The marker lane under the wave: two lines, and a flag with the number at each slice's start.
+/// The marker lane under the wave: two rows, and a flag with the number at each slice's start.
 fn lane(ui: &mut Ui, look: &Look) {
-    ui.c.fill_rect(LANE, Color::rgb(0x2b3447));
-    for dy in [9.0, 18.0] {
-        ui.c.fill_rect(Rect::new(LANE.x, LANE.y + dy, LANE.w, 1.0), Color::rgb(0x394560));
+    ui.c.fill_rect(LANE, Color::rgb(0x2c3547));
+    for dy in [10.0, 21.0] {
+        ui.c.fill_rect(Rect::new(LANE.x, LANE.y + dy, LANE.w, 1.0), Color::rgb(0x3a4560));
     }
     if look.frames == 0 {
         return;
@@ -1029,7 +1043,7 @@ fn lane(ui: &mut Ui, look: &Look) {
         let x = x_of(s.start, look.frames).min(WAVE.right() - 1.0);
         let col = if i == chosen { brand::MAIN } else { SOFT.with_alpha(170) };
         ui.c.fill_rect(Rect::new(x, LANE.y + 2.0, 1.0, LANE.h - 4.0), col);
-        ui.c.fill_polygon(&[(x, LANE.y + 2.0), (x + 7.0, LANE.y + 5.0), (x, LANE.y + 8.0)], col);
+        ui.c.fill_polygon(&[(x, LANE.y + 2.0), (x + 6.0, LANE.y + 4.5), (x, LANE.y + 7.0)], col);
     }
 }
 
@@ -1043,15 +1057,24 @@ fn key_rect(k: i32) -> Option<(Rect, bool)> {
     let (oct, n) = (k.div_euclid(12), k.rem_euclid(12) as usize);
     if WHITE[n] >= 0 {
         let x = KEY_X0 + KEY_W * (oct * 7 + WHITE[n]) as f32;
-        (x + KEY_W <= 650.0).then(|| (Rect::new(x, WHITE_Y, KEY_W - 0.6, WHITE_H), false))
+        (x + KEY_W <= 650.0).then(|| (Rect::new(x, WHITE_Y, KEY_W - 1.0, WHITE_H), false))
     } else {
-        let x = KEY_X0 + KEY_W * (oct * 7 + WHITE[n - 1] + 1) as f32 - 2.6;
-        (x + 5.2 <= 650.0).then(|| (Rect::new(x, KEYS_Y, 5.2, BLACK_H), true))
+        let x = KEY_X0 + KEY_W * (oct * 7 + WHITE[n - 1] + 1) as f32 - 3.0;
+        (x + 6.0 <= 650.0).then(|| (Rect::new(x, KEYS_Y, 6.0, BLACK_H), true))
     }
 }
 
 fn keyboard(ui: &mut Ui, look: &Look) {
-    ui.c.fill_rect(edges(6.0, 654.0, 562.0, 630.0), Color::rgb(0x1b212c));
+    ui.c.fill_rect(edges(6.0, 654.0, 562.0, 628.0), Color::rgb(0x1b212c));
+    // The range labels at the left: five rows, the fourth marked.
+    for (i, label) in ["C0", "C1", "C2", "C3", "F3"].iter().enumerate() {
+        let y = 569.0 + 10.0 * i as f32;
+        if i == 3 {
+            ui.c.fill_rrect(Rect::new(10.0, y - 1.0, 21.0, 10.0), 2.0, Color::rgb(0x8d97ae));
+            ui.c.fill_polygon(&[(32.0, y), (32.0, y + 8.0), (36.0, y + 4.0)], Color::rgb(0x8d97ae));
+        }
+        ui.c.text(Font::new(7).bold(), 13.0, y, if i == 3 { INK } else { LIGHT }, label);
+    }
     let st = look.state;
     let chosen = ui.st.chosen.min(st.slices.len().saturating_sub(1));
     for black in [false, true] {
@@ -1064,14 +1087,15 @@ fn keyboard(ui: &mut Ui, look: &Look) {
             let hov = ui.hover(r, &t) || ui.st.pressed.as_ref() == Some(&t);
             let face = match st.slice_for(k) {
                 Some(i) if i == chosen => brand::MAIN,
-                Some(_) if black => Color::rgb(0x7f8aa6),
+                Some(_) if black => Color::rgb(0x6f7ca0),
                 Some(_) => Color::rgb(0xb7c4e4),
-                None if black => Color::rgb(0x394258),
-                None => KEY_WHITE,
+                None if black => Color::rgb(0x2d3544),
+                None => Color::rgb(0xe9ecf2),
             };
-            ui.c.fill_rect(r, if hov { face.shade(0.12) } else { face });
-            if !black && k % 12 == 0 {
-                ui.c.text(Font::new(7), r.x, r.bottom() + 1.0, SOFT.with_alpha(160), &key_name(k));
+            let face = if hov { face.shade(0.12) } else { face };
+            ui.c.fill_rrect(r, 1.5, face);
+            if black {
+                ui.c.stroke_rrect(r.inset(0.5), 1.5, 1.0, Color::rgb(0x414c63));
             }
             ui.hit(r, t);
         }
@@ -1086,7 +1110,7 @@ mod tests {
     #[test]
     fn the_layout_fits_the_window() {
         let win = edges(0.0, W as f32, 0.0, H as f32);
-        for r in [KEYS_BTN, PAD, MOD_PANEL, LAYER_PANEL, LOGO, PLATE_R, ART_PANEL, FILTER_PANEL, GRAPH, KNOB_BAR, LOOP, PLAY, STOP, BPM_BOX, BEATS_BOX, SCROLL_R, WELL_R, WAVE, ROW_R, NAME, KEY_BOX, REVERSE, LANE] {
+        for r in [KEYS_BTN, PAD, MOD_PANEL, LAYER_PANEL, LOGO, PLATE_R, ART_PANEL, FILTER_PANEL, NAME, KEY_BOX, REVERSE, GRAPH, KNOB_BAR, LOOP, PLAY, STOP, BPM_BOX, BEATS_BOX, SCROLL_R, WELL_R, WAVE, ROW_R, LANE] {
             assert!(r.x >= 0.0 && r.right() <= win.right() && r.y >= 0.0 && r.bottom() <= win.bottom(), "{r:?}");
         }
         for (a, b) in [(MOD_PANEL, LAYER_PANEL), (LAYER_PANEL, LOGO), (PLATE_R, ART_PANEL), (ART_PANEL, FILTER_PANEL), (LOOP, PLAY), (PLAY, STOP)] {
@@ -1105,9 +1129,9 @@ mod tests {
         assert_eq!(window_size(0, true), (W, H));
         assert_eq!(window_size(1, true).1, H - 236);
         assert_eq!(window_size(2, true).1, H - 214);
-        assert_eq!(window_size(0, false).1, H - 68);
+        assert_eq!(window_size(0, false).1, H - 66);
         assert_eq!(window_size(3, true).1, 112);
         let (bands, _) = arrange(2, true);
-        assert_eq!(bands, vec![(326.0, 562.0, -214.0), (562.0, 630.0, -214.0)]);
+        assert_eq!(bands, vec![(326.0, 562.0, -214.0), (562.0, 628.0, -214.0)]);
     }
 }

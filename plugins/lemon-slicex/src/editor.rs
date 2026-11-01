@@ -346,10 +346,10 @@ impl Logic {
                 return vec![Act::Repaint];
             }
             Ctl::Edit(8) => return self.dump(false).map(Act::Notes).into_iter().collect(),
-            Ctl::Row(3) | Ctl::Row(4) => {
+            Ctl::Row(3) | Ctl::Row(5) => {
                 let n = self.state().slices.len() as i32;
                 if n > 0 {
-                    let d = if c == Ctl::Row(3) { -1 } else { 1 };
+                    let d = if c == Ctl::Row(5) { -1 } else { 1 };
                     self.view.chosen = (self.view.chosen as i32 + d).clamp(0, n - 1) as usize;
                 }
             }
@@ -1734,8 +1734,8 @@ mod tests {
         l.down(x, y, Btn::Left, Mods::default(), false);
         paint(&mut l);
         let (x, y) = centre(&l, &Target::Ext(Ctl::Keys));
-        assert!(l.down(x, y, Btn::Left, Mods::default(), false).contains(&Act::Resize(view::W, view::H - 68)));
-        assert_eq!(l.size(), (view::W, view::H - 68));
+        assert!(l.down(x, y, Btn::Left, Mods::default(), false).contains(&Act::Resize(view::W, view::H - 66)));
+        assert_eq!(l.size(), (view::W, view::H - 66));
         let _ = std::fs::remove_file(p);
     }
 
