@@ -1246,6 +1246,13 @@ fn lane(ui: &mut Ui, look: &Look) {
         let col = if i == chosen { brand::MAIN } else { SOFT.with_alpha(170) };
         ui.c.fill_rect(Rect::new(x, LANE.y + 2.0, 1.0, LANE.h - 4.0), col);
         ui.c.fill_polygon(&[(x, LANE.y + 2.0), (x + 6.0, LANE.y + 4.5), (x, LANE.y + 7.0)], col);
+        // Its name, as far as the next flag allows.
+        let next = look.state.slices.get(i + 1).map_or(WAVE.right(), |n| x_of(n.start, look.frames, ui.st.zoom).min(WAVE.right()));
+        let room = next - x - 10.0;
+        if room > 14.0 {
+            let name = if s.name.is_empty() { format!("Marker #{}", i + 1) } else { s.name() };
+            ui.c.text_clip(Font::new(8), x + 9.0, LANE.y + 1.0, room, if i == chosen { brand::MAIN } else { SOFT.with_alpha(190) }, &name);
+        }
     }
 }
 
@@ -1287,16 +1294,18 @@ fn keyboard(ui: &mut Ui, look: &Look) {
             }
             let t = Target::Ext(Ctl::Key(k as u8));
             let hov = ui.hover(r, &t) || ui.st.pressed.as_ref() == Some(&t);
+            // The keys that play a slice are vivid (the chosen slice's brightest); the others stay plain.
             let face = match st.slice_for(k) {
-                Some(i) if i == chosen => brand::MAIN,
-                Some(_) if black => Color::rgb(0x6f7ca0),
-                Some(_) => Color::rgb(0xb7c4e4),
+                Some(i) if i == chosen => Color::rgb(0xffc35c),
+                Some(_) => Color::rgb(0xf2711c),
                 None if black => Color::rgb(0x2d3544),
                 None => Color::rgb(0xe9ecf2),
             };
             let face = if hov { face.shade(0.12) } else { face };
             ui.c.fill_rrect(r, 1.5, face);
-            if black {
+            if st.slice_for(k).is_some() {
+                ui.c.stroke_rrect(r.inset(0.5), 1.5, 1.0, Color::rgb(0xfff0d8).with_alpha(if st.slice_for(k) == Some(chosen) { 255 } else { 90 }));
+            } else if black {
                 ui.c.stroke_rrect(r.inset(0.5), 1.5, 1.0, Color::rgb(0x414c63));
             }
             ui.hit(r, t);
