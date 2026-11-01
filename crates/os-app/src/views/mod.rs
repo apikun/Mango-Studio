@@ -6,6 +6,7 @@
 //! Views of the main window, laid out from the measured default layout.
 // spec: ui/main-window.md
 
+pub mod audio_form;
 pub mod browser;
 pub mod plugin_panel;
 pub mod plugin_picker;

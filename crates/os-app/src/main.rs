@@ -12,6 +12,7 @@
 
 mod app;
 mod audio_cfg;
+mod audio_file;
 mod audiolog;
 mod auto_close;
 mod rolling;

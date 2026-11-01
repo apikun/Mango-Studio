@@ -20,6 +20,7 @@ pub fn paint(ui: &mut Ui, s: &State, m: &Modal, f: &Form) {
         Form::Save(f) => super::save_form::paint(ui, s, m, f),
         Form::Export(f) => super::export_form::paint(ui, s, m, f),
         Form::Midi(f) => super::midi_form::paint(ui, s, m, f),
+        Form::Audio(f) => super::audio_form::paint(ui, s, m, f),
     }
 }
 

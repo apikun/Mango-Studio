@@ -4643,22 +4643,6 @@ impl App {
         self.file_dialog(dlg);
     }
 
-    /// An audio file chosen in FILE ▸ Import ▸ Audio file...: the audio clip channel and clip at the playhead
-    /// (`playlist.pos`) on the first track free over it, from the selected track down — a drop on the playlist is aimed
-    /// by the mouse, this one by the transport. One history step, "Playlist edit".
-    pub(crate) fn audio_file_chosen(&mut self, path: PathBuf) {
-        let text = path.to_string_lossy().into_owned();
-        let s = &mut self.state;
-        let tick = s.playlist.pos;
-        let len = crate::playlist::sample_len(s, &text).max(1);
-        let track = crate::playlist::free_track(s, s.playlist.track, tick, tick + len);
-        s.message = Some(match crate::playlist::add_audio_clip(s, &text, track, tick) {
-            Some(_) => format!("Imported audio {}", path.display()),
-            None => format!("Could not read {} as audio", path.display()),
-        });
-        self.invalidate();
-    }
-
     /// A sample dropped on the channel rack at window y `y` (spec: ui/channel-rack.md, New project / drops): onto a
     /// sampler row it replaces that channel's sample (Lemon Sampler loads it) and renames the channel after the file
     /// while "Auto name channels" is on (`rack::auto_name`); elsewhere it adds a Lemon Sampler channel named after the
@@ -15163,6 +15147,8 @@ mod tests {
         let n0 = crate::playlist::clips(&app.state).len();
         crate::dialog::fake::answer(Some(path.clone()));
         crate::playlist::run(&mut app, crate::playlist::Cmd::AudioImport);
+        // The import's form asks what the file becomes: Accept keeps the clip (the default kind).
+        app.dialog_click(crate::dialog::DHit::Form(crate::project_forms::FHit::Main));
         let clips = crate::playlist::clips(&app.state);
         assert_eq!(clips.len(), n0 + 1, "the file landed");
         let clip = clips.last().unwrap();
@@ -15177,12 +15163,13 @@ mod tests {
         assert!(!app.state.project.channels.iter().any(|c| matches!(c.kind, os_model::ChannelKind::AudioClip)), "the channel went too");
         crate::history::redo(&mut app.state);
         assert_eq!(app.state.project.channels, before.channels);
-        // A file that does not decode: the message only.
+        // A file that does not decode: the message only, and no form.
         let bad = dir.join("Nope.wav");
         std::fs::write(&bad, b"x").unwrap();
         crate::dialog::fake::answer(Some(bad));
         crate::playlist::run(&mut app, crate::playlist::Cmd::AudioImport);
-        assert!(app.state.message.as_deref().is_some_and(|m| m.contains("Could not read")));
+        let Some(crate::dialog::Body::Msg(m)) = app.state.dialogs.last().map(|d| &d.body) else { panic!("a message") };
+        assert!(m.plain().contains("Could not read"), "{}", m.plain());
         assert_eq!(crate::playlist::clips(&app.state).len(), n0 + 1, "nothing placed for the bad file");
         let _ = std::fs::remove_dir_all(&dir);
     }
