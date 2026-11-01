@@ -31,7 +31,8 @@ const fn edges(x0: f32, x1: f32, y0: f32, y1: f32) -> Rect {
 
 // The colours of the original's window, in Mango's orange.
 const FRAME: Color = Color::rgb(0x2f3747);
-const STRIP: Color = Color::rgb(0x1f2530);
+const STRIP: Color = Color::rgb(0x2a2d33);
+const STRIP_PANEL: Color = Color::rgb(0x33363d);
 const PLATE: Color = Color::rgb(0x8a909a);
 const PLATE_DARK: Color = Color::rgb(0x777e8a);
 const TAB_OFF: Color = Color::rgb(0x7a8596);
@@ -45,7 +46,7 @@ const LIGHT: Color = Color::rgb(0xe3e7ef);
 const SOFT: Color = Color::rgb(0xaab4c8);
 const KEY_WHITE: Color = Color::rgb(0xe6e9ef);
 const KEY_BLACK: Color = Color::rgb(0x242a35);
-const SLOT: Color = Color::rgb(0x12161d);
+const SLOT: Color = Color::rgb(0x17191d);
 
 /// The top strip: its faders, the pad, the layering and the emblem.
 pub const FADER_X: [f32; 4] = [24.0, 54.0, 84.0, 114.0];
@@ -272,6 +273,7 @@ fn arrange_bands(mut ui: Ui, look: &Look) -> Vec<Hit> {
 /// The view buttons in the top-right corner: the keyboard and the four layouts, each showing which bands it keeps.
 fn view_buttons(ui: &mut Ui, look: &Look) {
     let x = look.ext;
+    ui.c.fill_rrect(edges(526.0, 652.0, 8.0, 30.0), 4.0, Color::rgb(0x1f2227));
     let glyph = |ui: &mut Ui, r: Rect, rows: [bool; 3], ink: Color| {
         for (i, on) in rows.into_iter().enumerate() {
             let h = [3.0, 4.0, 3.0][i];
@@ -280,12 +282,12 @@ fn view_buttons(ui: &mut Ui, look: &Look) {
         }
     };
     let keys = Target::Ext(Ctl::Keys);
-    let kon = x.keys;
     let hov = ui.hover(KEYS_BTN, &keys);
-    ui.c.fill_rect(KEYS_BTN, if kon { TAB_ON } else if hov { TAB_OFF.shade(0.12) } else { TAB_OFF });
+    let face = if x.keys { TAB_ON } else if hov { Color::rgb(0x42474f) } else { Color::rgb(0x32363c) };
+    ui.c.fill_rrect(KEYS_BTN, 3.0, face);
     for i in 0..4 {
         let kx = KEYS_BTN.x + 4.0 + 4.0 * i as f32;
-        ui.c.fill_rect(Rect::new(kx, KEYS_BTN.y + 4.0, 2.0, 10.0), INK);
+        ui.c.fill_rect(Rect::new(kx, KEYS_BTN.y + 4.0, 2.0, 10.0), if x.keys { INK } else { SOFT });
     }
     ui.hit(KEYS_BTN, keys);
     for i in 0..4u8 {
@@ -293,14 +295,14 @@ fn view_buttons(ui: &mut Ui, look: &Look) {
         let t = Target::Ext(Ctl::View(i));
         let on = x.view == i;
         let hov = ui.hover(r, &t);
-        ui.c.fill_rect(r, if on { TAB_ON } else if hov { TAB_OFF.shade(0.12) } else { TAB_OFF });
+        ui.c.fill_rrect(r, 3.0, if on { TAB_ON } else if hov { Color::rgb(0x42474f) } else { Color::rgb(0x32363c) });
         let rows = match i {
             0 => [true, true, true],
             1 => [true, true, false],
             2 => [true, false, true],
             _ => [true, false, false],
         };
-        glyph(ui, r, rows, INK);
+        glyph(ui, r, rows, if on { INK } else { SOFT });
         ui.hit(r, t);
     }
 }
@@ -324,8 +326,8 @@ fn tab(ui: &mut Ui, r: Rect, t: Target, label: &str, on: bool, disabled: bool) {
     let hov = ui.hover(r, &t) && !disabled;
     let face = if on { TAB_ON } else if hov { TAB_OFF.shade(0.12) } else { TAB_OFF };
     ui.c.fill_rect(r, face);
-    ui.c.stroke_rrect(r.inset(0.5), 0.0, 1.0, INK_DIM.with_alpha(120));
-    ui.c.text_center(PILL, r, if disabled { INK_DIM } else { INK }, label);
+    ui.c.stroke_rrect(r.inset(0.5), 0.0, 1.0, INK_DIM.with_alpha(90));
+    ui.c.text_center(Font::new(10), r, if disabled { INK_DIM } else { INK }, label);
     ui.hit(r, t);
 }
 
@@ -340,6 +342,37 @@ fn led(ui: &mut Ui, cx: f32, cy: f32, label: &str, on: bool, t: Target, ink: Col
     }
     let lh = ui.c.line_height(SMALL.bold());
     ui.c.text(SMALL.bold(), cx + 10.0, (cy - lh / 2.0).round(), ink, label);
+    ui.hit(hr, t);
+}
+
+/// A square check box with its label to the right.
+fn check(ui: &mut Ui, x: f32, cy: f32, label: &str, on: bool, t: Target) {
+    let w = ui.c.text_width(Font::new(8), label);
+    let hr = Rect::new(x - 3.0, cy - 8.0, 18.0 + w, 16.0);
+    let b = Rect::new(x, cy - 4.5, 9.0, 9.0);
+    ui.c.fill_rect(b, Color::rgb(0x2a313f));
+    ui.c.stroke_rrect(b.inset(0.5), 0.0, 1.0, INK_DIM.shade(0.3));
+    if on {
+        ui.c.fill_rect(b.inset(2.0), brand::MAIN);
+    }
+    let lh = ui.c.line_height(Font::new(8));
+    ui.c.text(Font::new(8), x + 13.0, (cy - lh / 2.0).round(), SOFT, label);
+    ui.hit(hr, t);
+}
+
+/// A small knob with its tiny caption under it, as the envelope bar has them.
+#[allow(clippy::too_many_arguments)]
+fn knob_small(ui: &mut Ui, t: Target, cx: f32, cy: f32, r: f32, norm: f32, cap: &str, cap_y: f32) {
+    let hr = Rect::new(cx - r - 3.0, cy - r - 3.0, 2.0 * r + 6.0, 2.0 * r + 6.0);
+    let hov = ui.hover(hr, &t) || ui.st.pressed.as_ref() == Some(&t);
+    ui.c.fill_circle(cx, cy, r + 1.0, INK.with_alpha(150));
+    ui.c.fill_circle(cx, cy, r, if hov { Color::rgb(0x2c3342) } else { Color::rgb(0x232a37) });
+    let a = (norm.clamp(0.0, 1.0) - 0.5) * 270f32.to_radians();
+    let (sx, sy) = (a.sin(), -a.cos());
+    ui.c.line(cx + sx * r * 0.2, cy + sy * r * 0.2, cx + sx * (r - 1.5), cy + sy * (r - 1.5), 1.4, LIGHT);
+    let f = Font::new(7);
+    let w = ui.c.text_width(f, cap);
+    ui.c.text(f, (cx - w / 2.0).round(), cap_y, SOFT, cap);
     ui.hit(hr, t);
 }
 
@@ -395,7 +428,7 @@ fn faders(ui: &mut Ui, look: &Look) {
 }
 
 fn pad_panel(ui: &mut Ui, look: &Look) {
-    ui.c.fill_rrect(MOD_PANEL, 4.0, Color::rgb(0x262d3a));
+    ui.c.fill_rrect(MOD_PANEL, 4.0, STRIP_PANEL);
     title(ui, MOD_PANEL, "MODULATION", brand::MAIN);
     ui.c.fill_rrect(PAD, 3.0, SLOT);
     ui.c.fill_rect(Rect::new(PAD.cx(), PAD.y + 3.0, 1.0, PAD.h - 6.0), GRID);
@@ -414,7 +447,7 @@ fn pad_panel(ui: &mut Ui, look: &Look) {
 }
 
 fn layer_panel(ui: &mut Ui, look: &Look) {
-    ui.c.fill_rrect(LAYER_PANEL, 4.0, Color::rgb(0x262d3a));
+    ui.c.fill_rrect(LAYER_PANEL, 4.0, STRIP_PANEL);
     title(ui, LAYER_PANEL, "LAYERING", brand::MAIN);
     let x = look.ext;
     // The list of layering modes: a click shows the next.
@@ -451,6 +484,13 @@ fn layer_panel(ui: &mut Ui, look: &Look) {
         ui.hit(r, t);
     }
     led(ui, 358.0, 94.0, "AUTO-DUMP", x.auto_dump, Target::Ext(Ctl::AutoDump), SOFT);
+    // The options menu: a round button.
+    let (ox, oy) = (500.0, 95.0);
+    let ot = Target::Ext(Ctl::Options);
+    let hr = Rect::new(ox - 9.0, oy - 9.0, 18.0, 18.0);
+    ui.c.fill_circle(ox, oy, 7.5, if ui.hover(hr, &ot) { Color::rgb(0x9aa5b8) } else { Color::rgb(0x7f8aa0) });
+    ui.c.fill_polygon(&[(ox - 3.5, oy - 1.5), (ox + 3.5, oy - 1.5), (ox, oy + 2.5)], INK);
+    ui.hit(hr, ot);
 }
 
 /// The Mango Studio logo (the mango, its stem and the three bars and leaf) fitted into a circle of radius `r`.
@@ -502,7 +542,10 @@ fn art_panel(ui: &mut Ui, look: &Look) {
     for i in 0..8usize {
         let x = 168.0 + 18.5 * i as f32;
         let r = Rect::new(x.round(), 134.0, 16.0, 20.0);
-        tab(ui, r, Target::Ext(Ctl::Art(i)), &(i + 1).to_string(), sel.art == i, false);
+        let on = sel.art == i;
+        ui.c.fill_rect(r, if on { INK } else { TAB_OFF.shade(0.06) });
+        ui.c.text_center(PILL, r, if on { LIGHT } else { Color::rgb(0xc8cfdc) }, &(i + 1).to_string());
+        ui.hit(r, Target::Ext(Ctl::Art(i)));
         if mine == Some(i) {
             ui.c.fill_circle(r.cx(), r.bottom() + 4.0, 1.8, brand::MAIN);
         }
@@ -560,7 +603,7 @@ fn env_curve(ui: &mut Ui, g: Rect, e: &crate::ext::Env, amount: f32) {
         pts.push((at(t), ay(e.level(t, 0.5))));
     }
     pts.push((at(hold + rel.max(0.02)), ay(0.0)));
-    ui.c.polyline(&pts, 1.8, col);
+    ui.c.polyline(&pts, 1.4, col);
 }
 
 fn graph(ui: &mut Ui, look: &Look) {
@@ -575,21 +618,36 @@ fn graph(ui: &mut Ui, look: &Look) {
         let y = GRAPH.y + GRAPH.h * i as f32 / 4.0;
         ui.c.fill_rect(Rect::new(GRAPH.x, y.round(), GRAPH.w, 1.0), GRID);
     }
-    ui.c.fill_rect(KNOB_BAR, PLATE_DARK);
+    ui.hit(GRAPH, Target::Ext(Ctl::Amt));
+    ui.c.fill_rect(KNOB_BAR, Color::rgb(0x2b3245));
+    // The bar's small icons at the right and the arrow at its left, as the original's.
+    for (i, g) in [Gl::Freeze, Gl::Marker, Gl::Snap, Gl::Slide].into_iter().enumerate() {
+        let r = Rect::new(560.0 + 24.0 * i as f32, 290.0, 22.0, 20.0);
+        glyph(ui, r, g, if g == Gl::Slide { Color::rgb(0xf0b030) } else { Color::rgb(0x8d97ae) });
+        ui.hit(r, Target::Ext(Ctl::Row(14 + i as u8)));
+    }
+    ui.c.fill_polygon(&[(KNOB_BAR.x + 6.0, KNOB_BAR.bottom() - 9.0), (KNOB_BAR.x + 13.0, KNOB_BAR.bottom() - 9.0), (KNOB_BAR.x + 9.5, KNOB_BAR.bottom() - 5.0)], Color::rgb(0x8d97ae));
     ui.c.fill_rect(Rect::new(KNOB_BAR.x, KNOB_BAR.y, KNOB_BAR.w, 1.0), INK_DIM);
     let amount = a.amount(sel.tgt, sel.src);
     let t = sel.tgt.index();
-    let xs = |k: usize| 344.0 + 36.0 * k as f32;
+    let xs = |k: usize| 340.0 + 30.0 * k as f32;
     let small_knob = |ui: &mut Ui, c: Ctl, k: usize| {
-        knob(ui, Target::Ext(c), xs(k), 298.0, 8.5, extctl::get(look.ext, &sel, c), c.caption(), 309.0, INK);
+        let cap = match c {
+            Ctl::Att => "ATT",
+            Ctl::Dec => "DEC",
+            Ctl::Sus => "SUS",
+            Ctl::Rel => "REL",
+            _ => "SPEED",
+        };
+        knob_small(ui, Target::Ext(c), xs(k), 298.0, 7.5, extctl::get(look.ext, &sel, c), cap, 307.0);
     };
     match sel.src {
         Source::Env => {
             env_curve(ui, GRAPH, &a.env[t], amount);
-            for (k, c) in [Ctl::Att, Ctl::Dec, Ctl::Sus, Ctl::Rel, Ctl::Amt].into_iter().enumerate() {
+            for (k, c) in [Ctl::Att, Ctl::Dec, Ctl::Sus, Ctl::Rel].into_iter().enumerate() {
                 small_knob(ui, c, k);
             }
-            led(ui, 540.0, 298.0, "TEMPO", a.env[t].tempo, Target::Ext(Ctl::Tempo), INK);
+            check(ui, 478.0, 298.0, "TEMPO", a.env[t].tempo, Target::Ext(Ctl::Tempo));
         }
         Source::Lfo => {
             let l = a.lfo[t];
@@ -602,17 +660,18 @@ fn graph(ui: &mut Ui, look: &Look) {
                 })
                 .collect();
             ui.c.polyline(&pts, 1.8, col);
-            ui.hit(GRAPH, Target::Ext(Ctl::LfoShape(0)));
+            let pill = Rect::new(GRAPH.x + 6.0, GRAPH.y + 5.0, 54.0, 14.0);
+            ui.c.fill_rrect(pill, 3.0, Color::rgb(0x333d56));
+            ui.c.text_center(SMALL.bold(), pill, SOFT, crate::ext::LFO_SHAPES[usize::from(l.shape).min(4)]);
+            ui.hit(pill, Target::Ext(Ctl::LfoShape(0)));
             small_knob(ui, Ctl::LfoRate, 0);
-            small_knob(ui, Ctl::Amt, 1);
-            led(ui, 540.0, 298.0, "TEMPO", l.tempo, Target::Ext(Ctl::Tempo), INK);
+            check(ui, 478.0, 298.0, "TEMPO", l.tempo, Target::Ext(Ctl::Tempo));
         }
         other => {
             let _ = other;
             // The source's amount as a line across the graph: the middle is none.
             let y = GRAPH.cy() - amount * (GRAPH.h / 2.0 - 14.0);
-            ui.c.line(GRAPH.x + 6.0, y, GRAPH.right() - 6.0, y, 1.8, if amount == 0.0 { SOFT.with_alpha(110) } else { brand::MAIN });
-            small_knob(ui, Ctl::Amt, 0);
+            ui.c.line(GRAPH.x + 6.0, y, GRAPH.right() - 6.0, y, 1.4, if amount == 0.0 { SOFT.with_alpha(110) } else { brand::MAIN });
         }
     }
 }

@@ -149,6 +149,13 @@ pub enum Cmd {
     DefaultKeys,
     /// Select previous (-1) or next (1) region.
     Select(i32),
+    /// The options menu: layering mode, crossfade curve, the switches, the pad and the articulator.
+    SetLayer(u8),
+    SetFade(u8),
+    ToggleSameDeck,
+    ToggleAutoDump,
+    CentrePad,
+    ResetArt,
     /// The chosen slice's reverse switch; its name typed in.
     ToggleReverse,
     Rename,
@@ -156,6 +163,8 @@ pub enum Cmd {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuReq {
+    /// The options button's menu (layering, crossfade, pad, articulator).
+    Options,
     /// The chosen slice's menu (right click on the wave): reverse, rename, trigger note, delete.
     Slice,
     /// One of the toolbar's menus (`view::MENUS`).
@@ -348,6 +357,7 @@ impl Logic {
                 l.shape = (l.shape + 1) % 5;
             }),
             Ctl::Menu(i) => return vec![Act::Menu(MenuReq::Toolbar(i), x, y)],
+            Ctl::Options => return vec![Act::Menu(MenuReq::Options, x, y)],
             Ctl::Edit(7) => {
                 self.slice(Slicing::Auto(1));
                 return vec![Act::Repaint];
@@ -429,6 +439,7 @@ impl Logic {
             Ctl::SameDeck => format!("Deck B plays deck A's slice number\t{}", tab(x.same_deck)),
             Ctl::Crossfade(n) => format!("Crossfade\t{}", crate::ext::FADES[usize::from(n).min(4)]),
             Ctl::AutoDump => format!("Auto-dump\t{}", tab(x.auto_dump)),
+            Ctl::Options => "Options".into(),
             Ctl::RandLvl | Ctl::LfoLvl => format!("{}\t{}", c.caption(), extctl::text(&x, &sel, c)),
             _ => String::new(),
         }
@@ -659,6 +670,28 @@ impl Logic {
     pub fn menu(&self, req: &MenuReq) -> MenuDef<Cmd> {
         let mut m = MenuDef::new(MenuStyle::Context);
         match req {
+            MenuReq::Options => {
+                let x = self.params.ext();
+                m.head("Layering", Cmd::None);
+                for (i, name) in crate::ext::LAYERS.iter().enumerate() {
+                    m.add(MenuItem::item(name).mark(Mark::Radio(usize::from(x.layer) == i)), Cmd::SetLayer(i as u8));
+                }
+                m.sep(Cmd::None);
+                m.head("Crossfade", Cmd::None);
+                for (i, name) in crate::ext::FADES.iter().enumerate() {
+                    m.add(MenuItem::item(name).mark(Mark::Radio(usize::from(x.fade) == i)), Cmd::SetFade(i as u8));
+                }
+                m.sep(Cmd::None);
+                m.add(MenuItem::item("Same deck").mark(Mark::Check(x.same_deck)), Cmd::ToggleSameDeck);
+                m.add(MenuItem::item("Auto-dump").mark(Mark::Check(x.auto_dump)), Cmd::ToggleAutoDump);
+                m.sep(Cmd::None);
+                m.add(MenuItem::item("Centre the modulation pad"), Cmd::CentrePad);
+                m.add(MenuItem::item("Reset this articulator"), Cmd::ResetArt);
+                m.sep(Cmd::None);
+                for n in ["Assign both decks to the keyboard", "Layer the decks by name"] {
+                    m.add(MenuItem::item(n).enabled(false), Cmd::None);
+                }
+            }
             MenuReq::Slice => {
                 let st = self.state();
                 let i = self.chosen(&st);
@@ -857,6 +890,15 @@ impl Logic {
                     st.slices.remove(i);
                     self.commit(&st);
                 }
+            }
+            Cmd::SetLayer(n) => self.edit_ext(|e| e.layer = n.min(6)),
+            Cmd::SetFade(n) => self.edit_ext(|e| e.fade = n.min(4)),
+            Cmd::ToggleSameDeck => self.edit_ext(|e| e.same_deck = !e.same_deck),
+            Cmd::ToggleAutoDump => self.edit_ext(|e| e.auto_dump = !e.auto_dump),
+            Cmd::CentrePad => self.edit_ext(|e| (e.mod_x, e.mod_y) = (0.5, 0.5)),
+            Cmd::ResetArt => {
+                let a = self.view.sel.art;
+                self.edit_ext(|e| e.artic[a] = crate::ext::Artic::default());
             }
             Cmd::ToggleReverse => {
                 let mut st = self.state();

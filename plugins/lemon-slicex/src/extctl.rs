@@ -55,8 +55,9 @@ pub enum Ctl {
     Layer(u8),
     SameDeck,
     Crossfade(u8),
-    /// AUTO-DUMP.
+    /// AUTO-DUMP, and the round options button.
     AutoDump,
+    Options,
     /// Opens a loop into deck A (0) or B (1).
     LoadDeck(u8),
     /// The master volume fader, and the pad's two axes as knobs.
