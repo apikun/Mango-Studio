@@ -51,6 +51,11 @@ mango-dashboard = { path = "../../plugins/mango-dashboard", features = ["linked"
 mango-directwave = { path = "../../plugins/mango-directwave", features = ["linked"] }
 # The sliced-loop sampler (a recreation of FL's Slicex), compiled in so it can talk to the host (the piano roll, the playlist).
 lemon-slicex = { path = "../../plugins/lemon-slicex", features = ["linked"] }
+# The pad drum sampler (a recreation of FL's FPC): sixteen pads in two banks, each one or more velocity
+# layers of samples, each on its own key.
+lemon-drum-sampler = { path = "../../plugins/lemon-drum-sampler", features = ["linked"] }
+# The loop slicer (a recreation of FL's Fruity Slicer): a loop cut into slices, slice n plays on key C5 + n.
+lemon-slicer = { path = "../../plugins/lemon-slicer", features = ["linked"] }
 # The retro sound effect generator (a port of sfxr), compiled in like the other small generators.
 mango-sfxr = { path = "../../plugins/mango-sfxr", features = ["linked"] }
 lemon-boom = { path = "../../plugins/lemon-boom", features = ["linked"] }
