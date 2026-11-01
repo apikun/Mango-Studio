@@ -937,6 +937,8 @@ pub enum Drag {
     /// Right-drag in a channel lane deletes its points (a Lemon Studio choice, spec §7b).
     ControlErase { last_x: f32 },
     Knob { id: crate::knobs::KnobId, y0: f32, v0: f32 },
+    /// The Mango skin's pan and separation bars: the value follows the mouse across the bar (`x0`, `w`).
+    KnobX { id: crate::knobs::KnobId, x0: f32, w: f32 },
     /// Left button held on the piano keyboard: each key entered is auditioned (§8).
     PianoKeys { key: i32 },
     /// Scroll axes from a start mouse position: value = start + (mouse - m0) × ratio per axis
@@ -5914,6 +5916,7 @@ impl App {
                     }
                     self.damage_band(HINT_RECT);
                 }
+                Drag::KnobX { id, x0, w } => self.knob_x(id, x0, w, x),
                 Drag::LimitKeys => {
                     let k = views::piano_dlg::kb_key(&self.state, x, y, false);
                     crate::piano_dlg::set_green(&mut self.state, k);
@@ -6485,6 +6488,23 @@ impl App {
             views::rack::EDGE_BOTTOM => Cursor::NsResize,
             _ => Cursor::NwseResize,
         }
+    }
+
+    /// A bar control set from the mouse's x across it (`Drag::KnobX`); near the middle it snaps to the centre.
+    fn knob_x(&mut self, id: crate::knobs::KnobId, x0: f32, w: f32, x: f32) {
+        let mut v = ((x - x0) / w).clamp(0.0, 1.0);
+        if (v - 0.5).abs() * w < 2.0 {
+            v = 0.5;
+        }
+        self.state.set_knob(id, v);
+        self.record_knob(id);
+        self.multilink_knob(crate::typein::Target::Knob(id));
+        self.hint = Cow::Owned(self.state.knob_text(id));
+        match self.hits.iter().rev().find(|h| h.action == Action::Knob(id)).map(|h| h.rect) {
+            Some(r) => self.damage_rect(r.outset(6.0)),
+            None => self.invalidate(),
+        }
+        self.damage_band(HINT_RECT);
     }
 
     /// True while a drag moves a value rather than the cursor (knobs, the tempo, scroll-bar right-drags): the shell
@@ -8825,6 +8845,14 @@ impl App {
                 crate::history::knob(s, id, false);
                 s.set_knob(id, if s.knob(id) >= 0.5 { 0.0 } else { 1.0 });
                 self.hint = Cow::Owned(s.knob_text(id));
+            }
+            Action::Knob(id @ (crate::knobs::KnobId::MixPan(_) | crate::knobs::KnobId::MixSep(_))) if os_ui::kit::lemon::on(&self.theme.colors) => {
+                let bar = self.hits.iter().rev().find(|h| h.action == Action::Knob(id)).map(|h| h.rect);
+                if let Some(r) = bar {
+                    crate::history::knob(&mut self.state, id, false);
+                    self.drag = Some(Drag::KnobX { id, x0: r.x, w: r.w.max(1.0) });
+                    self.knob_x(id, r.x, r.w.max(1.0), self.mouse.0);
+                }
             }
             Action::Knob(id) => {
                 crate::history::knob(s, id, false);
@@ -20459,6 +20487,28 @@ mod tests {
         app.state.playlist.popup = Some(mx::slot_menu(&app.state, 0, 1500.0, 150.0));
         frame(&mut app, &mut c, None);
         c.pixmap.save_png(dir.join("mx_slot_menu.png")).unwrap();
+    }
+
+    /// Mango skin: the pan bar follows the mouse across it (left end hard left, right end hard right, the middle centre).
+    #[test]
+    fn mixer_pan_bar_follows_the_mouse() {
+        let Ok(mut c) = Canvas::new(1920, 1080, 1.0) else { return };
+        let mut app = App::new(None);
+        app.set_design(Design::Lemon, false);
+        app.state.project = test_project();
+        app.state.z = vec![Win::Mixer];
+        frame(&mut app, &mut c, None);
+        let id = crate::knobs::KnobId::MixPan(2);
+        let r = hit_rect(&app, &Action::Knob(id));
+        app.mouse_move(r.cx(), r.cy());
+        app.mouse_down();
+        app.mouse_move(r.x - 20.0, r.cy());
+        assert_eq!(app.state.knob(id), 0.0, "hard left");
+        app.mouse_move(r.right() + 20.0, r.cy());
+        assert_eq!(app.state.knob(id), 1.0, "hard right");
+        app.mouse_move(r.cx() + 0.5, r.cy() + 30.0);
+        assert_eq!(app.state.knob(id), 0.5, "back to the centre");
+        app.mouse_up();
     }
 
     /// The mixer track menu's Random color, clicked twice, gives the track a new colour each time.

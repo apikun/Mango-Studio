@@ -965,7 +965,8 @@ fn led(ui: &mut Ui, track: Option<&os_model::MixerTrack>, n: u16, hit: Rect, x: 
 
 fn pan_knob(ui: &mut Ui, s: &State, n: u16, x: f32, y: f32, r: f32, halo: f32) {
     let pan = KnobId::MixPan(n);
-    ui.hit(Rect::new(x - (halo - 1.0), y - (halo - 1.0), 2.0 * (halo - 1.0), 2.0 * (halo - 1.0)), Action::Knob(pan), s.knob_text(pan));
+    let hit = if super::lemon(ui) { Rect::new(x - halo, y - 8.0, 2.0 * halo, 16.0) } else { Rect::new(x - (halo - 1.0), y - (halo - 1.0), 2.0 * (halo - 1.0), 2.0 * (halo - 1.0)) };
+    ui.hit(hit, Action::Knob(pan), s.knob_text(pan));
     if super::lemon(ui) {
         centre_bar(ui, x, y, halo, s.knob(pan));
     } else {
@@ -1023,7 +1024,8 @@ fn swap(ui: &mut Ui, track: Option<&os_model::MixerTrack>, n: u16, sx: f32, y: f
 
 fn sep_knob(ui: &mut Ui, s: &State, n: u16, x: f32, y: f32, r: f32, halo: f32) {
     let sep = KnobId::MixSep(n);
-    ui.hit(Rect::new(x - halo + 0.5, y - halo + 0.5, 2.0 * halo - 1.0, 2.0 * halo - 1.0), Action::Knob(sep), s.knob_text(sep));
+    let hit = if super::lemon(ui) { Rect::new(x - halo, y - 8.0, 2.0 * halo, 16.0) } else { Rect::new(x - halo + 0.5, y - halo + 0.5, 2.0 * halo - 1.0, 2.0 * halo - 1.0) };
+    ui.hit(hit, Action::Knob(sep), s.knob_text(sep));
     if super::lemon(ui) {
         centre_bar(ui, x, y, halo, s.knob(sep));
     } else {
