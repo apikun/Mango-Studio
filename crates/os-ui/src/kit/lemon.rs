@@ -443,9 +443,9 @@ pub fn bar_knob(c: &mut Canvas, cx: f32, cy: f32, r: f32, value: f32, bipolar: b
         (inner.bottom() - v * inner.h, inner.bottom())
     };
     if y1 - y0 >= 1.0 {
-        let top = if lit { arc.mix(Color::rgb(0xffffff), 0.5) } else { arc.mix(Color::rgb(0xffffff), 0.28) };
-        let bottom = if lit { arc.mix(Color::rgb(0xffffff), 0.12) } else { arc };
-        c.fill_rect_gradient(Rect::new(inner.x, y0, inner.w, y1 - y0), top, bottom, (inner.w / 2.0).min((y1 - y0) / 2.0));
+        // One flat colour, a little lighter under the pointer.
+        let col = if lit { arc.mix(Color::rgb(0xffffff), 0.18) } else { arc };
+        c.fill_rrect(Rect::new(inner.x, y0, inner.w, y1 - y0), (inner.w / 2.0).min((y1 - y0) / 2.0), col);
     }
 }
 
