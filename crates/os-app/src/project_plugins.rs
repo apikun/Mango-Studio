@@ -713,7 +713,7 @@ mod tests {
         assert!(!a.state.hosted_rows.contains(&row), "nothing hosts it yet");
         a.sync_generators();
         assert!(a.state.hosted_rows.contains(&row), "hosted: {:?}", a.state.message);
-        assert_eq!(a.plugins.descriptor(row).map(|d| d.name.as_str()), Some(crate::plugins::MANGO_MONK));
+        assert_eq!(a.plugins.descriptor(row).map(|d| d.name).as_deref(), Some(crate::plugins::MANGO_MONK));
         // It sings: the silent monk import was a channel with no instrument behind it.
         let inst = a.plugins.hosted[&row].plugin.clone() as os_engine::SharedInstrument;
         let mut i = inst.lock().unwrap();

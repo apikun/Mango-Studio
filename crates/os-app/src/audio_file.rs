@@ -393,8 +393,9 @@ impl App {
         // frames, and the window must not freeze behind them.
         let (done, total) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
         let (tx, rx) = channel();
-        let job = MelodyJob { rx, name: mf::file_name(&path).to_string(), done: done.clone(), total: total.clone() };
+        let file = mf::file_name(&path).to_string();
         let stem = mf::stem_of_audio(&path);
+        let job = MelodyJob { rx, name: file.clone(), done: done.clone(), total: total.clone() };
         let spawned = std::thread::Builder::new().name("audio-melody".into()).spawn(move || {
             let notes = melody(&mono(&sample), sample.rate, ppq, bpm, Some((&done, &total)));
             let _ = tx.send(Tracked { path, kind, name: stem, notes });
@@ -404,7 +405,7 @@ impl App {
                 self.melody_job = Some(job);
                 self.invalidate();
             }
-            Err(e) => self.tell(Icon::Warning, TITLE, spans(&["Could not start reading ", &mf::file_name(&path), &format!(": {e}.")])),
+            Err(e) => self.tell(Icon::Warning, TITLE, spans(&["Could not start reading ", &file, &format!(": {e}.")])),
         }
     }
 }
@@ -433,7 +434,7 @@ struct Tracked {
 /// (`place_melody`) or the file says why it has none.
 pub fn melody_tick(app: &mut App) {
     let Some(j) = &app.melody_job else { return };
-    let result = match j.rx.try_recv() {
+    let result: Result<Tracked, String> = match j.rx.try_recv() {
         Ok(t) => Ok(t),
         Err(TryRecvError::Empty) => {
             app.damage_rect(crate::loading::panel_rect(app.state.screen).outset(4.0));
@@ -630,7 +631,7 @@ mod tests {
                     // silent monk import was): the sync picks the new row up.
                     let row = app.state.project.channels.len() - 1;
                     assert!(app.state.hosted_rows.contains(&row), "the monk is hosted: {:?}", app.state.message);
-                    assert_eq!(app.plugins.descriptor(row).map(|d| d.name.as_str()), Some(crate::plugins::MANGO_MONK));
+                    assert_eq!(app.plugins.descriptor(row).map(|d| d.name).as_deref(), Some(crate::plugins::MANGO_MONK));
                 }
             }
             let notes = app.state.project.patterns[0].notes.clone();
