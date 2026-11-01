@@ -443,6 +443,15 @@ mod tests {
     use super::*;
     use crate::state::Slice;
 
+    /// Articulators whose volume holds at full level (the default decays).
+    fn flat() -> Ext {
+        let mut e = Ext::default();
+        for a in &mut e.artic {
+            a.env[Target::Vol.index()].sus = 1.0;
+        }
+        e
+    }
+
     /// A sample whose frame `i` is `i / 1000` (left) and `-i / 1000` (right), at 1000 Hz, cut at 0, 100, 300.
     fn kit() -> Kit {
         let left: Vec<f32> = (0..1000).map(|i| i as f32 / 1000.0).collect();
@@ -450,7 +459,7 @@ mod tests {
         let mut st = State::default();
         st.slices = vec![Slice::at(0), Slice::at(100), Slice::at(300)];
         st.slices[2].flags = 1;
-        Kit::new(Arc::new(Sample { rate: 1000, left, right }), &st, Arc::new(Ext::default()))
+        Kit::new(Arc::new(Sample { rate: 1000, left, right }), &st, Arc::new(flat()))
     }
 
     fn plain() -> Block {
@@ -529,7 +538,7 @@ mod tests {
         let right = left.clone();
         let mut st = State::default();
         st.slices = vec![Slice::at(0)];
-        let mut ext = Ext::default();
+        let mut ext = flat();
         set(&mut ext.artic[0]);
         Kit::new(Arc::new(Sample { rate: 1000, left, right }), &st, Arc::new(ext))
     }

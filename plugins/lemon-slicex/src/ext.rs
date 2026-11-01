@@ -80,7 +80,7 @@ pub const ENV_MAX_MS: f32 = 5000.0;
 
 impl Default for Env {
     fn default() -> Self {
-        Env { att: 0.0, dec: 1000.0, sus: 1.0, rel: 5.0, tempo: false }
+        Env { att: 0.0, dec: 1500.0, sus: 0.0, rel: 5.0, tempo: false }
     }
 }
 

@@ -349,11 +349,11 @@ fn led(ui: &mut Ui, cx: f32, cy: f32, label: &str, on: bool, t: Target, ink: Col
 fn check(ui: &mut Ui, x: f32, cy: f32, label: &str, on: bool, t: Target) {
     let w = ui.c.text_width(Font::new(8), label);
     let hr = Rect::new(x - 3.0, cy - 8.0, 18.0 + w, 16.0);
-    let b = Rect::new(x, cy - 4.5, 9.0, 9.0);
-    ui.c.fill_rect(b, Color::rgb(0x2a313f));
-    ui.c.stroke_rrect(b.inset(0.5), 0.0, 1.0, INK_DIM.shade(0.3));
+    let (bx, by) = (x + 4.5, cy);
+    ui.c.fill_circle(bx, by, 4.5, Color::rgb(0x1f2531));
+    ui.c.stroke_circle(bx, by, 4.5, 1.1, Color::rgb(0xd5dbe8));
     if on {
-        ui.c.fill_rect(b.inset(2.0), brand::MAIN);
+        ui.c.fill_circle(bx, by, 2.4, brand::MAIN);
     }
     let lh = ui.c.line_height(Font::new(8));
     ui.c.text(Font::new(8), x + 13.0, (cy - lh / 2.0).round(), SOFT, label);
@@ -365,8 +365,8 @@ fn check(ui: &mut Ui, x: f32, cy: f32, label: &str, on: bool, t: Target) {
 fn knob_small(ui: &mut Ui, t: Target, cx: f32, cy: f32, r: f32, norm: f32, cap: &str, cap_y: f32) {
     let hr = Rect::new(cx - r - 3.0, cy - r - 3.0, 2.0 * r + 6.0, 2.0 * r + 6.0);
     let hov = ui.hover(hr, &t) || ui.st.pressed.as_ref() == Some(&t);
-    ui.c.fill_circle(cx, cy, r + 1.0, INK.with_alpha(150));
-    ui.c.fill_circle(cx, cy, r, if hov { Color::rgb(0x2c3342) } else { Color::rgb(0x232a37) });
+    ui.c.fill_circle(cx, cy, r, if hov { Color::rgb(0x2c3342) } else { Color::rgb(0x1f2531) });
+    ui.c.stroke_circle(cx, cy, r, 1.2, Color::rgb(0xd5dbe8));
     let a = (norm.clamp(0.0, 1.0) - 0.5) * 270f32.to_radians();
     let (sx, sy) = (a.sin(), -a.cos());
     ui.c.line(cx + sx * r * 0.2, cy + sy * r * 0.2, cx + sx * (r - 1.5), cy + sy * (r - 1.5), 1.4, LIGHT);
@@ -595,13 +595,13 @@ fn tabs(ui: &mut Ui, look: &Look) {
 /// The envelope's curve: time across, level up.
 fn env_curve(ui: &mut Ui, g: Rect, e: &crate::ext::Env, amount: f32) {
     let (att, dec, rel) = e.seconds(0.5);
-    let hold = (att + dec * 1.3).max(0.05);
-    let total = hold + rel.max(0.02) + hold * 0.15;
+    let hold = (att + dec).max(0.05);
+    let total = hold * 1.22 + rel.max(0.02);
     let at = |t: f64| g.x + 6.0 + (t / total) as f32 * (g.w - 12.0);
     let ay = |v: f32| g.bottom() - 6.0 - v.clamp(0.0, 1.0) * (g.h - 34.0);
     let col = if amount == 0.0 { SOFT.with_alpha(110) } else { brand::MAIN };
     let n = 64;
-    let mut pts = vec![(at(0.0), ay(0.0))];
+    let mut pts = vec![(at(0.0), ay(e.level(0.0, 0.5)))];
     for i in 1..=n {
         let t = hold * f64::from(i) / f64::from(n);
         pts.push((at(t), ay(e.level(t, 0.5))));
@@ -638,7 +638,11 @@ fn graph(ui: &mut Ui, look: &Look) {
         glyph(ui, r, g, if g == Gl::Slide { Color::rgb(0xf0b030) } else { Color::rgb(0x8d97ae) });
         ui.hit(r, Target::Ext(Ctl::Row(14 + i as u8)));
     }
-    ui.c.fill_polygon(&[(KNOB_BAR.x + 6.0, KNOB_BAR.bottom() - 9.0), (KNOB_BAR.x + 13.0, KNOB_BAR.bottom() - 9.0), (KNOB_BAR.x + 9.5, KNOB_BAR.bottom() - 5.0)], Color::rgb(0x8d97ae));
+    // The scroll row at the bottom of the graph, with its arrow.
+    let row = Rect::new(GRAPH.x, GRAPH.bottom() - 13.0, GRAPH.w, 13.0);
+    ui.c.fill_rect(row, Color::rgb(0x333c52));
+    ui.c.fill_rect(Rect::new(row.x + 18.0, row.y + 3.0, row.w - 36.0, row.h - 6.0), Color::rgb(0x2b3245));
+    ui.c.fill_polygon(&[(row.x + 5.0, row.y + 4.0), (row.x + 12.0, row.y + 4.0), (row.x + 8.5, row.y + 9.0)], Color::rgb(0x8d97ae));
     ui.c.fill_rect(Rect::new(KNOB_BAR.x, KNOB_BAR.y, KNOB_BAR.w, 1.0), INK_DIM);
     let amount = a.amount(sel.tgt, sel.src);
     let t = sel.tgt.index();
