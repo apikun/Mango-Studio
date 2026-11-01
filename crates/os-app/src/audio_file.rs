@@ -125,7 +125,7 @@ fn normalized_difference(x: &[f32], tau_min: usize, tau_max: usize) -> Vec<f64> 
     let mut run = 0.0f64;
     for tau in tau_min..=tau_max {
         run += d[tau];
-        nd[tau] = if run > 0.0 { d[tau] * f64::from(tau - tau_min + 1) / run } else { 1.0 };
+        nd[tau] = if run > 0.0 { d[tau] * (tau - tau_min + 1) as f64 / run } else { 1.0 };
     }
     nd
 }
