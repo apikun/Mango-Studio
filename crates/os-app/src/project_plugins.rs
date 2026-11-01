@@ -293,6 +293,15 @@ pub fn find_native(list: &[Available], file_id: &str) -> Option<usize> {
     list.iter().position(|a| a.desc.format == Format::Native && a.desc.id.eq_ignore_ascii_case(file_id))
 }
 
+/// The built-in generator of `list` that a plugin channel's file id names: a plugin compiled into this program that
+/// is saved by its own name (Mango Monk, Mango Kick, ... — the FL names "3x Osc" and "Sytrus" are the Lemon Trio's
+/// and Citrus's, and the wrapped ones are `sync_wrapped`'s, so neither is found here). An earlier name finds it
+/// ("Lemon Kick" as Mango Kick). These channels `sync_generators` hosts.
+pub fn builtin_generator_index(list: &[Available], file_id: &str) -> Option<usize> {
+    let name = crate::plugins::current_name(file_id);
+    list.iter().position(|a| is_builtin(&a.desc) && !wrapped_builtin(&a.desc) && a.desc.name == name)
+}
+
 /// A hint-bar list of plugin names: sorted, each once, at most `max` named.
 fn name_list(mut names: Vec<String>, max: usize) -> String {
     names.sort();
@@ -448,6 +457,11 @@ impl crate::app::App {
             .filter_map(|r| {
                 let ch = &self.state.project.channels[r];
                 let name = ch.plugin.as_deref().filter(|n| ch.kind == ChannelKind::Plugin && !n.is_empty() && *n != WRAPPER)?;
+                // A built-in generator's channel is `sync_generators`'s, native host or not: the plugin is compiled
+                // into this program, and a native one of the same name is not what the project meant.
+                if builtin_generator_index(&self.plugins.available, name).is_some() {
+                    return None;
+                }
                 Some((r, name.to_string(), ch.plugin_state.clone()))
             })
             .collect();
@@ -550,6 +564,44 @@ impl crate::app::App {
         }
     }
 
+    /// Hosts the plugin channels whose file id names a built-in generator (Mango Monk and the other small generators,
+    /// `builtin_generator_index`) and have no instance yet: a channel the MIDI or audio import just made as Mango
+    /// Monk, one a project was saved with, one pasted. Each starts from the channel's saved state, its defaults
+    /// where it has none. A plugin that does not start is not tried again; the row the plugin menus are still
+    /// creating is left to them.
+    pub(crate) fn sync_generators(&mut self) {
+        let pending = self.state.pending_plugin.map(|(r, _)| r);
+        let rows: Vec<(usize, usize, String, Option<Vec<u8>>)> = (0..self.state.project.channels.len())
+            .filter(|&r| !self.state.hosted_rows.contains(&r) && !self.wrap_failed.contains(&r) && !self.native_failed.contains(&r) && Some(r) != pending)
+            .filter_map(|r| {
+                let ch = &self.state.project.channels[r];
+                let name = ch.plugin.as_deref().filter(|n| ch.kind == ChannelKind::Plugin && !n.is_empty() && *n != WRAPPER)?;
+                let index = builtin_generator_index(&self.plugins.available, name)?;
+                Some((r, index, name.to_string(), ch.plugin_state.clone()))
+            })
+            .collect();
+        let mut added = false;
+        for (row, index, name, state) in rows {
+            if self.past_deadline() {
+                break;
+            }
+            match self.plugins.create_with(row, index, state.as_deref().filter(|s| !s.is_empty())) {
+                Ok(_) => {
+                    self.state.hosted_rows.push(row);
+                    added = true;
+                }
+                Err(e) => {
+                    self.wrap_failed.push(row);
+                    self.state.message = Some(format!("{name}: {e}"));
+                }
+            }
+        }
+        if added {
+            self.transport.set_instruments(self.plugins.instruments());
+            self.state.piano.dirty = true;
+        }
+    }
+
     /// The hidden preference changed (or the native host with it): the channels and slots a built-in recreation can
     /// play (3x Osc, the parametric EQ) move to the side that should play them now. Each one hosted by the other side
     /// writes its settings into the project as the file's own state, its instance is closed, and the next tick hosts
@@ -631,6 +683,45 @@ mod tests {
         assert!(is_wrapped(&plugin.desc));
         assert_eq!(crate::plugin_db::category(&plugin.desc), "Sampler");
         assert!(plugin_ref(&plugin.desc, Vec::new()).path.ends_with("Mango Font.clap"));
+    }
+
+    /// The built-in generators a project names by their own name (Mango Monk and the other small generators) are
+    /// `sync_generators`'s; the FL ids the other hosts own (the Trio's 3x Osc, the wrapped Mango Wavetable and Mango
+    /// Font) and names nothing hosted are not.
+    #[test]
+    fn builtin_generators_are_found_by_name() {
+        let list = crate::plugins::builtin();
+        let of = |n: &str| builtin_generator_index(&list, n).map(|i| list[i].desc.name.as_str());
+        assert_eq!(of(crate::plugins::MANGO_MONK), Some(crate::plugins::MANGO_MONK));
+        assert_eq!(of("Mango Kick"), Some("Mango Kick"));
+        assert_eq!(of("Lemon Kick"), Some("Mango Kick"), "an earlier name finds it");
+        assert_eq!(of("3x Osc"), None, "the Trio's channels are sync_osc3's");
+        assert_eq!(of("Mango Wavetable"), None, "wrapped plugins are sync_wrapped's");
+        assert_eq!(of(crate::plugins::MANGO_SOUNDFONT), None);
+        assert_eq!(of("Some VST"), None);
+    }
+
+    /// A plugin channel that names a built-in generator with no instance of its own — what the MIDI or audio import
+    /// makes as Mango Monk, or a project saved with Mango Kick holds — is hosted by `sync_generators` from the
+    /// channel's state, and it plays.
+    #[test]
+    fn sync_generators_hosts_an_imported_monk_channel() {
+        let mut a = App::new(None);
+        a.state.project = crate::app::test_project();
+        a.plugins.available = crate::plugins::builtin();
+        let row = crate::app::add_plugin_channel(&mut a.state.project, crate::plugins::MANGO_MONK);
+        assert!(!a.state.hosted_rows.contains(&row), "nothing hosts it yet");
+        a.sync_generators();
+        assert!(a.state.hosted_rows.contains(&row), "hosted: {:?}", a.state.message);
+        assert_eq!(a.plugins.descriptor(row).map(|d| d.name).as_deref(), Some(crate::plugins::MANGO_MONK));
+        // It sings: the silent monk import was a channel with no instrument behind it.
+        let inst = a.plugins.hosted[&row].plugin.clone() as os_engine::SharedInstrument;
+        let mut i = inst.lock().unwrap();
+        i.reset();
+        i.note_on(0, 60, 0.8);
+        let (mut left, mut right) = (vec![0.0f32; 4800], vec![0.0f32; 4800]);
+        i.process(48000, &mut left, &mut right);
+        assert!(left.iter().any(|v| v.abs() > 0.005), "the monk sings");
     }
 
     /// A hosted plugin channel and a mixer slot plugin are saved as wrapped plugins holding their identity and state,
