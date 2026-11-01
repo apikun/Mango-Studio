@@ -1337,6 +1337,7 @@ fn screenshot(args: &[String]) {
     let mut rack_h: Option<f32> = None;
     let mut rack_scroll: Option<f32> = None;
     let mut rack_all = false;
+    let mut mixer_layout: Option<usize> = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -1347,6 +1348,8 @@ fn screenshot(args: &[String]) {
             // Device pixels per logical one (the frame stays 1920x1080 logical): 1.5 = Windows at 150 %.
             "--scale" => scale = it.next().and_then(|v| v.parse().ok()).filter(|s: &f32| *s >= 0.5 && *s <= 4.0).unwrap_or(1.0),
             "--view" => view = it.next().cloned().unwrap_or_default(),
+            // A mixer layout by name ("Compact", "Wide 2", ...).
+            "--mixer-layout" => mixer_layout = it.next().and_then(|v| crate::mixer::LAYOUTS.iter().position(|l| l == v)),
             "--no-rack" => rack = false,
             "--no-browser" => browser = false,
             "--rack-roll" => rack_roll = true,
@@ -1507,6 +1510,9 @@ fn screenshot(args: &[String]) {
     }
     if browser_menu {
         app.act(app::Action::BrowserMenu);
+    }
+    if let Some(l) = mixer_layout {
+        app.state.mixer.layout = l as u8;
     }
     app.state.z = match view.as_str() {
         "mixer" => vec![app::Win::Mixer],
