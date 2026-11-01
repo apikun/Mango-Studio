@@ -361,6 +361,8 @@ pub fn builtin() -> Vec<Available> {
     static SLAYER: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static DASHBOARD: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static DIRECTWAVE: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static DRUMSAMPLER: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static SLICER: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static SFXR: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static WAVETABLE: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static SOUNDFONT: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
@@ -399,6 +401,11 @@ pub fn builtin() -> Vec<Available> {
     v.extend(linked(&FLEX, &mango_flex::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, MANGO_FLEX));
     // The sampler (a recreation of FL's DirectWave): a program of zones, each one sample and where it plays.
     v.extend(linked(&DIRECTWAVE, &mango_directwave::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango DirectWave"));
+    // The pad drum sampler (a recreation of FL's FPC): sixteen pads in two banks, each one or more velocity
+    // layers of samples, each on its own key.
+    v.extend(linked(&DRUMSAMPLER, &lemon_drum_sampler::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Drum Sampler"));
+    // The loop slicer (a recreation of FL's Fruity Slicer): a loop cut into slices, slice n plays on key C5 + n.
+    v.extend(linked(&SLICER, &lemon_slicer::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Slicer"));
     v
 }
 
