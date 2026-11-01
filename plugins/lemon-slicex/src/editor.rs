@@ -316,6 +316,34 @@ impl Logic {
             Ctl::Layer(n) => self.edit_ext(|e| e.layer = n.min(2)),
             Ctl::SameDeck => self.edit_ext(|e| e.same_deck = !e.same_deck),
             Ctl::Crossfade => self.edit_ext(|e| e.crossfade = !e.crossfade),
+            Ctl::Key(k) => {
+                self.view.pressed = Some(Target::Ext(c));
+                let st = self.state();
+                if let Some(i) = st.slice_for(i32::from(k)) {
+                    self.view.chosen = i;
+                }
+                self.play(Some(k));
+            }
+            Ctl::PlaySlice => {
+                let st = self.state();
+                let i = self.chosen(&st);
+                if let Some(k) = u8::try_from(st.key_of(i)).ok().filter(|&k| k < 128).filter(|_| !st.slices.is_empty()) {
+                    self.view.pressed = Some(Target::Ext(c));
+                    self.play(Some(k));
+                }
+            }
+            Ctl::Stop => self.play(None),
+            Ctl::DeckToggle(d) => self.edit_ext(|e| {
+                let (a, b) = (e.layer != 2, e.layer != 1);
+                let (a, b) = if d == 0 { (!a, b) } else { (a, !b) };
+                // Both off leaves the other one on.
+                e.layer = match (a, b) {
+                    (true, true) => 0,
+                    (true, false) => 1,
+                    (false, true) => 2,
+                    (false, false) => if d == 0 { 2 } else { 1 },
+                };
+            }),
             Ctl::LoadDeck(n) => {
                 self.load_deck = n.min(1);
                 return vec![Act::OpenDialog];
@@ -756,7 +784,8 @@ impl Logic {
         let ext = self.params.ext();
         let a_name = std::path::Path::new(&st.path()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let b_name = if ext.deck_b.is_empty() { String::new() } else { crate::state::State::parse(&ext.deck_b).map(|s| std::path::Path::new(&s.path()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()).unwrap_or_default() };
-        let look = view::Look { state: &st, frames, peaks: &self.peaks.1, can_dump, ext: &ext, decks: [a_name, b_name] };
+        let rate = self.shared.sample().map_or(0, |s| s.rate);
+        let look = view::Look { state: &st, frames, rate, peaks: &self.peaks.1, can_dump, ext: &ext, decks: [a_name, b_name] };
         self.hits = view::paint(c, palette, &self.vals, &self.view, &look, &hint);
     }
 }

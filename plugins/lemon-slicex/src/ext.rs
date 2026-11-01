@@ -204,6 +204,8 @@ pub struct Ext {
     pub crossfade: bool,
     /// The second deck's saved slicer state and sample path (empty = no second loop).
     pub deck_b: Vec<u8>,
+    /// The master volume as a gain, 0..1.25 (1 = as recorded).
+    pub master: f32,
 }
 
 impl Default for Ext {
@@ -218,6 +220,7 @@ impl Default for Ext {
             same_deck: true,
             crossfade: false,
             deck_b: Vec::new(),
+            master: 1.0,
         }
     }
 }
@@ -291,6 +294,7 @@ impl Ext {
         o.0.extend(&self.slice_art);
         o.n(self.deck_b.len());
         o.0.extend(&self.deck_b);
+        o.f(self.master);
         o.0
     }
 
@@ -319,6 +323,8 @@ impl Ext {
         x.slice_art = i.take(n)?.to_vec();
         let n = i.n()?;
         x.deck_b = i.take(n)?.to_vec();
+        // Added later: saved states without it keep the default.
+        x.master = i.f().map_or(1.0, |m| m.clamp(0.0, 1.25));
         Some(x)
     }
 
@@ -353,11 +359,13 @@ mod tests {
         x.artic[3].lfo[Target::Pan.index()] = Lfo { shape: 3, rate: 0.5, tempo: true };
         x.set_art(5, 3);
         x.deck_b = vec![1, 2, 3];
+        x.master = 0.5;
         let b = x.to_bytes();
         assert_eq!(Ext::parse(&b), Some(x.clone()));
         assert_eq!(x.art_of(5), 3);
         assert_eq!(x.art_of(2), 0);
-        assert!(Ext::parse(&b[..b.len() - 1]).is_none(), "cut short");
+        assert!(Ext::parse(&b[..b.len() - 4]).is_some_and(|e| e.master == 1.0), "an older state has no master volume");
+        assert!(Ext::parse(&b[..b.len() - 9]).is_none(), "cut short");
         assert!(Ext::parse(b"nope").is_none());
     }
 

@@ -118,11 +118,13 @@ pub struct Block {
     pub beat: f64,
     /// The pad's X fades from deck A to deck B.
     pub crossfade: bool,
+    /// The master volume as a gain.
+    pub master: f32,
 }
 
 impl Default for Block {
     fn default() -> Self {
-        Block { cents: 0.0, attack_ms: 0.0, decay_ms: 4.0, declick: true, to_end: false, mod_x: 0.5, mod_y: 0.5, smooth: false, beat: 0.5, crossfade: false }
+        Block { cents: 0.0, attack_ms: 0.0, decay_ms: 4.0, declick: true, to_end: false, mod_x: 0.5, mod_y: 0.5, smooth: false, beat: 0.5, crossfade: false, master: 1.0 }
     }
 }
 
@@ -369,7 +371,7 @@ impl Engine {
                         v.pos = len;
                         break 'voice;
                     }
-                    let mut g_out = m.gain * fade;
+                    let mut g_out = m.gain * fade * b.master;
                     let left_of = len - v.pos;
                     for (fade, x) in [(att, v.pos), (dec, left_of), (click, v.pos), (click, left_of)] {
                         if fade > 0.0 && x < fade {

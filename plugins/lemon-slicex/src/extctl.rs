@@ -57,12 +57,23 @@ pub enum Ctl {
     Crossfade,
     /// Opens a loop into deck A (0) or B (1).
     LoadDeck(u8),
+    /// The master volume fader, and the pad's two axes as knobs.
+    Master,
+    PadX,
+    PadY,
+    /// The toolbar: play the chosen slice, stop it.
+    PlaySlice,
+    Stop,
+    /// A key of the keyboard.
+    Key(u8),
+    /// A deck's sound on or off (A = 0, B = 1).
+    DeckToggle(u8),
 }
 
 impl Ctl {
     /// Whether it is a knob (a vertical drag moves it).
     pub fn is_knob(self) -> bool {
-        matches!(self, Ctl::Cut | Ctl::Res | Ctl::CutEnv | Ctl::Amt | Ctl::Att | Ctl::Dec | Ctl::Sus | Ctl::Rel | Ctl::LfoRate)
+        matches!(self, Ctl::Cut | Ctl::Res | Ctl::CutEnv | Ctl::Amt | Ctl::Att | Ctl::Dec | Ctl::Sus | Ctl::Rel | Ctl::LfoRate | Ctl::Master | Ctl::PadX | Ctl::PadY)
     }
 
     /// Whether a click flips it or picks it (a button).
@@ -77,6 +88,9 @@ impl Ctl {
             Ctl::Sus => "SUS",
             Ctl::Rel => "REL",
             Ctl::LfoRate => "SPEED",
+            Ctl::Master => "VOLUME",
+            Ctl::PadX => "Pad X",
+            Ctl::PadY => "Pad Y",
             _ => "",
         }
     }
@@ -111,6 +125,9 @@ pub fn get(x: &Ext, s: &Sel, c: Ctl) -> f32 {
     match c {
         Ctl::Cut => a.cut,
         Ctl::Res => a.res,
+        Ctl::Master => x.master / 1.25,
+        Ctl::PadX => x.mod_x,
+        Ctl::PadY => x.mod_y,
         Ctl::CutEnv => bipolar(a.amount(Target::Cut, Source::Env)),
         Ctl::Amt => bipolar(a.amount(s.tgt, s.src)),
         Ctl::Att => time_norm(e.att),
@@ -130,6 +147,9 @@ pub fn set(x: &mut Ext, s: &Sel, c: Ctl, n: f32) {
     match c {
         Ctl::Cut => a.cut = n,
         Ctl::Res => a.res = n,
+        Ctl::Master => x.master = n * 1.25,
+        Ctl::PadX => x.mod_x = n,
+        Ctl::PadY => x.mod_y = n,
         Ctl::CutEnv => a.set_amount(Target::Cut, Source::Env, n * 2.0 - 1.0),
         Ctl::Amt => a.set_amount(s.tgt, s.src, n * 2.0 - 1.0),
         Ctl::Att => a.env[t].att = time_ms(n),
@@ -150,6 +170,9 @@ pub fn text(x: &Ext, s: &Sel, c: Ctl) -> String {
     match c {
         Ctl::Cut => pct(a.cut),
         Ctl::Res => pct(a.res),
+        Ctl::Master => pct(x.master),
+        Ctl::PadX => pct(x.mod_x),
+        Ctl::PadY => pct(x.mod_y),
         Ctl::CutEnv => pct(a.amount(Target::Cut, Source::Env)),
         Ctl::Amt => pct(a.amount(s.tgt, s.src)),
         Ctl::Att => ms(a.env[t].att),
@@ -171,6 +194,8 @@ pub fn default_norm(c: Ctl, s: &Sel) -> f32 {
     match c {
         Ctl::Cut => d.cut,
         Ctl::Res => d.res,
+        Ctl::Master => 0.8,
+        Ctl::PadX | Ctl::PadY => 0.5,
         Ctl::CutEnv | Ctl::Amt => {
             let v = if c == Ctl::Amt { d.amount(s.tgt, s.src) } else { 0.0 };
             bipolar(v)
