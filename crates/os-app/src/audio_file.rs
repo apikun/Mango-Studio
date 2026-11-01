@@ -10,6 +10,9 @@
 //! so chords and drums have no melody to give.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{channel, Receiver, TryRecvError};
+use std::sync::Arc;
 
 use os_model::Note;
 use winit::keyboard::{Key, NamedKey};
@@ -77,13 +80,19 @@ impl AudioForm {
     }
 }
 
-/// The tracker's own sizes: the frame of samples, its half window (the difference function's reach), the hop between
-/// frames, and the pitch's bounds in Hz.
-const FRAME: usize = 2048;
-const HALF: usize = 1024;
-const HOP: usize = 512;
+/// The tracker's own sizes, at the tracked rate: the frame of samples, its half window (the difference function's
+/// reach), the hop between frames, and the pitch's bounds in Hz. The file is decimated to about `TRACK_RATE` first
+/// (a melody's pitches are under `PITCH_MAX`, and the difference function's work falls with the square of the
+/// rate), so a song's minutes cost seconds of it. The window keeps its old reach in time (256 at 11025 is the
+/// 1024 at 44100 it was), and the frame holds the window plus the longest period: the period's reach is capped at
+/// `HALF`, so `2 * HALF` is at most `FRAME`.
+const FRAME: usize = 512;
+const HALF: usize = 256;
+const HOP: usize = 128;
 const PITCH_MIN: f64 = 55.0;
 const PITCH_MAX: f64 = 1500.0;
+/// The tracked rate the decimation aims at.
+const TRACK_RATE: f64 = 11025.0;
 /// A dip of the normalized difference at or under this is a tone's period.
 const STRONG: f64 = 0.10;
 /// A frame quieter than this rms is silence.
@@ -109,14 +118,29 @@ pub fn mono(s: &os_engine::sample::Sample) -> Vec<f32> {
     s.left.iter().zip(&s.right).map(|(l, r)| (l + r) * 0.5).collect()
 }
 
+/// The samples as the tracker reads them: `dec` of them box-averaged (a crude low-pass, so nothing above the new
+/// Nyquist folds in) and every `dec`-th kept, the rate brought to about `TRACK_RATE`. A file already at or under
+/// twice that stands as it is.
+fn decimate(x: &[f32], rate: u32) -> (Vec<f32>, u32) {
+    let dec = ((f64::from(rate) / TRACK_RATE) as usize).max(1);
+    if dec == 1 {
+        return (x.to_vec(), rate);
+    }
+    let out = x.chunks(dec).map(|c| c.iter().sum::<f32>() / c.len() as f32).collect();
+    let rate = (f64::from(rate) / f64::from(dec as u32)).round() as u32;
+    (out, rate.max(1))
+}
+
 /// One frame's normalized difference (YIN's d'): the window's mean square difference from itself shifted by tau,
 /// against its running mean. A deep dip at tau is a period of tau samples.
 fn normalized_difference(x: &[f32], tau_min: usize, tau_max: usize) -> Vec<f64> {
-    let mut d = vec![0.0f64; tau_max + 1];
+    // The sums in f32: a difference is at most 2 and the window holds at most 512 of them, and the threshold's
+    // tenth sits far above what rounding a few thousand f32 adds can lose.
+    let mut d = vec![0.0f32; tau_max + 1];
     for tau in tau_min..=tau_max {
-        let mut sum = 0.0f64;
+        let mut sum = 0.0f32;
         for i in 0..HALF {
-            let t = f64::from(x[i] - x[i + tau]);
+            let t = x[i] - x[i + tau];
             sum += t * t;
         }
         d[tau] = sum;
@@ -124,16 +148,16 @@ fn normalized_difference(x: &[f32], tau_min: usize, tau_max: usize) -> Vec<f64> 
     let mut nd = vec![1.0f64; tau_max + 1];
     let mut run = 0.0f64;
     for tau in tau_min..=tau_max {
-        run += d[tau];
-        nd[tau] = if run > 0.0 { d[tau] * (tau - tau_min + 1) as f64 / run } else { 1.0 };
+        run += f64::from(d[tau]);
+        nd[tau] = if run > 0.0 { f64::from(d[tau]) * (tau - tau_min + 1) as f64 / run } else { 1.0 };
     }
     nd
 }
 
 /// The frames' pitches: per frame the MIDI key the frame sings (0.0 is unvoiced) and the frame's rms. YIN: the first
 /// dip under the threshold, down to its bottom, then a parabolic tweak around it; a frame with no dip deep enough,
-/// or too quiet, is unvoiced.
-fn track(samples: &[f32], rate: u32) -> Vec<(f64, f64)> {
+/// or too quiet, is unvoiced. Each frame's count goes into `progress` when it is some (the import's panel's %).
+fn track(samples: &[f32], rate: u32, progress: Option<&AtomicU64>) -> Vec<(f64, f64)> {
     let tau_min = ((f64::from(rate) / PITCH_MAX) as usize).max(2);
     let tau_max = ((f64::from(rate) / PITCH_MIN) as usize).min(HALF);
     if samples.len() < FRAME || tau_max < tau_min + 2 {
@@ -142,6 +166,9 @@ fn track(samples: &[f32], rate: u32) -> Vec<(f64, f64)> {
     let mut out = Vec::new();
     for f in 0..=(samples.len() - FRAME) / HOP {
         let x = &samples[f * HOP..f * HOP + FRAME];
+        if let Some(p) = progress {
+            p.fetch_add(1, Ordering::Relaxed);
+        }
         let rms = (x.iter().map(|v| f64::from(*v) * f64::from(*v)).sum::<f64>() / FRAME as f64).sqrt();
         if rms < FLOOR {
             out.push((0.0, rms));
@@ -269,11 +296,17 @@ fn notes(tracked: &[(f64, f64)], rate: u32, ppq: u16, bpm: f64) -> Vec<Note> {
     folded
 }
 
-/// The file's melody as notes at the project's ticks: YIN's frames, then the notes. One line — the tracker reads the
-/// strongest pitch a frame holds, so a chord's notes come one after another, and drums come not at all.
-pub fn melody(samples: &[f32], rate: u32, ppq: u16, bpm: f64) -> Vec<Note> {
-    let tracked = track(samples, rate);
-    notes(&tracked, rate, ppq, bpm)
+/// The file's melody as notes at the project's ticks: the file decimated to the tracked rate, YIN's frames, then
+/// the notes. One line — the tracker reads the strongest pitch a frame holds, so a chord's notes come one after
+/// another, and drums come not at all. The frames' count goes into `done` of `total` when they are some (the
+/// import's panel's %, on its thread).
+pub fn melody(samples: &[f32], rate: u32, ppq: u16, bpm: f64, progress: Option<(&AtomicU64, &AtomicU64)>) -> Vec<Note> {
+    let (x, rate) = decimate(samples, rate);
+    if let Some((_, total)) = progress {
+        let frames = if x.len() < FRAME { 0 } else { (x.len() - FRAME) / HOP + 1 };
+        total.store(frames as u64, Ordering::Relaxed);
+    }
+    notes(&track(&x, rate, progress.map(|(d, _)| d)), rate, ppq, bpm)
 }
 
 impl App {
@@ -334,8 +367,8 @@ impl App {
     }
 
     /// What the form chose: the file as an audio clip at the playhead (one "Playlist edit" step, as a drop makes), or
-    /// its melody's notes on a new channel in the current pattern (one history step). A file with no melody is only a
-    /// message.
+    /// its melody's notes on a new channel in the current pattern (one history step, when the tracker's thread is
+    /// done — `melody_tick`). A file with no melody is only a message.
     fn audio_accepted(&mut self, path: PathBuf, kind: Kind) {
         if kind == Kind::Clip {
             let text = path.to_string_lossy().into_owned();
@@ -356,30 +389,94 @@ impl App {
         };
         let ppq = self.state.project.ppq.max(1);
         let bpm = self.state.project.tick_tempo(self.state.project.tempo.unwrap_or(140.0).max(1.0));
-        let notes = melody(&mono(&sample), sample.rate, ppq, bpm);
-        if notes.is_empty() {
-            return self.tell(Icon::Info, TITLE, spans(&["", &mf::file_name(&path), " has no melody to give: the tracker reads one line of notes, and these frames hold none."]));
+        // The tracker works behind the progress panel, on a thread of its own: a song's minutes are seconds of its
+        // frames, and the window must not freeze behind them.
+        let (done, total) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
+        let (tx, rx) = channel();
+        let job = MelodyJob { rx, name: mf::file_name(&path).to_string(), done: done.clone(), total: total.clone() };
+        let stem = mf::stem_of_audio(&path);
+        let spawned = std::thread::Builder::new().name("audio-melody".into()).spawn(move || {
+            let notes = melody(&mono(&sample), sample.rate, ppq, bpm, Some((&done, &total)));
+            let _ = tx.send(Tracked { path, kind, name: stem, notes });
+        });
+        match spawned {
+            Ok(_) => {
+                self.melody_job = Some(job);
+                self.invalidate();
+            }
+            Err(e) => self.tell(Icon::Warning, TITLE, spans(&["Could not start reading ", &mf::file_name(&path), &format!(": {e}.")])),
         }
-        let count = notes.len();
-        let name = mf::stem_of_audio(&path);
-        let instrument = match kind {
-            Kind::EightBit => Instrument::EightBit,
-            _ => Instrument::Monk,
-        };
-        let s = &mut self.state;
-        // As every playlist step does (`playlist::snapshot_as`), the arrangement exists before the step.
-        crate::playlist::arr_mut(s);
-        let snap = Snap::Several(vec![
-            Snap::Patterns { patterns: s.project.patterns.clone(), current: s.pattern },
-            Snap::Playlist(Box::new(crate::playlist::capture(s))),
-            Snap::Tail(Box::new(history::Tail::now(s, s.project.channels.len()))),
-        ]);
-        history::record(s, AUDIO_STEP, snap);
-        let n = s.pattern;
-        mf::place_audio(s, mf::Part { name: name.clone(), notes, controls: Vec::new() }, &name, instrument, n);
-        s.message = Some(format!("Imported {} as {} ({} note{})", mf::file_name(&path), kind.label(), count, if count == 1 { "" } else { "s" }));
-        self.invalidate();
     }
+}
+
+/// A melody the tracker is reading (the audio import's Accept with 8-bit or monk): the frames' work runs on a thread
+/// of its own behind the progress panel — a song's minutes are seconds of it, and the window must not freeze
+/// behind them — and the notes come back to where the form left off (`melody_tick`).
+pub struct MelodyJob {
+    rx: Receiver<Tracked>,
+    /// The file's name, for the panel and the messages.
+    name: String,
+    done: Arc<AtomicU64>,
+    total: Arc<AtomicU64>,
+}
+
+/// What the tracker's thread hands back: the file and the kind the form chose, and the melody's notes.
+struct Tracked {
+    path: PathBuf,
+    kind: Kind,
+    /// The channel's name: the file's stem.
+    name: String,
+    notes: Vec<Note>,
+}
+
+/// Follows the tracker's thread: while it works the panel's % is repainted; when it is over, the notes land
+/// (`place_melody`) or the file says why it has none.
+pub fn melody_tick(app: &mut App) {
+    let Some(j) = &app.melody_job else { return };
+    let result = match j.rx.try_recv() {
+        Ok(t) => Ok(t),
+        Err(TryRecvError::Empty) => {
+            app.damage_rect(crate::loading::panel_rect(app.state.screen).outset(4.0));
+            return;
+        }
+        Err(TryRecvError::Disconnected) => Err("the tracker stopped".into()),
+    };
+    let job = app.melody_job.take().expect("checked");
+    match result {
+        Ok(t) if t.notes.is_empty() => app.tell(Icon::Info, TITLE, spans(&["", &job.name, " has no melody to give: the tracker reads one line of notes, and these frames hold none."])),
+        Ok(t) => place_melody(app, t),
+        Err(e) => app.tell(Icon::Warning, TITLE, spans(&["Could not read ", &job.name, &format!(": {e}.")])),
+    }
+    app.invalidate();
+}
+
+/// The tracked notes land: a new channel of the kind the form chose in the current pattern, one history step, the
+/// status message — the tail of the import's Accept that waited for the tracker's frames.
+fn place_melody(app: &mut App, t: Tracked) {
+    let count = t.notes.len();
+    let instrument = match t.kind {
+        Kind::EightBit => Instrument::EightBit,
+        _ => Instrument::Monk,
+    };
+    let s = &mut app.state;
+    // As every playlist step does (`playlist::snapshot_as`), the arrangement exists before the step.
+    crate::playlist::arr_mut(s);
+    let snap = Snap::Several(vec![
+        Snap::Patterns { patterns: s.project.patterns.clone(), current: s.pattern },
+        Snap::Playlist(Box::new(crate::playlist::capture(s))),
+        Snap::Tail(Box::new(history::Tail::now(s, s.project.channels.len()))),
+    ]);
+    history::record(s, AUDIO_STEP, snap);
+    let n = s.pattern;
+    mf::place_audio(s, mf::Part { name: t.name.clone(), notes: t.notes, controls: Vec::new() }, &t.name, instrument, n);
+    s.message = Some(format!("Imported {} as {} ({} note{})", mf::file_name(&t.path), t.kind.label(), count, if count == 1 { "" } else { "s" }));
+}
+
+/// The progress panel: the file and how much of the tracker's frames are done.
+pub fn paint_melody(c: &mut os_ui::Canvas, t: &os_theme::Palette, j: &MelodyJob) {
+    let total = j.total.load(Ordering::Relaxed);
+    let p = if total == 0 { 0.0 } else { (j.done.load(Ordering::Relaxed) as f64 / total as f64).min(1.0) as f32 };
+    crate::loading::panel(c, t, "Importing audio", &format!("{}   {:.0} %", j.name, p * 100.0), p);
 }
 
 /// The wav a test writes: `tones`'s sines one after another (hz, seconds), at 44100.
@@ -410,7 +507,22 @@ mod tests {
         let mut app = App::new(None);
         app.state.project = crate::app::test_project();
         app.state.song_mode = false;
+        app.plugins.available = crate::plugins::builtin();
         app
+    }
+
+    /// The tracker's thread is given ticks until its notes land (`melody_tick`), then the channel the import made
+    /// is hosted (`sync_generators`).
+    fn finish_melody(app: &mut App) {
+        for _ in 0..5000 {
+            melody_tick(app);
+            if app.melody_job.is_none() {
+                app.sync_generators();
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        panic!("the tracker did not finish");
     }
 
     fn tone(hz: f64, secs: f64, amp: f64, rate: u32) -> Vec<f32> {
@@ -434,7 +546,7 @@ mod tests {
     /// the loudness.
     #[test]
     fn the_tracker_reads_a_sine() {
-        let n = melody(&tone(440.0, 1.0, 0.7, 44100), 44100, 96, 120.0);
+        let n = melody(&tone(440.0, 1.0, 0.7, 44100), 44100, 96, 120.0, None);
         assert_eq!(n.len(), 1, "one note: {n:?}");
         assert_eq!(n[0].key, 69);
         assert_eq!(n[0].position, 0);
@@ -447,10 +559,10 @@ mod tests {
     fn steps_become_notes_and_noise_stays_silent() {
         let mut a = tone(220.0, 0.6, 0.7, 44100);
         a.extend(tone(440.0, 0.6, 0.7, 44100));
-        let n = melody(&a, 44100, 96, 120.0);
+        let n = melody(&a, 44100, 96, 120.0, None);
         assert_eq!(n.iter().map(|x| x.key).collect::<Vec<_>>(), [57, 69], "A2 then A3: {n:?}");
         assert!((110..=122).contains(&n[0].length), "0.6 s is 115 ticks: {}", n[0].length);
-        assert!(melody(&[0.0; 44100], 44100, 96, 120.0).is_empty(), "silence sings nothing");
+        assert!(melody(&[0.0; 44100], 44100, 96, 120.0, None).is_empty(), "silence sings nothing");
         // The noise is a xorshift's stream: a hash of the count is a sawtooth, and the tracker reads its pitch.
         let mut st = 0x9E37_79B9u32;
         let noise: Vec<f32> = (0..44100)
@@ -461,7 +573,7 @@ mod tests {
                 (st >> 8) as f32 / 8_388_608.0 - 1.0
             })
             .collect();
-        assert!(melody(&noise, 44100, 96, 120.0).is_empty(), "noise sings nothing");
+        assert!(melody(&noise, 44100, 96, 120.0, None).is_empty(), "noise sings nothing");
     }
 
     /// The form asks what the file becomes; Accept with the clip's kind places it at the playhead as the import always
@@ -500,6 +612,7 @@ mod tests {
             }));
             app.dialog_click(crate::dialog::DHit::Form(FHit::Main));
             assert!(!app.modal_open(), "the form closed");
+            finish_melody(&mut app);
             let msg = app.state.message.clone().unwrap_or_default();
             assert!(msg.contains("as ") && msg.contains("1 note"), "{msg}");
             match kind {
@@ -513,6 +626,11 @@ mod tests {
                 _ => {
                     let monks: Vec<&str> = app.state.project.channels.iter().filter_map(|c| c.plugin.as_deref()).collect();
                     assert!(monks.contains(&crate::plugins::MANGO_MONK), "the monk chants: {monks:?}");
+                    // The channel the import made is hosted (the engine plays only hosted instruments — the bug the
+                    // silent monk import was): the sync picks the new row up.
+                    let row = app.state.project.channels.len() - 1;
+                    assert!(app.state.hosted_rows.contains(&row), "the monk is hosted: {:?}", app.state.message);
+                    assert_eq!(app.plugins.descriptor(row).map(|d| d.name.as_str()), Some(crate::plugins::MANGO_MONK));
                 }
             }
             let notes = app.state.project.patterns[0].notes.clone();
@@ -544,6 +662,7 @@ mod tests {
         let mut f = form(&app).expect("the form shows for the silent file").clone();
         f.kind = Kind::Monk;
         app.audio_form_closed(f, Reply::Button(Answer::Ok));
+        finish_melody(&mut app);
         let Some(Body::Msg(m)) = app.state.dialogs.last().map(|d| &d.body) else { panic!("a message") };
         assert!(m.plain().contains("has no melody to give"), "{}", m.plain());
         assert_eq!(app.state.project, before, "nothing changed");

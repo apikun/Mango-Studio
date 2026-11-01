@@ -1404,6 +1404,9 @@ pub struct App {
     /// An export is rendering (FILE > Export): its first file's name and progress (0..1); the same panel shows, input
     /// waits.
     pub(crate) export: Option<(String, f32)>,
+    /// The audio import's tracker at work (the form chose 8-bit or monk): its frames run on a thread of their own
+    /// behind the progress panel (`crate::audio_file::MelodyJob`), input waits, and the notes land when it is done.
+    pub(crate) melody_job: Option<crate::audio_file::MelodyJob>,
     /// The running export opens the file manager on its first file when done (Open the folder when done).
     export_reveal: bool,
     /// The running export is PATTERNS > Quick render as audio clip / Render and replace's (spec: ui/pattern-render.md):
@@ -1620,6 +1623,7 @@ impl App {
             loading: None,
             missing: Default::default(),
             zipping: None,
+            melody_job: None,
             host_deadline: None,
             host_more: false,
             export: None,
@@ -2442,6 +2446,7 @@ impl App {
         self.sync_osc3();
         self.sync_citrus();
         self.sync_native();
+        self.sync_generators();
         self.host_deadline = None;
         let samplers = self.state.hosted_rows.iter().filter(|&&r| self.state.project.channels.get(r).is_some_and(|c| c.kind.is_sampler())).count();
         let done = (self.plugins.hosted.len() + self.wrap_failed.len() + self.fx_failed.len() + self.native_failed.len()).saturating_sub(samplers);
@@ -2467,7 +2472,7 @@ impl App {
     /// A project is loading or an export is rendering: the window shows the progress and takes no input (spec:
     /// ui/project-loading.md §2).
     pub fn loading(&self) -> bool {
-        self.loading.is_some() || self.export.is_some() || self.missing.search.is_some() || self.zipping.is_some()
+        self.loading.is_some() || self.export.is_some() || self.missing.search.is_some() || self.zipping.is_some() || self.melody_job.is_some()
     }
 
     /// The opened project's loading, for the startup splash: its progress (0..=1) and step, while it loads.
@@ -2573,6 +2578,7 @@ impl App {
         self.export_tick();
         crate::missing::tick(self);
         crate::zipped::tick(self);
+        crate::audio_file::melody_tick(self);
         self.midi_tick();
         self.mixer_tick();
         crate::presets::pending_tick(self);
@@ -2585,6 +2591,7 @@ impl App {
             self.follow_osc3_samples();
             self.sync_citrus();
             self.sync_native();
+            self.sync_generators();
         }
         for (row, path) in std::mem::take(&mut self.state.sample_loads) {
             if !self.state.hosted_rows.contains(&row) {
@@ -4493,6 +4500,9 @@ impl App {
         }
         if let Some(z) = &self.zipping {
             crate::zipped::paint(canvas, &self.theme.colors, z);
+        }
+        if let Some(j) = &self.melody_job {
+            crate::audio_file::paint_melody(canvas, &self.theme.colors, j);
         }
         if let Some((name, p)) = &self.export {
             let status = format!("Rendering {name}   {:.0} %", p * 100.0);
