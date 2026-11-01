@@ -6494,7 +6494,7 @@ impl App {
     fn knob_x(&mut self, id: crate::knobs::KnobId, x0: f32, w: f32, x: f32) {
         let mut v = ((x - x0) / w).clamp(0.0, 1.0);
         // Pan and separation snap to the centre; a level does not.
-        if !matches!(id, crate::knobs::KnobId::ChanVol(_)) && (v - 0.5).abs() * w < 2.0 {
+        if !matches!(id, crate::knobs::KnobId::ChanVol(_) | crate::knobs::KnobId::SlotMix(..)) && (v - 0.5).abs() * w < 2.0 {
             v = 0.5;
         }
         self.state.set_knob(id, v);
@@ -8847,7 +8847,7 @@ impl App {
                 s.set_knob(id, if s.knob(id) >= 0.5 { 0.0 } else { 1.0 });
                 self.hint = Cow::Owned(s.knob_text(id));
             }
-            Action::Knob(id @ (crate::knobs::KnobId::MixPan(_) | crate::knobs::KnobId::MixSep(_) | crate::knobs::KnobId::ChanPan(_) | crate::knobs::KnobId::ChanVol(_))) if os_ui::kit::lemon::on(&self.theme.colors) => {
+            Action::Knob(id @ (crate::knobs::KnobId::MixPan(_) | crate::knobs::KnobId::MixSep(_) | crate::knobs::KnobId::ChanPan(_) | crate::knobs::KnobId::ChanVol(_) | crate::knobs::KnobId::SlotMix(..))) if os_ui::kit::lemon::on(&self.theme.colors) => {
                 let bar = self.hits.iter().rev().find(|h| h.action == Action::Knob(id)).map(|h| h.rect);
                 if let Some(r) = bar {
                     crate::history::knob(&mut self.state, id, false);

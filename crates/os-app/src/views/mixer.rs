@@ -1325,9 +1325,16 @@ fn slot_panel(ui: &mut Ui, s: &State, r: Rect) {
         let ty = if super::lemon(ui) { (row.cy() + 0.36 * f32::from(fs) - ui.c.ascent(f)).round() } else { row.y + 4.0 * kp };
         ui.c.text_clip(f, row.x + 19.0, ty, 140.0, ink, &name);
         let mix = KnobId::SlotMix(n, k);
-        ui.hit(Rect::new(row.right() - 46.0, row.y, 26.0, row.h), Action::Knob(mix), s.knob_text(mix));
-        mixer_knob(ui, row.right() - 33.0, row.cy(), 10.5 * q, 12.0 * q, s.knob(mix), Some(false));
-        ui.c.stroke_circle(row.right() - 33.0, row.cy(), 11.8 * q, 1.5, ui.t.s(0x55595c));
+        if super::lemon(ui) {
+            // The Mango skin: a level bar like the mixer's pan and separation bars.
+            let cx = row.right() - 33.0;
+            ui.hit(Rect::new(cx - 16.0, row.y, 32.0, row.h), Action::Knob(mix), s.knob_text(mix));
+            centre_bar(ui, cx, row.cy(), 15.0, 8.0, s.knob(mix), Bar::Level);
+        } else {
+            ui.hit(Rect::new(row.right() - 46.0, row.y, 26.0, row.h), Action::Knob(mix), s.knob_text(mix));
+            mixer_knob(ui, row.right() - 33.0, row.cy(), 10.5 * q, 12.0 * q, s.knob(mix), Some(false));
+            ui.c.stroke_circle(row.right() - 33.0, row.cy(), 11.8 * q, 1.5, ui.t.s(0x55595c));
+        }
         ui.hit(Rect::new(row.right() - 18.0, row.y, 18.0, row.h), Action::Mix(MHit::SlotLed(k)), "Mute / solo  (ctrl)0..9");
         led_small(ui, row.right() - 10.0, row.cy(), track.is_none_or(|m| m.slot_on[i]));
     }
