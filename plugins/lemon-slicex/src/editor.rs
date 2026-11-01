@@ -84,7 +84,8 @@ impl Editor for SlicexEditor {
     }
 
     fn size(&self) -> (u32, u32) {
-        (view::W, view::H)
+        let x = self.params.ext();
+        view::window_size(x.view, x.keys)
     }
 
     fn set_scale_factor(&self, factor: f32) -> bool {
@@ -171,6 +172,8 @@ pub enum Act {
     OpenDialog,
     /// Send these notes to the host for the channel's current pattern (host link `Notes`).
     Notes(Vec<NoteOut>),
+    /// The window changes to this size (a view button); the platform's window follows.
+    Resize(u32, u32),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -213,12 +216,14 @@ pub struct Logic {
     pad_drag: bool,
     /// The deck the open dialog's file goes to (0 = A, 1 = B).
     load_deck: u8,
+    /// The host's side of the window, for a size change.
+    pub ctx: Option<Arc<dyn GuiContext>>,
 }
 
 impl Logic {
     pub fn new(params: Arc<SlicexParams>, shared: Arc<Shared>, ctx: Option<Arc<dyn GuiContext>>) -> Self {
-        let vals = Vals::new(&*params, params.live.clone(), ctx);
-        Logic { vals, params, shared, view: ViewState::default(), hits: Vec::new(), drag: None, hint: String::new(), copied: None, hosted: false, playing: None, peaks: (u64::MAX, Vec::new()), ext_drag: None, pad_drag: false, load_deck: 0 }
+        let vals = Vals::new(&*params, params.live.clone(), ctx.clone());
+        Logic { vals, params, shared, view: ViewState::default(), hits: Vec::new(), drag: None, hint: String::new(), copied: None, hosted: false, playing: None, peaks: (u64::MAX, Vec::new()), ext_drag: None, pad_drag: false, load_deck: 0, ctx }
     }
 
     pub fn dragging(&self) -> bool {
@@ -248,6 +253,12 @@ impl Logic {
     /// The loop changed: store it and play it.
     fn commit(&mut self, st: &State) {
         self.shared.set_state(&self.params, st);
+    }
+
+    /// The window's size now (logical px): what the view shows.
+    pub fn size(&self) -> (u32, u32) {
+        let x = self.params.ext();
+        view::window_size(x.view, x.keys)
     }
 
     /// Changes what Slicex adds and plays the result.
@@ -312,6 +323,16 @@ impl Logic {
                 let l = &mut e.artic[sel.art].lfo[sel.tgt.index()];
                 l.shape = (l.shape + 1) % 5;
             }),
+            Ctl::View(n) => {
+                self.edit_ext(|e| e.view = n.min(3));
+                let (w, h) = self.size();
+                return vec![Act::Resize(w, h), Act::Repaint];
+            }
+            Ctl::Keys => {
+                self.edit_ext(|e| e.keys = !e.keys);
+                let (w, h) = self.size();
+                return vec![Act::Resize(w, h), Act::Repaint];
+            }
             Ctl::Smooth => self.edit_ext(|e| e.smooth = !e.smooth),
             Ctl::Layer(n) => self.edit_ext(|e| e.layer = n.min(2)),
             Ctl::SameDeck => self.edit_ext(|e| e.same_deck = !e.same_deck),
@@ -846,7 +867,9 @@ mod win32 {
         canvas: Canvas,
         buf: Vec<u32>,
         scale: f32,
+        /// The window's size, and the canvas's (the full layout; a smaller view shows its top rows).
         size: (u32, u32),
+        full: (u32, u32),
         logic: Logic,
         palette: Palette,
         last_hint: String,
@@ -886,16 +909,19 @@ mod win32 {
     pub fn open(parent: *mut c_void, scale: f32, params: Arc<SlicexParams>, shared: Arc<Shared>, ctx: Arc<dyn GuiContext>, slot: Arc<AtomicIsize>) -> Handle {
         let scale = if scale > 0.0 { scale } else { 1.0 };
         let px = |v: u32| (v as f32 * scale).round() as u32;
-        let size = (px(view::W), px(view::H));
+        let full = (px(view::W), px(view::H));
+        let now = { let x = params.ext(); view::window_size(x.view, x.keys) };
+        let size = (px(now.0), px(now.1));
         shared.editor_open.store(true, Ordering::Relaxed);
         unsafe {
             let class = pw::register("LemonSlicexView", Some(wndproc));
             let win = Box::new(Win {
                 hwnd: std::ptr::null_mut(),
-                canvas: Canvas::new(size.0, size.1, scale).expect("canvas"),
-                buf: vec![0; (size.0 * size.1) as usize],
+                canvas: Canvas::new(full.0, full.1, scale).expect("canvas"),
+                buf: vec![0; (full.0 * full.1) as usize],
                 scale,
                 size,
+                full,
                 logic: Logic::new(params, shared.clone(), Some(ctx)),
                 palette: os_plugkit::palette(),
                 last_hint: String::new(),
@@ -1107,6 +1133,16 @@ mod win32 {
                             os_hostlink::take_notes(token);
                         }
                     }
+                    Act::Resize(w, h) => {
+                        self.size = ((w as f32 * self.scale).round() as u32, (h as f32 * self.scale).round() as u32);
+                        unsafe { SetWindowPos(self.hwnd, std::ptr::null_mut(), 0, 0, self.size.0 as i32, self.size.1 as i32, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE) };
+                        if self.logic.hosted {
+                            os_hostlink::to_host(self.hwnd as isize, os_hostlink::Cmd::Changed, 0);
+                        } else if let Some(c) = &self.logic.ctx {
+                            c.request_resize();
+                        }
+                        repaint = true;
+                    }
                 }
             }
             if repaint {
@@ -1127,7 +1163,10 @@ mod win32 {
                 Cmd::PageCount => 1,
                 Cmd::PageIcon => PageIcon::Sample as LRESULT,
                 Cmd::GetPage | Cmd::SetPage => 0,
-                Cmd::Metrics => os_hostlink::pack_size(view::W, view::H),
+                Cmd::Metrics => {
+                    let (w, h) = self.logic.size();
+                    os_hostlink::pack_size(w, h)
+                }
                 Cmd::Hint => {
                     if lp != 0 {
                         // SAFETY: the host passes a `HintBuf` of its own process (spec: host-link.md).
@@ -1144,9 +1183,9 @@ mod win32 {
             self.logic.paint(&mut self.canvas, &self.palette);
             self.last_sig = self.logic.vals.signature();
             self.last_raw = self.logic.params.raw_version.load(Ordering::Acquire);
-            self.buf.resize((self.size.0 * self.size.1) as usize, 0);
+            self.buf.resize((self.full.0 * self.full.1) as usize, 0);
             self.canvas.copy_to_xrgb(&mut self.buf);
-            pw::blit(hdc, &self.buf, self.size.0, self.size.1);
+            pw::blit(hdc, &self.buf[..(self.size.0 * self.size.1) as usize], self.size.0, self.size.1);
             pw::end_paint(self.hwnd, &ps);
         }
     }
@@ -1198,7 +1237,9 @@ mod gui {
         canvas: Canvas,
         buf: Vec<u32>,
         scale: f32,
+        /// The window's size, and the canvas's (the full layout; a smaller view shows its top rows).
         size: (u32, u32),
+        full: (u32, u32),
         logic: Logic,
         palette: Palette,
         last_hint: String,
@@ -1224,15 +1265,17 @@ mod gui {
 
     pub fn open(parent: px::Parent, scale: f32, params: Arc<SlicexParams>, shared: Arc<Shared>, ctx: Arc<dyn GuiContext>, slot: &px::Slot) -> Handle {
         let scale = if scale > 0.0 { scale } else { 1.0 };
-        let size = ((view::W as f32 * scale).round() as u32, (view::H as f32 * scale).round() as u32);
+        let full = ((view::W as f32 * scale).round() as u32, (view::H as f32 * scale).round() as u32);
+        let now = { let x = params.ext(); view::window_size(x.view, x.keys) };
+        let size = ((now.0 as f32 * scale).round() as u32, (now.1 as f32 * scale).round() as u32);
         let sh = shared.clone();
         let wake = slot.clone();
-        let link = Peer::register(parent as u64, vec![PageIcon::Sample], (view::W, view::H), move || px::notify(&wake));
+        let link = Peer::register(parent as u64, vec![PageIcon::Sample], now, move || px::notify(&wake));
         let peer = link.clone();
         let thread = px::spawn(parent, size, slot, move |win| {
-            let Ok(canvas) = Canvas::new(size.0, size.1, scale) else { return };
+            let Ok(canvas) = Canvas::new(full.0, full.1, scale) else { return };
             let logic = Logic::new(params, shared, Some(ctx));
-            let ed = Ed { win, canvas, buf: Vec::new(), scale, size, logic, palette: os_plugkit::palette(), last_hint: String::new(), dirty: true, link: peer };
+            let ed = Ed { win, canvas, buf: Vec::new(), scale, size, full, logic, palette: os_plugkit::palette(), last_hint: String::new(), dirty: true, link: peer };
             ed.run();
         });
         if thread.is_none() {
@@ -1349,6 +1392,16 @@ mod gui {
                             os_hostlink::take_notes(token);
                         }
                     }
+                    Act::Resize(w, h) => {
+                        self.size = ((w as f32 * self.scale).round() as u32, (h as f32 * self.scale).round() as u32);
+                        self.win.resize(self.size.0, self.size.1);
+                        // Lemon Studio's frame follows the link; other hosts the request.
+                        self.link.set_size(w, h);
+                        if let Some(c) = &self.logic.ctx {
+                            c.request_resize();
+                        }
+                        self.dirty = true;
+                    }
                 }
             }
         }
@@ -1356,9 +1409,9 @@ mod gui {
         fn paint(&mut self) {
             self.dirty = false;
             self.logic.paint(&mut self.canvas, &self.palette);
-            self.buf.resize((self.size.0 * self.size.1) as usize, 0);
+            self.buf.resize((self.full.0 * self.full.1) as usize, 0);
             self.canvas.copy_to_xrgb(&mut self.buf);
-            self.win.blit(&self.buf, self.size.0, self.size.1);
+            self.win.blit(&self.buf[..(self.size.0 * self.size.1) as usize], self.size.0, self.size.1);
         }
     }
 
@@ -1500,6 +1553,33 @@ mod tests {
         let _ = (std::fs::remove_file(p), std::fs::remove_file(q));
     }
 
+    /// The view buttons: each asks for its window size, the bands under the top strip move up with their controls, and
+    /// a hidden band answers nothing.
+    #[test]
+    fn the_view_buttons_resize_and_move_the_bands() {
+        let (mut l, p) = loaded();
+        let (x, y) = centre(&l, &Target::Ext(Ctl::View(2)));
+        let acts = l.down(x, y, Btn::Left, Mods::default(), false);
+        assert!(acts.contains(&Act::Resize(view::W, view::H - 214)), "{acts:?}");
+        paint(&mut l);
+        // The region settings are gone; the wave moved up 214 px.
+        assert!(!l.hits.iter().any(|h| h.t == Target::Ext(Ctl::Art(0))));
+        let (_, wy) = centre(&l, &Target::Well);
+        assert_eq!(wy, view::WAVE.cy() - 214.0);
+        // Only the master panel, then everything again with the keyboard off.
+        let (x, y) = centre(&l, &Target::Ext(Ctl::View(3)));
+        assert!(l.down(x, y, Btn::Left, Mods::default(), false).contains(&Act::Resize(view::W, 112)));
+        paint(&mut l);
+        assert!(!l.hits.iter().any(|h| h.t == Target::Well || h.t == Target::Load));
+        let (x, y) = centre(&l, &Target::Ext(Ctl::View(0)));
+        l.down(x, y, Btn::Left, Mods::default(), false);
+        paint(&mut l);
+        let (x, y) = centre(&l, &Target::Ext(Ctl::Keys));
+        assert!(l.down(x, y, Btn::Left, Mods::default(), false).contains(&Act::Resize(view::W, view::H - 68)));
+        assert_eq!(l.size(), (view::W, view::H - 68));
+        let _ = std::fs::remove_file(p);
+    }
+
     #[test]
     fn tempo_and_length_move_together() {
         let (mut l, p) = loaded();
@@ -1540,7 +1620,10 @@ mod tests {
             l.paint(&mut c, &os_plugkit::palette());
             let mut px = vec![0u32; (w * h) as usize];
             c.copy_to_xrgb(&mut px);
-            let mut pm = tiny_skia::Pixmap::new(w, h).unwrap();
+            // The window shows the top rows of the canvas.
+            let wh = (l.size().1 as f32 * scale) as u32;
+            px.truncate((w * wh) as usize);
+            let mut pm = tiny_skia::Pixmap::new(w, wh).unwrap();
             for (o, p) in pm.data_mut().chunks_mut(4).zip(&px) {
                 o.copy_from_slice(&[(p >> 16) as u8, (p >> 8) as u8, *p as u8, 255]);
             }
@@ -1555,6 +1638,13 @@ mod tests {
         l.hint = "Slice 2\tC#5".into();
         save(&mut l, "slicer_loop", 1.0);
         save(&mut l, "slicer_loop_x2", 2.0);
+        for (name, view, keys) in [("no_editor", 1u8, true), ("no_regions", 2, true), ("compact", 3, true), ("no_keys", 0, false)] {
+            l.edit_ext(|e| {
+                e.view = view;
+                e.keys = keys;
+            });
+            save(&mut l, &format!("slicex_{name}"), 1.0);
+        }
         let _ = std::fs::remove_file(p);
     }
 }

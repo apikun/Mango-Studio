@@ -68,6 +68,9 @@ pub enum Ctl {
     Key(u8),
     /// A deck's sound on or off (A = 0, B = 1).
     DeckToggle(u8),
+    /// The view buttons: what the window shows (0..3), and the keyboard.
+    View(u8),
+    Keys,
 }
 
 impl Ctl {

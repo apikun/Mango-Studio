@@ -206,6 +206,10 @@ pub struct Ext {
     pub deck_b: Vec<u8>,
     /// The master volume as a gain, 0..1.25 (1 = as recorded).
     pub master: f32,
+    /// What the window shows (`view::arrange`): 0 everything, 1 without the audio editor, 2 without the region
+    /// settings, 3 only the master panel; and whether the keyboard shows.
+    pub view: u8,
+    pub keys: bool,
 }
 
 impl Default for Ext {
@@ -221,6 +225,8 @@ impl Default for Ext {
             crossfade: false,
             deck_b: Vec::new(),
             master: 1.0,
+            view: 0,
+            keys: true,
         }
     }
 }
@@ -295,6 +301,8 @@ impl Ext {
         o.n(self.deck_b.len());
         o.0.extend(&self.deck_b);
         o.f(self.master);
+        o.b(self.view);
+        o.b(u8::from(self.keys));
         o.0
     }
 
@@ -325,6 +333,8 @@ impl Ext {
         x.deck_b = i.take(n)?.to_vec();
         // Added later: saved states without it keep the default.
         x.master = i.f().map_or(1.0, |m| m.clamp(0.0, 1.25));
+        x.view = i.b().map_or(0, |v| v.min(3));
+        x.keys = i.b().is_none_or(|k| k != 0);
         Some(x)
     }
 
@@ -360,12 +370,14 @@ mod tests {
         x.set_art(5, 3);
         x.deck_b = vec![1, 2, 3];
         x.master = 0.5;
+        x.view = 2;
+        x.keys = false;
         let b = x.to_bytes();
         assert_eq!(Ext::parse(&b), Some(x.clone()));
         assert_eq!(x.art_of(5), 3);
         assert_eq!(x.art_of(2), 0);
-        assert!(Ext::parse(&b[..b.len() - 4]).is_some_and(|e| e.master == 1.0), "an older state has no master volume");
-        assert!(Ext::parse(&b[..b.len() - 9]).is_none(), "cut short");
+        assert!(Ext::parse(&b[..b.len() - 6]).is_some_and(|e| e.master == 1.0), "an older state has no master volume");
+        assert!(Ext::parse(&b[..b.len() - 11]).is_none(), "cut short");
         assert!(Ext::parse(b"nope").is_none());
     }
 

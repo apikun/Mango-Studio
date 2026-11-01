@@ -55,7 +55,9 @@ pub const PAD: Rect = edges(152.0, 232.0, 26.0, 100.0);
 pub const MOD_PANEL: Rect = edges(144.0, 334.0, 8.0, 104.0);
 pub const LAYER_PANEL: Rect = edges(342.0, 520.0, 8.0, 104.0);
 const DROP: Rect = edges(350.0, 512.0, 26.0, 44.0);
-pub const LOGO: Rect = edges(528.0, 654.0, 8.0, 104.0);
+pub const LOGO: Rect = edges(528.0, 654.0, 34.0, 104.0);
+/// The view buttons: the keyboard, then the four layouts.
+const KEYS_BTN: Rect = edges(528.0, 550.0, 10.0, 28.0);
 /// The middle panel.
 const PLATE_R: Rect = edges(6.0, 156.0, 112.0, 322.0);
 const ART_PANEL: Rect = edges(162.0, 316.0, 112.0, 180.0);
@@ -84,6 +86,31 @@ const KEYS_Y: f32 = 544.0;
 const KEYS_H: f32 = 62.0;
 const KEY_W: f32 = 12.0;
 const KEYS_FROM: i32 = 24;
+
+/// The window's bands below the top strip (from, to), in the full layout: the middle panel, the audio editor and the
+/// keyboard.
+const BANDS: [(f32, f32); 3] = [(112.0, 326.0), (326.0, 544.0), (544.0, 612.0)];
+const TOP_H: f32 = 112.0;
+
+/// The bands a view shows with how far each moves up from the full layout, and the window's height: view 0 shows all,
+/// 1 hides the audio editor, 2 hides the region settings (the middle panel), 3 shows the top strip alone.
+pub fn arrange(view: u8, keys: bool) -> (Vec<(f32, f32, f32)>, f32) {
+    let shown = [view == 0 || view == 1, view == 0 || view == 2, keys && view != 3];
+    let mut y = TOP_H;
+    let mut out = Vec::new();
+    for (i, (a, b)) in BANDS.iter().enumerate() {
+        if shown[i] {
+            out.push((*a, *b, y - a));
+            y += b - a;
+        }
+    }
+    (out, y)
+}
+
+/// The window's size in logical pixels for a view.
+pub fn window_size(view: u8, keys: bool) -> (u32, u32) {
+    (W, arrange(view, keys).1 as u32)
+}
 
 const SMALL: Font = Font::new(10);
 const LABEL: Font = Font::new(11);
@@ -213,7 +240,66 @@ pub fn paint(c: &mut Canvas, _t: &Palette, m: &dyn Model, st: &ViewState, look: 
     well(&mut ui, look, hint);
     slice_strip(&mut ui, look);
     keyboard(&mut ui, look);
-    ui.hits
+    view_buttons(&mut ui, look);
+    arrange_bands(ui, look)
+}
+
+/// Moves the shown bands up under the top strip, and the hit regions with them (a hidden band's go).
+fn arrange_bands(mut ui: Ui, look: &Look) -> Vec<Hit> {
+    let (bands, _) = arrange(look.ext.view, look.ext.keys);
+    let k = ui.c.scale;
+    for &(from, to, dy) in &bands {
+        if dy != 0.0 {
+            ui.c.shift(Rect::new(0.0, from + dy, W as f32, to - from - dy), 0, (dy * k).round() as i32, &[]);
+        }
+    }
+    let mut hits = Vec::new();
+    for mut h in std::mem::take(&mut ui.hits) {
+        let y = h.r.cy();
+        if y < TOP_H {
+            hits.push(h);
+        } else if let Some(&(_, _, dy)) = bands.iter().find(|(a, b, _)| y >= *a && y < *b) {
+            h.r.y += dy;
+            hits.push(h);
+        }
+    }
+    hits
+}
+
+/// The view buttons in the top-right corner: the keyboard and the four layouts, each showing which bands it keeps.
+fn view_buttons(ui: &mut Ui, look: &Look) {
+    let x = look.ext;
+    let glyph = |ui: &mut Ui, r: Rect, rows: [bool; 3], ink: Color| {
+        for (i, on) in rows.into_iter().enumerate() {
+            let h = [3.0, 4.0, 3.0][i];
+            let y = r.y + 4.0 + [0.0f32, 5.0, 11.0][i];
+            ui.c.fill_rect(Rect::new(r.x + 5.0, y, r.w - 10.0, h), if on { ink } else { ink.with_alpha(60) });
+        }
+    };
+    let keys = Target::Ext(Ctl::Keys);
+    let kon = x.keys;
+    let hov = ui.hover(KEYS_BTN, &keys);
+    ui.c.fill_rect(KEYS_BTN, if kon { TAB_ON } else if hov { TAB_OFF.shade(0.12) } else { TAB_OFF });
+    for i in 0..4 {
+        let kx = KEYS_BTN.x + 4.0 + 4.0 * i as f32;
+        ui.c.fill_rect(Rect::new(kx, KEYS_BTN.y + 4.0, 2.0, 10.0), INK);
+    }
+    ui.hit(KEYS_BTN, keys);
+    for i in 0..4u8 {
+        let r = edges(553.0 + 24.0 * f32::from(i), 575.0 + 24.0 * f32::from(i), 10.0, 28.0);
+        let t = Target::Ext(Ctl::View(i));
+        let on = x.view == i;
+        let hov = ui.hover(r, &t);
+        ui.c.fill_rect(r, if on { TAB_ON } else if hov { TAB_OFF.shade(0.12) } else { TAB_OFF });
+        let rows = match i {
+            0 => [true, true, true],
+            1 => [true, true, false],
+            2 => [true, false, true],
+            _ => [true, false, false],
+        };
+        glyph(ui, r, rows, INK);
+        ui.hit(r, t);
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -339,9 +425,9 @@ fn layer_panel(ui: &mut Ui, look: &Look) {
 fn emblem(ui: &mut Ui) {
     let f = Font::condensed(30, 0).bold();
     let lh = ui.c.line_height(f);
-    lemon::lemon_mark(ui.c, LOGO.x + 14.0, LOGO.cy() - 4.0, 7.0, brand::MAIN);
-    lemon::spaced(ui.c, f, LOGO.x + 32.0, (LOGO.cy() - lh / 2.0 - 4.0).round(), brand::MAIN, "SLICEX", 2.0);
-    ui.c.text(SMALL, LOGO.x + 32.0, LOGO.cy() + 16.0, SOFT, "Mango Studio");
+    lemon::lemon_mark(ui.c, LOGO.x + 14.0, LOGO.cy() - 6.0, 7.0, brand::MAIN);
+    lemon::spaced(ui.c, f, LOGO.x + 32.0, (LOGO.cy() - lh / 2.0 - 6.0).round(), brand::MAIN, "SLICEX", 2.0);
+    ui.c.text(SMALL, LOGO.x + 32.0, LOGO.cy() + 14.0, SOFT, "Mango Studio");
     ui.hit(LOGO, Target::Logo);
 }
 
@@ -695,7 +781,7 @@ mod tests {
     #[test]
     fn the_layout_fits_the_window() {
         let win = edges(0.0, W as f32, 0.0, H as f32);
-        for r in [PAD, MOD_PANEL, LAYER_PANEL, LOGO, PLATE_R, ART_PANEL, FILTER_PANEL, GRAPH, KNOB_BAR, LOAD, LOAD_B, SLICE, DUMP, PLAY, STOP, BPM_BOX, BEATS_BOX, WELL_R, WAVE, NAME, KEY_BOX, REVERSE] {
+        for r in [KEYS_BTN, PAD, MOD_PANEL, LAYER_PANEL, LOGO, PLATE_R, ART_PANEL, FILTER_PANEL, GRAPH, KNOB_BAR, LOAD, LOAD_B, SLICE, DUMP, PLAY, STOP, BPM_BOX, BEATS_BOX, WELL_R, WAVE, NAME, KEY_BOX, REVERSE] {
             assert!(r.x >= 0.0 && r.right() <= win.right() && r.y >= 0.0 && r.bottom() <= win.bottom(), "{r:?}");
         }
         for (a, b) in [(MOD_PANEL, LAYER_PANEL), (LAYER_PANEL, LOGO), (PLATE_R, ART_PANEL), (ART_PANEL, FILTER_PANEL), (LOAD, LOAD_B), (LOAD_B, SLICE), (SLICE, DUMP)] {
@@ -705,5 +791,18 @@ mod tests {
         assert_eq!((key_name(60), key_name(36), key_name(61)), ("C5".into(), "C3".into(), "C#5".into()));
         // The keyboard covers the slices' keys (C5 up) inside the window.
         assert!(key_rect(60).is_some_and(|k| !k.1) && key_rect(61).is_some_and(|k| k.1));
+    }
+
+    /// The views keep their bands under the top strip: everything is the full window, no audio editor drops the
+    /// editor's 218 px, no region settings drops the middle's 214, the top alone is 112, and the keyboard is 68.
+    #[test]
+    fn views_stack_their_bands() {
+        assert_eq!(window_size(0, true), (W, H));
+        assert_eq!(window_size(1, true).1, H - 218);
+        assert_eq!(window_size(2, true).1, H - 214);
+        assert_eq!(window_size(0, false).1, H - 68);
+        assert_eq!(window_size(3, true).1, 112);
+        let (bands, _) = arrange(2, true);
+        assert_eq!(bands, vec![(326.0, 544.0, -214.0), (544.0, 612.0, -214.0)]);
     }
 }
