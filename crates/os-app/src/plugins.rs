@@ -963,7 +963,7 @@ impl Plugins {
 
     /// Hands file `path` to row `row`'s plugin through the host link, when that plugin takes dropped files (Mango Slicex
     /// does). False when it does not.
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), plugin_windows))]
     pub fn drop_on_link(&self, row: usize, path: &str) -> bool {
         self.hosted.get(&row).and_then(|h| h.link.as_ref()).is_some_and(|l| l.drop_file(path))
     }

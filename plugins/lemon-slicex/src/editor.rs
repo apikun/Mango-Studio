@@ -567,11 +567,6 @@ impl Logic {
             Ctl::Menu(i) => return vec![Act::Menu(MenuReq::Toolbar(i), x, y)],
             Ctl::Edit(i) => return self.edit_button(i, btn, x, y),
             Ctl::Options => return vec![Act::Menu(MenuReq::Options, x, y)],
-            Ctl::Edit(7) => {
-                self.slice(Slicing::Auto(1));
-                return vec![Act::Repaint];
-            }
-            Ctl::Edit(8) => return self.dump(false).map(Act::Notes).into_iter().collect(),
             Ctl::Row(0) => return vec![Act::Menu(MenuReq::Toolbar(8), x, y)],
             Ctl::Row(1) => self.run_zoom(ZoomOp::Full),
             Ctl::Row(2) => self.toggle_marker(),
@@ -584,7 +579,7 @@ impl Logic {
             Ctl::Info(_) => self.edit_ext(|e| e.click_free = !e.click_free),
             Ctl::Scroll(d) => self.scroll(d),
             Ctl::Loop => self.loop_on = !self.loop_on,
-            Ctl::Edit(_) | Ctl::Row(_) => {}
+            Ctl::Row(_) => {}
             Ctl::View(n) => {
                 self.edit_ext(|e| e.view = n.min(3));
                 let (w, h) = self.size();
@@ -2187,7 +2182,7 @@ mod win32 {
                     DragFinish(drop);
                     if n > 0 {
                         let acts = w.logic.load(&String::from_utf16_lossy(&buf[..n]));
-                        w.act(acts);
+                        w.run(acts);
                         w.invalidate();
                     }
                     0
@@ -2328,7 +2323,7 @@ mod win32 {
                     Act::OpenDialog => {
                         if let Some(path) = file_dialog(self.hwnd, None) {
                             let acts = self.logic.load(&path);
-                            self.act(acts);
+                            self.run(acts);
                         }
                         repaint = true;
                     }
