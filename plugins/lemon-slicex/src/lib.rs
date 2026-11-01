@@ -13,6 +13,9 @@ pub mod dump;
 pub mod editor;
 pub mod ext;
 pub mod extctl;
+/// Mango Studio's logo as paths, generated for the app (`tools/logo/gen.py`) and shared from there.
+#[path = "../../../crates/os-app/src/logo.rs"]
+pub mod logo;
 pub mod params;
 pub mod slicing;
 pub mod state;

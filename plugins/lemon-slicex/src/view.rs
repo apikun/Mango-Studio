@@ -415,11 +415,24 @@ fn layer_panel(ui: &mut Ui, look: &Look) {
     led(ui, 448.0, 76.0, "TO END", e, Target::Switch(TO_END_ID.into()), SOFT);
 }
 
-/// The emblem: the mark and "SLICEX".
+/// The Mango Studio logo (the mango, its stem and the three bars and leaf) fitted into a circle of radius `r`.
+fn mango_mark(ui: &mut Ui, cx: f32, cy: f32, r: f32) {
+    use crate::logo::{CENTER, RIND, SLICES, VIEW_H, VIEW_W};
+    let k = 2.0 * r / VIEW_W.max(VIEW_H);
+    let (ox, oy) = (cx - VIEW_W * k / 2.0, cy - VIEW_H * k / 2.0);
+    let parts = [(CENTER, 0x6b3e1f), (RIND, 0xf2711c), (SLICES[0], 0xffb02e), (SLICES[1], 0xffc35c), (SLICES[2], 0xffd27a), (SLICES[3], 0x5cb85c)];
+    for (d, c) in parts {
+        let mut g = os_ui::Glyph::new();
+        g.commands(d, ox, oy, k, None);
+        ui.c.glyph(Color::rgb(c), &g);
+    }
+}
+
+/// The emblem: the mango and "SLICEX".
 fn emblem(ui: &mut Ui) {
     let f = Font::condensed(30, 0).bold();
     let lh = ui.c.line_height(f);
-    lemon::lemon_mark(ui.c, LOGO.x + 14.0, LOGO.cy() - 6.0, 7.0, brand::MAIN);
+    mango_mark(ui, LOGO.x + 15.0, LOGO.cy() - 6.0, 15.0);
     lemon::spaced(ui.c, f, LOGO.x + 32.0, (LOGO.cy() - lh / 2.0 - 6.0).round(), brand::MAIN, "SLICEX", 2.0);
     ui.c.text(SMALL, LOGO.x + 32.0, LOGO.cy() + 14.0, SOFT, "Mango Studio");
     ui.hit(LOGO, Target::Logo);
@@ -433,7 +446,8 @@ fn plate(ui: &mut Ui, look: &Look) {
     // The emblem again, big and dim, and what is loaded.
     let f = Font::condensed(30, 0).bold();
     let lh = ui.c.line_height(f);
-    lemon::spaced(ui.c, f, PLATE_R.x + 18.0, (PLATE_R.cy() - lh / 2.0).round(), TAB_ON.with_alpha(110), "SLICEX", 2.0);
+    mango_mark(ui, PLATE_R.cx(), PLATE_R.y + 76.0, 52.0);
+    lemon::spaced(ui.c, f, PLATE_R.x + 18.0, (PLATE_R.cy() + 36.0 - lh / 2.0).round(), TAB_ON.with_alpha(150), "SLICEX", 2.0);
     let n = look.state.slices.len();
     let line = if n == 0 { "No loop yet".to_string() } else { format!("{n} slices") };
     ui.c.text_clip(SMALL.bold(), PLATE_R.x + 12.0, PLATE_R.bottom() - 22.0, PLATE_R.w - 24.0, INK_DIM, &line);
