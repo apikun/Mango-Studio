@@ -17,6 +17,7 @@ nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", default-featur
 os-dsp.workspace = true
 os-engine.workspace = true
 os-hostlink.workspace = true
+os-paths = { path = "../../crates/os-paths" }
 os-plugkit = { path = "../../crates/os-plugkit" }
 os-ui = { path = "../../crates/os-ui" }
 os-theme = { path = "../../crates/os-theme" }

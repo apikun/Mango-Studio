@@ -10,6 +10,7 @@
 
 pub mod dsp;
 pub mod dump;
+pub mod edit;
 pub mod editor;
 pub mod ext;
 pub mod extctl;
@@ -50,6 +51,8 @@ pub struct Shared {
     pub tempo: AtomicU64,
     /// Set while an editor is open.
     pub editor_open: AtomicBool,
+    /// Whether any voice sounds (the editor's loop button plays a slice again when it ended).
+    pub voices: AtomicBool,
 }
 
 impl Shared {
@@ -120,6 +123,16 @@ impl Shared {
         }
         self.rebuild(params);
         Ok(())
+    }
+
+    /// The loop is now `sample`, read from `path` (an edit's file): the voices play it from the next `rebuild`.
+    pub fn set_sample(&self, sample: Option<Arc<Sample>>, path: &str) {
+        if let Ok(mut l) = self.loaded_path.lock() {
+            *l = path.to_string();
+        }
+        if let Ok(mut cur) = self.sample.lock() {
+            *cur = sample;
+        }
     }
 
     /// Replaces the saved state (slices, tempo, ...) and plays it.
@@ -326,7 +339,9 @@ impl Plugin for LemonSlicex {
         for (note, voice_id) in self.engine.take_ended() {
             ctx.send_event(NoteEvent::VoiceTerminated { timing: last, voice_id, channel: 0, note });
         }
-        if self.engine.has_voices() { ProcessStatus::KeepAlive } else { ProcessStatus::Normal }
+        let sounding = self.engine.has_voices();
+        self.shared.voices.store(sounding, Ordering::Relaxed);
+        if sounding { ProcessStatus::KeepAlive } else { ProcessStatus::Normal }
     }
 }
 

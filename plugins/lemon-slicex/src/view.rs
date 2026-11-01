@@ -162,13 +162,22 @@ pub struct Hit {
 }
 
 /// The pointer, the pressed control and the chosen slice.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ViewState {
     pub mouse: Option<(f32, f32)>,
     pub pressed: Option<Target>,
     pub chosen: usize,
     /// The articulator and the tabs the panels show.
     pub sel: Sel,
+    /// The frames selected in the wave, and the part of the loop the wave shows (fractions of its length).
+    pub range: Option<(usize, usize)>,
+    pub zoom: (f64, f64),
+}
+
+impl Default for ViewState {
+    fn default() -> Self {
+        ViewState { mouse: None, pressed: None, chosen: 0, sel: Sel::default(), range: None, zoom: (0.0, 1.0) }
+    }
 }
 
 /// What a paint shows besides the parameters.
@@ -179,8 +188,9 @@ pub struct Look<'a> {
     pub rate: u32,
     /// The waveform's low and high per column of `WAVE` (empty = no sample).
     pub peaks: &'a [(f32, f32)],
-    /// The dump is offered (hosted by Lemon Studio, a loop with slices).
+    /// The dump is offered (hosted by Lemon Studio, a loop with slices), and the plugin is hosted at all.
     pub can_dump: bool,
+    pub hosted: bool,
     /// The articulators, layering and pad.
     pub ext: &'a Ext,
     /// The loaded decks' file names (A, B).
@@ -213,13 +223,24 @@ pub fn key_name(k: i32) -> String {
     format!("{}{}", NAMES[k.rem_euclid(12) as usize], k.div_euclid(12))
 }
 
-/// The frame of the loop at x in the well.
-pub fn frame_at(x: f32, frames: usize) -> usize {
-    (((x - WAVE.x) / WAVE.w).clamp(0.0, 1.0) as f64 * frames as f64) as usize
+/// The part of the loop the wave shows (fractions), never empty.
+pub fn zoom_of(z: (f64, f64)) -> (f64, f64) {
+    let (a, b) = (z.0.clamp(0.0, 1.0), z.1.clamp(0.0, 1.0));
+    if b - a < 1e-6 { (0.0, 1.0) } else { (a, b) }
 }
 
-fn x_of(frame: u32, frames: usize) -> f32 {
-    (WAVE.x + f64::from(frame) as f32 / frames.max(1) as f32 * WAVE.w).round()
+/// The frame of the loop at x in the well, for the part `zoom` shows.
+pub fn frame_at(x: f32, frames: usize, zoom: (f64, f64)) -> usize {
+    let (z0, z1) = zoom_of(zoom);
+    let f = f64::from(((x - WAVE.x) / WAVE.w).clamp(0.0, 1.0));
+    (((z0 + f * (z1 - z0)) * frames as f64) as usize).min(frames)
+}
+
+/// The x of a frame in the well (it may lie outside it when zoomed in).
+pub fn x_of(frame: u32, frames: usize, zoom: (f64, f64)) -> f32 {
+    let (z0, z1) = zoom_of(zoom);
+    let f = (f64::from(frame) / frames.max(1) as f64 - z0) / (z1 - z0);
+    (f64::from(WAVE.x) + f * f64::from(WAVE.w)).round() as f32
 }
 
 /// Paints the editor. `hint` (not hosted: the host shows it otherwise) goes in the well's bottom-left corner.
@@ -675,17 +696,11 @@ fn graph(ui: &mut Ui, look: &Look) {
     }
     ui.hit(GRAPH, Target::Ext(Ctl::Amt));
     ui.c.fill_rect(KNOB_BAR, Color::rgb(0x2b3245));
-    // The bar's small icons at the right and the arrow at its left, as the original's.
-    for (i, g) in [Gl::Freeze, Gl::Marker, Gl::Snap, Gl::Slide].into_iter().enumerate() {
-        let r = Rect::new(560.0 + 24.0 * i as f32, 290.0, 22.0, 20.0);
-        glyph(ui, r, g, if g == Gl::Slide { Color::rgb(0xf0b030) } else { Color::rgb(0x8d97ae) });
-        ui.hit(r, Target::Ext(Ctl::Row(14 + i as u8)));
-    }
-    // The scroll row at the bottom of the graph, with its arrow.
+    // The scroll row at the bottom of the graph.
     let row = Rect::new(GRAPH.x, GRAPH.bottom() - 13.0, GRAPH.w, 13.0);
     ui.c.fill_rect(row, Color::rgb(0x333c52));
     ui.c.fill_rect(Rect::new(row.x + 18.0, row.y + 3.0, row.w - 36.0, row.h - 6.0), Color::rgb(0x2b3245));
-    ui.c.fill_polygon(&[(row.x + 5.0, row.y + 4.0), (row.x + 12.0, row.y + 4.0), (row.x + 8.5, row.y + 9.0)], Color::rgb(0x8d97ae));
+
     ui.c.fill_rect(Rect::new(KNOB_BAR.x, KNOB_BAR.y, KNOB_BAR.w, 1.0), INK_DIM);
     let amount = a.amount(sel.tgt, sel.src);
     let t = sel.tgt.index();
@@ -826,7 +841,7 @@ const fn edit_cell(i: usize) -> Rect {
     Rect::new(404.0 + 22.5 * i as f32, TB_Y, 21.0, TB_H)
 }
 const fn switch_cell(i: usize) -> Rect {
-    Rect::new(566.0 + 17.0 * i as f32, 380.0, 16.0, 16.0)
+    Rect::new(630.0 + 17.0 * i as f32, 380.0, 16.0, 16.0)
 }
 
 /// Draws a glyph in `r`.
@@ -1034,9 +1049,9 @@ fn toolbar(ui: &mut Ui, look: &Look) {
     // The sample edit functions: auto-slice and dump score work, the others are not built yet.
     for (i, g) in EDIT_GLYPHS.iter().enumerate() {
         let enabled = match i {
-            7 => has,
             8 => look.can_dump,
-            _ => false,
+            10 => has && look.hosted,
+            _ => has,
         };
         icon_button(ui, edit_cell(i), Target::Ext(Ctl::Edit(i as u8)), *g, i == 4, enabled, false);
     }
@@ -1052,7 +1067,7 @@ fn info_field(ui: &mut Ui, x: f32, cap: &str, text: &str, w: f32) {
 fn value_text(ui: &mut Ui, r: Rect, t: Target, text: &str, enabled: bool) {
     let hov = enabled && ui.hover(r, &t);
     let ink = if !enabled { Color::rgb(0x59627a) } else if hov { Color::rgb(0xffffff) } else { LIGHT };
-    ui.c.text(LABEL, r.x, 374.0, ink, text);
+    ui.c.text(LABEL, r.x, 383.0, ink, text);
     ui.hit(r, t);
 }
 
@@ -1085,11 +1100,15 @@ fn info(ui: &mut Ui, look: &Look) {
     ui.c.text_clip(LABEL, 250.0, 383.0, 226.0, LIGHT, &name);
     ui.c.text(cap, BEATS_BOX.x, 372.0, dim, "LENGTH / SEL");
     value_text(ui, BEATS_BOX, Target::Beats, &if has { format!("{:.2}", look.state.beats()) } else { String::new() }, has);
-    for (i, g) in SWITCH_GLYPHS.iter().enumerate() {
-        let r = switch_cell(i);
-        glyph(ui, r, *g, Color::rgb(0x707a92));
-        ui.hit(r, Target::Ext(Ctl::Info(i as u8)));
+    // Click-free editing: a join of two pieces of audio gets a short fade.
+    let r = switch_cell(0);
+    let t = Target::Ext(Ctl::Info(3));
+    let on = look.ext.click_free;
+    if ui.hover(r, &t) {
+        ui.c.fill_circle(r.cx(), r.cy(), 9.0, Color::rgb(0x434d66));
     }
+    glyph(ui, r, Gl::ClickFree, if on { Color::rgb(0xe3e7ef) } else { Color::rgb(0x707a92) });
+    ui.hit(r, t);
 }
 
 /// The loop in its well: the waveform, the slices' lines (the chosen slice lit), their numbers along the top.
@@ -1102,15 +1121,18 @@ fn well(ui: &mut Ui, look: &Look, hint: &str) {
         }
     }
     let st = look.state;
+    let zoom = ui.st.zoom;
     if look.frames == 0 || look.peaks.is_empty() {
         let msg = if st.path.is_empty() { "No loop: File > Load sample opens one".to_string() } else { format!("{} could not be read", st.path()) };
         ui.c.text_center(LABEL, WAVE, SOFT, &msg);
     } else {
         let n = st.slices.len();
         let chosen = ui.st.chosen.min(n.saturating_sub(1));
-        if let Some(s) = st.slices.get(chosen) {
-            let x0 = x_of(s.start, look.frames);
-            let x1 = st.slices.get(chosen + 1).map_or(WAVE.right(), |s| x_of(s.start, look.frames));
+        let show = look.ext.show_regions;
+        ui.c.push_clip(WAVE);
+        if let (true, Some(s)) = (show, st.slices.get(chosen)) {
+            let x0 = x_of(s.start, look.frames, zoom);
+            let x1 = st.slices.get(chosen + 1).map_or(x_of(look.frames as u32, look.frames, zoom), |s| x_of(s.start, look.frames, zoom));
             ui.c.fill_rect(edges(x0, x1.max(x0 + 1.0), WAVE.y, WAVE.bottom()), brand::MAIN.with_alpha(46));
         }
         let mid = WAVE.cy();
@@ -1120,18 +1142,31 @@ fn well(ui: &mut Ui, look: &Look, hint: &str) {
             let (y0, y1) = ((mid - hi.clamp(-1.0, 1.0) * half).floor(), (mid - lo.clamp(-1.0, 1.0) * half).ceil());
             ui.c.fill_rect(Rect::new(x, y0, 1.0, (y1 - y0).max(1.0)), WAVE_INK);
         }
-        let mut last_label = f32::NEG_INFINITY;
-        for (i, s) in st.slices.iter().enumerate() {
-            let x = x_of(s.start, look.frames).min(WAVE.right() - 1.0);
-            let col = if i == chosen { brand::MAIN } else { SOFT.with_alpha(150) };
-            ui.c.fill_rect(Rect::new(x, WAVE.y, 1.0, WAVE.h), col);
-            let label = (i + 1).to_string();
-            let w = ui.c.text_width(SMALL, &label);
-            if x + 3.0 > last_label + 4.0 && x + 3.0 + w < WAVE.right() {
-                ui.c.text(SMALL, x + 3.0, WAVE.y + 1.0, if i == chosen { brand::MAIN } else { SOFT }, &label);
-                last_label = x + 3.0 + w;
+        // The selection: a lighter band with its edges.
+        if let Some((a, b)) = ui.st.range.filter(|(a, b)| a != b) {
+            let (xa, xb) = (x_of(a as u32, look.frames, zoom), x_of(b as u32, look.frames, zoom));
+            ui.c.fill_rect(edges(xa, xb.max(xa + 1.0), WAVE.y, WAVE.bottom()), Color::rgb(0xd5dbe8).with_alpha(60));
+            ui.c.fill_rect(Rect::new(xa, WAVE.y, 1.0, WAVE.h), LIGHT);
+            ui.c.fill_rect(Rect::new(xb - 1.0, WAVE.y, 1.0, WAVE.h), LIGHT);
+        }
+        if show {
+            let mut last_label = f32::NEG_INFINITY;
+            for (i, s) in st.slices.iter().enumerate() {
+                let x = x_of(s.start, look.frames, zoom);
+                if x < WAVE.x - 1.0 || x > WAVE.right() {
+                    continue;
+                }
+                let col = if i == chosen { brand::MAIN } else { SOFT.with_alpha(150) };
+                ui.c.fill_rect(Rect::new(x, WAVE.y, 1.0, WAVE.h), col);
+                let label = (i + 1).to_string();
+                let w = ui.c.text_width(SMALL, &label);
+                if x + 3.0 > last_label + 4.0 && x + 3.0 + w < WAVE.right() {
+                    ui.c.text(SMALL, x + 3.0, WAVE.y + 1.0, if i == chosen { brand::MAIN } else { SOFT }, &label);
+                    last_label = x + 3.0 + w;
+                }
             }
         }
+        ui.c.pop_clip();
     }
     if !hint.is_empty() {
         let (left, right) = hint.split_once('\t').unwrap_or((hint, ""));
@@ -1145,53 +1180,53 @@ fn well(ui: &mut Ui, look: &Look, hint: &str) {
     ui.hit(WAVE, Target::Well);
 }
 
-/// The wave's scroll bar row: arrows at both ends and the thumb.
+/// The wave's scroll bar row: arrows at both ends scroll, the thumb shows the part of the loop in view.
 fn scroll_bar(ui: &mut Ui) {
     ui.c.fill_rect(SCROLL_R, Color::rgb(0x353e53));
     ui.c.fill_rect(Rect::new(SCROLL_R.x, SCROLL_R.bottom() - 1.0, SCROLL_R.w, 1.0), BTN_EDGE);
     let (l, r) = (SCROLL_R.x + 9.0, SCROLL_R.right() - 9.0);
     let cy = SCROLL_R.cy();
-    ui.c.fill_polygon(&[(l + 3.0, cy - 4.0), (l + 3.0, cy + 4.0), (l - 3.0, cy)], SOFT);
-    ui.c.fill_polygon(&[(r - 3.0, cy - 4.0), (r - 3.0, cy + 4.0), (r + 3.0, cy)], SOFT);
-    ui.c.fill_rect(Rect::new(l + 12.0, SCROLL_R.y + 3.0, r - l - 24.0, SCROLL_R.h - 6.0), Color::rgb(0x434d66));
+    let zoomed = zoom_of(ui.st.zoom) != (0.0, 1.0);
+    let ink = if zoomed { LIGHT } else { Color::rgb(0x6d7791) };
+    ui.c.fill_polygon(&[(l + 3.0, cy - 4.0), (l + 3.0, cy + 4.0), (l - 3.0, cy)], ink);
+    ui.c.fill_polygon(&[(r - 3.0, cy - 4.0), (r - 3.0, cy + 4.0), (r + 3.0, cy)], ink);
+    ui.hit(Rect::new(SCROLL_R.x, SCROLL_R.y, 18.0, SCROLL_R.h), Target::Ext(Ctl::Scroll(-1)));
+    ui.hit(Rect::new(SCROLL_R.right() - 18.0, SCROLL_R.y, 18.0, SCROLL_R.h), Target::Ext(Ctl::Scroll(1)));
+    let track = Rect::new(l + 12.0, SCROLL_R.y + 3.0, r - l - 24.0, SCROLL_R.h - 6.0);
+    let (z0, z1) = zoom_of(ui.st.zoom);
+    ui.c.fill_rect(track, Color::rgb(0x2b3245));
+    let thumb = Rect::new(track.x + track.w * z0 as f32, track.y, (track.w * (z1 - z0) as f32).max(8.0), track.h);
+    ui.c.fill_rect(thumb, Color::rgb(0x4a5675));
 }
 
 /// The row under the wave: the editor's switches at both ends.
 fn switches_row(ui: &mut Ui, look: &Look) {
     ui.c.fill_rect(ROW_R, Color::rgb(0x252d3b));
     ui.c.fill_rect(Rect::new(ROW_R.x, ROW_R.y, ROW_R.w, 1.0), BTN_EDGE);
-    let has = look.frames > 0 && !look.state.slices.is_empty();
-    // Left: a menu arrow, refresh, add marks, then the next and previous region and two more.
-    let left = [Gl::Menu, Gl::Refresh, Gl::Marks, Gl::Next, Gl::Slope, Gl::Prev, Gl::Link];
-    for (i, g) in left.iter().enumerate() {
+    let x = look.ext;
+    let has = look.frames > 0;
+    let regions = has && !look.state.slices.is_empty();
+    // Left: the zoom menu, the whole loop in view, a marker at the selection, the previous and the next region.
+    let left = [(Gl::Menu, has), (Gl::Refresh, has), (Gl::Marks, has), (Gl::Prev, regions), (Gl::Next, regions)];
+    for (i, (g, enabled)) in left.iter().enumerate() {
         let r = Rect::new(8.0 + 22.0 * i as f32, ROW_R.y, 20.0, ROW_R.h);
-        let enabled = matches!(g, Gl::Prev | Gl::Next) && has;
-        let ink = match g {
-            Gl::Refresh | Gl::Marks => Color::rgb(0xe3e7ef),
-            _ if enabled => Color::rgb(0xe3e7ef),
-            Gl::Menu => Color::rgb(0xcfd6e6),
-            _ => Color::rgb(0x59627a),
-        };
         let t = Target::Ext(Ctl::Row(i as u8));
-        let hov = enabled && ui.hover(r, &t);
-        if hov {
+        if *enabled && ui.hover(r, &t) {
             ui.c.fill_rrect(r, 3.0, BTN_FACE.shade(0.16));
         }
-        glyph(ui, r, *g, ink);
+        glyph(ui, r, *g, if *enabled { Color::rgb(0xe3e7ef) } else { Color::rgb(0x59627a) });
         ui.hit(r, t);
     }
-    // Right: the switches of the original. The flag is lit, the step curve pink.
-    let right = [Gl::NoiseT, Gl::Regions2, Gl::Flag, Gl::Freeze, Gl::Step, Gl::Snap, Gl::Slide];
-    for (i, g) in right.iter().enumerate() {
-        let r = Rect::new(ROW_R.right() - 8.0 - 22.0 * (7 - i) as f32, ROW_R.y, 20.0, ROW_R.h);
-        let ink = match g {
-            Gl::Flag => Color::rgb(0xf0b030),
-            Gl::Step => Color::rgb(0xf0408a),
-            Gl::Snap | Gl::Freeze => Color::rgb(0xcfd6e6),
-            _ => Color::rgb(0x8d97ae),
-        };
-        glyph(ui, r, *g, ink);
-        ui.hit(r, Target::Ext(Ctl::Row(7 + i as u8)));
+    // Right: the markers shown, the loop frozen, what a selection snaps to, a moved marker taking the later ones.
+    let right = [(Gl::Flag, x.show_regions, Color::rgb(0xf0b030)), (Gl::Freeze, x.freeze, Color::rgb(0x9fd0ff)), (Gl::Snap, x.snap != 0, Color::rgb(0xf0408a)), (Gl::Slide, x.slide, Color::rgb(0xf0b030))];
+    for (i, (g, on, lit)) in right.iter().enumerate() {
+        let r = Rect::new(ROW_R.right() - 8.0 - 22.0 * (4 - i) as f32, ROW_R.y, 20.0, ROW_R.h);
+        let t = Target::Ext(Ctl::Row(5 + i as u8));
+        if ui.hover(r, &t) {
+            ui.c.fill_rrect(r, 3.0, BTN_FACE.shade(0.16));
+        }
+        glyph(ui, r, *g, if *on { *lit } else { Color::rgb(0x8d97ae) });
+        ui.hit(r, t);
     }
 }
 
@@ -1201,12 +1236,15 @@ fn lane(ui: &mut Ui, look: &Look) {
     for dy in [10.0, 21.0] {
         ui.c.fill_rect(Rect::new(LANE.x, LANE.y + dy, LANE.w, 1.0), Color::rgb(0x3a4560));
     }
-    if look.frames == 0 {
+    if look.frames == 0 || !look.ext.show_regions {
         return;
     }
     let chosen = ui.st.chosen.min(look.state.slices.len().saturating_sub(1));
     for (i, s) in look.state.slices.iter().enumerate() {
-        let x = x_of(s.start, look.frames).min(WAVE.right() - 1.0);
+        let x = x_of(s.start, look.frames, ui.st.zoom);
+        if x < WAVE.x - 1.0 || x > WAVE.right() {
+            continue;
+        }
         let col = if i == chosen { brand::MAIN } else { SOFT.with_alpha(170) };
         ui.c.fill_rect(Rect::new(x, LANE.y + 2.0, 1.0, LANE.h - 4.0), col);
         ui.c.fill_polygon(&[(x, LANE.y + 2.0), (x + 6.0, LANE.y + 4.5), (x, LANE.y + 7.0)], col);

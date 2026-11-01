@@ -194,6 +194,9 @@ impl Artic {
 /// How the two decks' regions on one key layer: the layering modes (the original's list).
 pub const LAYERS: [&str; 7] = ["All", "All (gain compensated)", "Velocity-mapped", "Modulation X-mapped", "Modulation Y-mapped", "Random", "Cycle"];
 
+/// What a selection in the wave editor snaps to.
+pub const SNAPS: [&str; 3] = ["Nothing", "Regions", "Zero-crossings"];
+
 /// The crossfade curves between layered regions, in the order of their buttons.
 pub const FADES: [&str; 5] = ["None", "Linear", "Balanced curve", "Unbalanced curve", "Adding"];
 
@@ -241,6 +244,13 @@ pub struct Ext {
     pub lfo_level: f32,
     /// A loop loaded into deck A is dumped to the piano roll at once.
     pub auto_dump: bool,
+    /// The wave editor's switches: slice markers shown, what a selection snaps to (`SNAPS`), a moved marker takes the
+    /// later ones with it, edits join with short fades, and the loop is locked against edits.
+    pub show_regions: bool,
+    pub snap: u8,
+    pub slide: bool,
+    pub click_free: bool,
+    pub freeze: bool,
     /// What the window shows (`view::arrange`): 0 everything, 1 without the audio editor, 2 without the region
     /// settings, 3 only the master panel; and whether the keyboard shows.
     pub view: u8,
@@ -265,6 +275,11 @@ impl Default for Ext {
             rand_level: 1.0,
             lfo_level: 1.0,
             auto_dump: false,
+            show_regions: true,
+            snap: 0,
+            slide: false,
+            click_free: true,
+            freeze: false,
             view: 0,
             keys: true,
         }
@@ -353,6 +368,9 @@ impl Ext {
                 o.f(e.bend);
             }
         }
+        for v in [u8::from(self.show_regions), self.snap, u8::from(self.slide), u8::from(self.click_free), u8::from(self.freeze)] {
+            o.b(v);
+        }
         o.0
     }
 
@@ -396,6 +414,9 @@ impl Ext {
                     e.bend = b.clamp(0.3, 8.0);
                 }
             }
+        }
+        if let (Some(r), Some(s), Some(sl), Some(c), Some(f)) = (i.b(), i.b(), i.b(), i.b(), i.b()) {
+            (x.show_regions, x.snap, x.slide, x.click_free, x.freeze) = (r != 0, s.min(2), sl != 0, c != 0, f != 0);
         }
         Some(x)
     }
@@ -441,8 +462,8 @@ mod tests {
         assert_eq!(Ext::parse(&b), Some(x.clone()));
         assert_eq!(x.art_of(5), 3);
         assert_eq!(x.art_of(2), 0);
-        assert!(Ext::parse(&b[..b.len() - 209]).is_some_and(|e| e.master == 1.0), "an older state has no master volume");
-        assert!(Ext::parse(&b[..b.len() - 214]).is_none(), "cut short");
+        assert!(Ext::parse(&b[..b.len() - 214]).is_some_and(|e| e.master == 1.0), "an older state has no master volume");
+        assert!(Ext::parse(&b[..b.len() - 219]).is_none(), "cut short");
         assert!(Ext::parse(b"nope").is_none());
     }
 

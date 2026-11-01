@@ -294,6 +294,7 @@ pub fn builtin() -> Vec<Available> {
     static DASHBOARD: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static DIRECTWAVE: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static SFXR: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static SLICEX: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static WAVETABLE: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static SOUNDFONT: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     let mut v = linked(&LIB, &lemon_sampler::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, LEMON_SAMPLER);
@@ -331,6 +332,8 @@ pub fn builtin() -> Vec<Available> {
     v.extend(linked(&FLEX, &mango_flex::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, MANGO_FLEX));
     // The sampler (a recreation of FL's DirectWave): a program of zones, each one sample and where it plays.
     v.extend(linked(&DIRECTWAVE, &mango_directwave::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango DirectWave"));
+    // The sliced-loop sampler (a recreation of FL's Slicex): articulators, two decks, a sample editor.
+    v.extend(linked(&SLICEX, &lemon_slicex::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Slicex"));
     v
 }
 

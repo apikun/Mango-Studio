@@ -84,6 +84,8 @@ pub enum Ctl {
     Info(u8),
     /// The row under the wave: the left icons (0..5) and the right switches (6..11).
     Row(u8),
+    /// The wave's scroll arrows: left (-1) or right (1).
+    Scroll(i8),
 }
 
 impl Ctl {

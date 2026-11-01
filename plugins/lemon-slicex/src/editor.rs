@@ -15,11 +15,13 @@ use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use nih_plug::prelude::*;
+use os_engine::sample::Sample;
 use os_hostlink::NoteOut;
 use os_plugkit::vals::Vals;
 use os_plugkit::MenuDef;
 use os_ui::kit::menu::{Mark, MenuItem, MenuStyle};
 
+use crate::edit::{self, Clip, Range, Shift};
 use crate::ext::{Ext, Source};
 use crate::extctl::{self, Ctl};
 use crate::params::{self, SlicexParams, NAMES};
@@ -149,6 +151,17 @@ pub enum Cmd {
     DefaultKeys,
     /// Select previous (-1) or next (1) region.
     Select(i32),
+    /// A sample edit, a selection change, a zoom, and the wave editor's switches.
+    Edit(Ed),
+    SaveAs(SaveKind),
+    Sel(SelOp),
+    Zoom(ZoomOp),
+    SetSnap(u8),
+    ToggleRegions,
+    ToggleClickFree,
+    /// Add or remove a marker at the selection's start; add the selection as a region.
+    Marker,
+    AddRegion,
     /// The options menu: layering mode, crossfade curve, the switches, the pad and the articulator.
     SetLayer(u8),
     SetFade(u8),
@@ -163,6 +176,8 @@ pub enum Cmd {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuReq {
+    /// The Run script button's menu: the region presets.
+    Script,
     /// The options button's menu (layering, crossfade, pad, articulator).
     Options,
     /// The chosen slice's menu (right click on the wave): reverse, rename, trigger note, delete.
@@ -184,6 +199,81 @@ pub const BPM_ID: &str = "bpm";
 pub const BEATS_ID: &str = "beats";
 /// The type-in id of the chosen slice's name.
 pub const SLICE_NAME_ID: &str = "slice-name";
+
+/// The sample edits.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Ed {
+    Undo,
+    Normalize,
+    NormalizeEach,
+    FadeIn,
+    FadeOut,
+    DeclickIn,
+    DeclickOut,
+    Reverse,
+    Polarity,
+    Center,
+    Swap,
+    Mono(Option<bool>),
+    Stereo,
+    Clear,
+    Delete,
+    Trim,
+    InsertSilence,
+    Cut,
+    Copy,
+    PasteInsert,
+    PasteReplace,
+    PasteMix,
+    Noise,
+    DrumStretch,
+    /// Every region on its own: normalized, declicked in, declicked out, or all the declicks and the level.
+    AllNormalize,
+    AllDeclickIn,
+    AllDeclickOut,
+    AllPerfect,
+    /// The loop as an audio clip in the host's playlist.
+    Send,
+}
+
+/// What a selection change does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SelOp {
+    Prev,
+    Next,
+    Deselect,
+    Before,
+    After,
+    Visible,
+}
+
+/// What a zoom does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ZoomOp {
+    In,
+    Out,
+    Full,
+    Selection,
+}
+
+/// A press on the wave that is still going: it may become a selection or move a marker.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum WaveDrag {
+    /// Nothing moved yet: a click that plays the slice; moving more than a few px makes it a selection.
+    Pending { x0: f32, frame0: usize },
+    Select { frame0: usize },
+    /// Marker (slice start) `0` follows the pointer.
+    Marker(usize),
+}
+
+/// What the save dialog saves.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SaveKind {
+    /// The whole loop as one file.
+    Sample,
+    /// Each slice as a file of its own.
+    Regions,
+}
 
 /// The envelope graph's points that can be dragged.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -213,6 +303,10 @@ pub enum Act {
     Notes(Vec<NoteOut>),
     /// The window changes to this size (a view button); the platform's window follows.
     Resize(u32, u32),
+    /// The save dialog, and what a file it picks gets.
+    Save(SaveKind),
+    /// This audio file goes to the host's playlist as an audio clip.
+    Send(String),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -249,7 +343,7 @@ pub struct Logic {
     /// The key a click on the well is playing.
     playing: Option<u8>,
     /// The waveform's columns and the kit version they were made for.
-    peaks: (u64, Vec<(f32, f32)>),
+    peaks: (u64, (f64, f64), Vec<(f32, f32)>),
     /// A knob of the added panels being dragged (its control and position), and whether the pad is.
     ext_drag: Option<(Ctl, f32)>,
     pad_drag: bool,
@@ -257,6 +351,20 @@ pub struct Logic {
     load_deck: u8,
     /// A point of the envelope graph being dragged.
     graph_drag: Option<GraphPt>,
+    /// A press on the wave that is going on.
+    wave_drag: Option<WaveDrag>,
+    /// Earlier states of the loop (its audio and its saved state), for Undo.
+    history: Vec<(Arc<Sample>, State)>,
+    /// Cut or copied audio.
+    clip: Option<Clip>,
+    /// The file the loop's edits are kept in (a new one at the first edit).
+    edit_file: Option<std::path::PathBuf>,
+    /// The frame last clicked in the wave.
+    last_frame: Option<usize>,
+    /// The loop button: a played slice plays again when it ends.
+    loop_on: bool,
+    /// What the last edit or action said.
+    pub said: String,
     /// The host's side of the window, for a size change.
     pub ctx: Option<Arc<dyn GuiContext>>,
 }
@@ -264,7 +372,7 @@ pub struct Logic {
 impl Logic {
     pub fn new(params: Arc<SlicexParams>, shared: Arc<Shared>, ctx: Option<Arc<dyn GuiContext>>) -> Self {
         let vals = Vals::new(&*params, params.live.clone(), ctx.clone());
-        Logic { vals, params, shared, view: ViewState::default(), hits: Vec::new(), drag: None, hint: String::new(), copied: None, hosted: false, playing: None, peaks: (u64::MAX, Vec::new()), ext_drag: None, pad_drag: false, load_deck: 0, graph_drag: None, ctx }
+        Logic { vals, params, shared, view: ViewState::default(), hits: Vec::new(), drag: None, hint: String::new(), copied: None, hosted: false, playing: None, peaks: (u64::MAX, (0.0, 1.0), Vec::new()), ext_drag: None, pad_drag: false, load_deck: 0, graph_drag: None, wave_drag: None, history: Vec::new(), clip: None, edit_file: None, last_frame: None, loop_on: false, said: String::new(), ctx }
     }
 
     pub fn dragging(&self) -> bool {
@@ -353,10 +461,8 @@ impl Logic {
     fn ext_down(&mut self, c: Ctl, x: f32, y: f32, btn: Btn, m: Mods) -> Vec<Act> {
         let sel = self.view.sel;
         if btn == Btn::Right {
-            match c {
-                Ctl::Edit(7) if self.frames() > 0 => return vec![Act::Menu(MenuReq::Slicing, x, y)],
-                Ctl::Edit(8) => return vec![Act::Menu(MenuReq::Dump, x, y)],
-                _ => {}
+            if let Ctl::Edit(i) = c {
+                return self.edit_button(i, btn, x, y);
             }
         }
         if btn != Btn::Left && !(c.is_knob() && btn == Btn::Middle) {
@@ -426,20 +532,26 @@ impl Logic {
                 l.shape = (l.shape + 1) % 5;
             }),
             Ctl::Menu(i) => return vec![Act::Menu(MenuReq::Toolbar(i), x, y)],
+            Ctl::Edit(i) => return self.edit_button(i, btn, x, y),
             Ctl::Options => return vec![Act::Menu(MenuReq::Options, x, y)],
             Ctl::Edit(7) => {
                 self.slice(Slicing::Auto(1));
                 return vec![Act::Repaint];
             }
             Ctl::Edit(8) => return self.dump(false).map(Act::Notes).into_iter().collect(),
-            Ctl::Row(3) | Ctl::Row(5) => {
-                let n = self.state().slices.len() as i32;
-                if n > 0 {
-                    let d = if c == Ctl::Row(5) { -1 } else { 1 };
-                    self.view.chosen = (self.view.chosen as i32 + d).clamp(0, n - 1) as usize;
-                }
-            }
-            Ctl::Loop | Ctl::Edit(_) | Ctl::Info(_) | Ctl::Row(_) => {}
+            Ctl::Row(0) => return vec![Act::Menu(MenuReq::Toolbar(8), x, y)],
+            Ctl::Row(1) => self.run_zoom(ZoomOp::Full),
+            Ctl::Row(2) => self.toggle_marker(),
+            Ctl::Row(3) => self.run_sel(SelOp::Prev),
+            Ctl::Row(4) => self.run_sel(SelOp::Next),
+            Ctl::Row(5) => self.edit_ext(|e| e.show_regions = !e.show_regions),
+            Ctl::Row(6) => self.edit_ext(|e| e.freeze = !e.freeze),
+            Ctl::Row(7) => self.edit_ext(|e| e.snap = (e.snap + 1) % 3),
+            Ctl::Row(8) => self.edit_ext(|e| e.slide = !e.slide),
+            Ctl::Info(_) => self.edit_ext(|e| e.click_free = !e.click_free),
+            Ctl::Scroll(d) => self.scroll(d),
+            Ctl::Loop => self.loop_on = !self.loop_on,
+            Ctl::Edit(_) | Ctl::Row(_) => {}
             Ctl::View(n) => {
                 self.edit_ext(|e| e.view = n.min(3));
                 let (w, h) = self.size();
@@ -489,6 +601,40 @@ impl Logic {
         vec![Act::Repaint]
     }
 
+    /// The sample edit buttons: a click does the edit; a right click the other one (or the menu).
+    fn edit_button(&mut self, i: u8, btn: Btn, x: f32, y: f32) -> Vec<Act> {
+        let right = btn == Btn::Right;
+        match (i, right) {
+            (0, _) => self.run_edit(Ed::Undo),
+            (1, false) => self.run_edit(Ed::Normalize),
+            (1, true) => self.run_edit(Ed::NormalizeEach),
+            (2, false) => self.run_edit(Ed::FadeIn),
+            (2, true) => self.run_edit(Ed::DeclickIn),
+            (3, false) => self.run_edit(Ed::FadeOut),
+            (3, true) => self.run_edit(Ed::DeclickOut),
+            (4, _) => vec![Act::Menu(MenuReq::Script, x, y)],
+            (5, _) => self.run_edit(Ed::DrumStretch),
+            (6, false) => {
+                self.toggle_marker();
+                vec![Act::Repaint]
+            }
+            (6, true) => {
+                self.add_region();
+                vec![Act::Repaint]
+            }
+            (7, false) => {
+                self.slice(Slicing::Auto(1));
+                vec![Act::Repaint]
+            }
+            (7, true) if self.frames() > 0 => vec![Act::Menu(MenuReq::Slicing, x, y)],
+            (8, false) => self.dump(false).map(Act::Notes).into_iter().collect(),
+            (8, true) => vec![Act::Menu(MenuReq::Dump, x, y)],
+            (9, _) => vec![Act::Save(SaveKind::Sample)],
+            (10, _) => self.run_edit(Ed::Send),
+            _ => Vec::new(),
+        }
+    }
+
     fn ext_hint(&self, c: Ctl) -> String {
         let (x, sel) = (self.params.ext(), self.view.sel);
         let tab = |on: bool| if on { "on" } else { "off" };
@@ -510,6 +656,31 @@ impl Logic {
             Ctl::AutoDump => format!("Auto-dump\t{}", tab(x.auto_dump)),
             Ctl::Options => "Options".into(),
             Ctl::RandLvl | Ctl::LfoLvl => format!("{}\t{}", c.caption(), extctl::text(&x, &sel, c)),
+            Ctl::LoadDeck(n) => format!("Load a loop into deck {}", if n == 0 { 'A' } else { 'B' }),
+            Ctl::Key(k) => format!("Key {}", view::key_name(i32::from(k))),
+            Ctl::PlaySlice => "Play the chosen slice".into(),
+            Ctl::Stop => "Stop".into(),
+            Ctl::DeckToggle(d) => format!("Deck {} sounds\t{}", if d == 0 { 'A' } else { 'B' }, tab(if d == 0 { x.a_on } else { x.b_on })),
+            Ctl::View(n) => format!("View\t{}", ["everything", "without the audio editor", "without the region settings", "master panel only"][usize::from(n).min(3)]),
+            Ctl::Keys => format!("Keyboard\t{}", if x.keys { "shown" } else { "hidden" }),
+            Ctl::Menu(i) => format!("{} menu", view::MENUS[usize::from(i).min(8)]),
+            Ctl::Edit(i) => match i {
+                0 => "Undo".into(),
+                1 => "Normalize\tright-click: each region".into(),
+                2 => "Fade in\tright-click: declick in".into(),
+                3 => "Fade out\tright-click: declick out".into(),
+                4 => "Run script\tthe region presets".into(),
+                5 => "Drum (loop) stretch\tto the project's tempo".into(),
+                6 => "Add or remove a marker\tright-click: add the selection as a region".into(),
+                7 => "Auto-slice\tmedium; right-click for more".into(),
+                8 => "Dump score\tto the piano roll; right-click for more".into(),
+                9 => "Save the loop as a wave file".into(),
+                _ => "Send the loop to the playlist\tas an audio clip".into(),
+            },
+            Ctl::Info(_) => format!("Click-free editing\t{}", tab(x.click_free)),
+            Ctl::Scroll(d) => format!("Scroll {}", if d < 0 { "left" } else { "right" }),
+            Ctl::Loop => format!("Loop\t{}", tab(self.loop_on)),
+            Ctl::Row(i) => ["Zoom menu", "Whole loop in view", "Add or remove a marker", "Previous region", "Next region", "Show the regions", "Freeze the loop", "Snap", "Slide: a moved marker takes the later ones"][usize::from(i).min(8)].to_string(),
             _ => String::new(),
         }
     }
@@ -527,7 +698,7 @@ impl Logic {
                 if self.hosted { "Dump to piano roll".into() } else { "Dump to piano roll\tin Lemon Studio".into() }
             }
             Some(Target::Well) => {
-                let i = self.view.mouse.map_or(0, |(x, _)| slice_at(&st, view::frame_at(x, self.frames())));
+                let i = self.view.mouse.map_or(0, |(x, _)| slice_at(&st, view::frame_at(x, self.frames(), self.view.zoom)));
                 match st.slices.get(i) {
                     Some(s) => format!("Slice {}{}\t{}", i + 1, if s.name.is_empty() { String::new() } else { format!(": {}", s.name()) }, view::key_name(st.key_of(i))),
                     None => "No slices".into(),
@@ -600,17 +771,30 @@ impl Logic {
             (Target::Dump, Btn::Left | Btn::Right) => acts.push(Act::Menu(MenuReq::Dump, x, y)),
             (Target::Well, Btn::Left) if has => {
                 let st = self.state();
-                let i = slice_at(&st, view::frame_at(x, self.frames()));
-                if i < st.slices.len() {
+                let (frames, zoom) = (self.frames(), self.view.zoom);
+                let frame = view::frame_at(x, frames, zoom);
+                self.last_frame = Some(frame);
+                self.view.pressed = Some(Target::Well);
+                // A press on a slice's start takes the marker (unless the loop is frozen).
+                let ext = self.params.ext();
+                let near = st.slices.iter().position(|s| ext.show_regions && (view::x_of(s.start, frames, zoom) - x).abs() <= 4.0);
+                if let Some(i) = near.filter(|_| !ext.freeze) {
                     self.view.chosen = i;
-                    self.view.pressed = Some(Target::Well);
-                    let key = u8::try_from(st.key_of(i)).ok().filter(|&k| k < 128);
-                    self.play(key);
+                    self.snapshot();
+                    self.wave_drag = Some(WaveDrag::Marker(i));
+                } else {
+                    let i = slice_at(&st, frame);
+                    if i < st.slices.len() {
+                        self.view.chosen = i;
+                        let key = u8::try_from(st.key_of(i)).ok().filter(|&k| k < 128);
+                        self.play(key);
+                    }
+                    self.wave_drag = Some(WaveDrag::Pending { x0: x, frame0: frame });
                 }
             }
             (Target::Well, Btn::Right) if has => {
                 let st = self.state();
-                let i = slice_at(&st, view::frame_at(x, self.frames()));
+                let i = slice_at(&st, view::frame_at(x, self.frames(), self.view.zoom));
                 if i < st.slices.len() {
                     self.view.chosen = i;
                     acts.push(Act::Menu(MenuReq::Slice, x, y));
@@ -653,10 +837,18 @@ impl Logic {
     }
 
     pub fn up(&mut self, _btn: Btn) -> Vec<Act> {
-        self.play(None);
+        // The play button keeps its slice going (it ends by itself, or again and again with the loop button on).
+        if self.view.pressed.as_ref() != Some(&Target::Ext(Ctl::PlaySlice)) {
+            self.play(None);
+        }
         self.ext_drag = None;
         self.pad_drag = false;
         self.graph_drag = None;
+        if let Some(WaveDrag::Select { .. }) = self.wave_drag.take() {
+            if self.view.range.is_some_and(|(a, b)| a == b) {
+                self.view.range = None;
+            }
+        }
         if let Some(d) = self.drag.take() {
             self.vals.end(&d.id);
         }
@@ -668,6 +860,10 @@ impl Logic {
         self.view.mouse = Some((x, y));
         if let Some(pt) = self.graph_drag {
             self.graph_to(pt, x, y);
+            return vec![Act::Repaint];
+        }
+        if let Some(d) = self.wave_drag {
+            self.wave_to(d, x);
             return vec![Act::Repaint];
         }
         if self.pad_drag {
@@ -713,6 +909,14 @@ impl Logic {
                 let st = self.state();
                 self.set_tempo(None, Some(st.beats() + f64::from(d)));
             }
+            Target::Well if self.frames() > 0 => {
+                // The wheel zooms at the pointer; with shift it scrolls.
+                if m.shift {
+                    self.scroll(-d as i8);
+                } else {
+                    self.zoom_at(x, if d > 0.0 { 0.7 } else { 1.0 / 0.7 });
+                }
+            }
             _ => return vec![],
         }
         self.hint = self.hint_for(Some(&t));
@@ -744,6 +948,13 @@ impl Logic {
     pub fn menu(&self, req: &MenuReq) -> MenuDef<Cmd> {
         let mut m = MenuDef::new(MenuStyle::Context);
         match req {
+            MenuReq::Script => {
+                let has = self.frames() > 0 && !self.state().slices.is_empty();
+                m.head("Run script", Cmd::None);
+                for (n, e) in [("Normalize all regions", Ed::AllNormalize), ("Declick in all regions", Ed::AllDeclickIn), ("Declick out all regions", Ed::AllDeclickOut), ("Perfect all regions", Ed::AllPerfect)] {
+                    m.add(MenuItem::item(n).enabled(has), Cmd::Edit(e));
+                }
+            }
             MenuReq::Options => {
                 let x = self.params.ext();
                 m.head("Layering", Cmd::None);
@@ -847,92 +1058,134 @@ impl Logic {
         m
     }
 
-    /// The toolbar menu `i` as the original has it. What the sample editor does not do yet is listed but greyed.
+    /// The toolbar menu `i`: what each does, on the selection (the whole loop with none).
     fn toolbar_menu(&self, m: &mut MenuDef<Cmd>, i: usize) {
         let st = self.state();
-        let has = self.frames() > 0 && !st.slices.is_empty();
-        let off = |m: &mut MenuDef<Cmd>, names: &[&str]| {
-            for n in names {
-                m.add(MenuItem::item(n).enabled(false), Cmd::None);
-            }
-        };
-        let sub_off = |m: &mut MenuDef<Cmd>, name: &str, names: &[&str]| {
+        let ext = self.params.ext();
+        let frames = self.frames();
+        let has = frames > 0;
+        let slices = has && !st.slices.is_empty();
+        let sel = self.view.range.is_some_and(|(a, b)| a != b);
+        let item = |m: &mut MenuDef<Cmd>, name: &str, on: bool, c: Cmd| m.add(MenuItem::item(name).enabled(on), c);
+        let sub = |m: &mut MenuDef<Cmd>, name: &str, items: &[(&str, bool, Cmd)]| {
             let mut s = MenuDef::new(MenuStyle::Context);
-            for n in names {
-                s.add(MenuItem::item(n).enabled(false), Cmd::None);
+            for (n, on, c) in items {
+                s.add(MenuItem::item(n).enabled(*on), c.clone());
             }
             m.submenu(name, s, Cmd::None);
         };
         match i {
             0 => {
-                m.add(MenuItem::item("New"), Cmd::NewLoop);
-                m.add(MenuItem::item("Load sample A..."), Cmd::LoadDeck(0));
-                m.add(MenuItem::item("Load sample B..."), Cmd::LoadDeck(1));
+                item(m, "New", has, Cmd::NewLoop);
+                item(m, "Load sample A...", true, Cmd::LoadDeck(0));
+                item(m, "Load sample B...", true, Cmd::LoadDeck(1));
                 m.sep(Cmd::None);
-                off(m, &["Save sample as...", "Export regions", "Export display as", "Recent projects"]);
+                item(m, "Save sample as...", has, Cmd::SaveAs(SaveKind::Sample));
+                item(m, "Export regions...", slices, Cmd::SaveAs(SaveKind::Regions));
+                if self.hosted {
+                    m.sep(Cmd::None);
+                    item(m, "Send to the playlist as an audio clip", has, Cmd::Edit(Ed::Send));
+                }
             }
             1 => {
-                m.add(MenuItem::item("Edit properties").enabled(false), Cmd::None);
-                m.sep(Cmd::None);
-                let mut r = MenuDef::new(MenuStyle::Context);
-                r.add(MenuItem::item("16 bit integer").mark(Mark::Radio(false)).enabled(false), Cmd::None);
-                r.add(MenuItem::item("32 bit float").mark(Mark::Radio(true)).enabled(false), Cmd::None);
-                m.submenu("Resolution", r, Cmd::None);
-                let mut c = MenuDef::new(MenuStyle::Context);
-                c.add(MenuItem::item("Mono").mark(Mark::Radio(false)).enabled(false), Cmd::None);
-                c.add(MenuItem::item("Stereo").mark(Mark::Radio(true)).enabled(false), Cmd::None);
-                m.submenu("Channels", c, Cmd::None);
+                item(m, "Mono (the two channels mixed)", has, Cmd::Edit(Ed::Mono(None)));
+                item(m, "Stereo (the left channel on both)", has, Cmd::Edit(Ed::Stereo));
             }
-            2 => off(
-                m,
-                &["Undo", "Undo history", "Cut", "Copy", "Paste insert", "Paste replace", "Paste mix", "Paste stretch", "Clear", "Delete", "Trim", "Insert silence", "Click-free (smooth) editing"],
-            ),
+            2 => {
+                item(m, "Undo", !self.history.is_empty(), Cmd::Edit(Ed::Undo));
+                m.sep(Cmd::None);
+                item(m, "Cut", sel, Cmd::Edit(Ed::Cut));
+                item(m, "Copy", sel, Cmd::Edit(Ed::Copy));
+                item(m, "Paste insert", self.clip.is_some(), Cmd::Edit(Ed::PasteInsert));
+                item(m, "Paste replace", self.clip.is_some(), Cmd::Edit(Ed::PasteReplace));
+                item(m, "Paste mix", self.clip.is_some(), Cmd::Edit(Ed::PasteMix));
+                m.sep(Cmd::None);
+                item(m, "Clear", has, Cmd::Edit(Ed::Clear));
+                item(m, "Delete", sel, Cmd::Edit(Ed::Delete));
+                item(m, "Trim", sel, Cmd::Edit(Ed::Trim));
+                item(m, "Insert silence", has, Cmd::Edit(Ed::InsertSilence));
+                m.sep(Cmd::None);
+                m.add(MenuItem::item("Click-free (smooth) editing").mark(Mark::Check(ext.click_free)), Cmd::ToggleClickFree);
+            }
             3 => {
-                sub_off(m, "Envelope", &["Cancel all envelopes", "Add points at selection", "Add points at regions", "Flip vertically"]);
-                sub_off(m, "Amp", &["Mixdown amp envelopes", "Amp tool", "Reverse polarity", "Normalize", "Fade in", "Fade out", "Declick in", "Declick out"]);
-                sub_off(m, "Waveform", &["Center"]);
-                sub_off(m, "Time", &["Reverse", "Time stretch / pitch shift", "Drum (loop) stretch", "Claw machine", "Scratch"]);
-                sub_off(m, "Channels", &["Swap channels", "Convert left or right to mono"]);
-                sub_off(m, "Synthesis", &["Generate noise"]);
-                sub_off(m, "Scripting", &["Run script", "Run last script"]);
-                sub_off(m, "Noise", &["Acquire noise threshold", "Gate noise", "Trim side noise", "Trim all noise and slice up"]);
-                sub_off(m, "Spectral", &["Convolution reverb", "Blur", "Equalize", "Clean up (denoise)"]);
-                sub_off(m, "Regions", &["Normalize all regions", "Declick in all regions", "Declick out all regions", "Perfect all regions", "Tune loop"]);
-                sub_off(m, "Analysis", &["Convert to score and dump to piano roll"]);
-                sub_off(m, "Sequencing", &["Send to Playlist as audio clip", "Send to selected channel"]);
+                sub(
+                    m,
+                    "Amp",
+                    &[
+                        ("Normalize", has, Cmd::Edit(Ed::Normalize)),
+                        ("Fade in", has, Cmd::Edit(Ed::FadeIn)),
+                        ("Fade out", has, Cmd::Edit(Ed::FadeOut)),
+                        ("Declick in", has, Cmd::Edit(Ed::DeclickIn)),
+                        ("Declick out", has, Cmd::Edit(Ed::DeclickOut)),
+                        ("Reverse polarity", has, Cmd::Edit(Ed::Polarity)),
+                    ],
+                );
+                sub(m, "Waveform", &[("Center", has, Cmd::Edit(Ed::Center))]);
+                sub(m, "Time", &[("Reverse", has, Cmd::Edit(Ed::Reverse)), ("Drum (loop) stretch", has, Cmd::Edit(Ed::DrumStretch))]);
+                sub(
+                    m,
+                    "Channels",
+                    &[
+                        ("Swap channels", has, Cmd::Edit(Ed::Swap)),
+                        ("Convert left to mono", has, Cmd::Edit(Ed::Mono(Some(true)))),
+                        ("Convert right to mono", has, Cmd::Edit(Ed::Mono(Some(false)))),
+                        ("Mix to mono", has, Cmd::Edit(Ed::Mono(None))),
+                    ],
+                );
+                sub(m, "Synthesis", &[("Generate noise", has, Cmd::Edit(Ed::Noise))]);
+                sub(
+                    m,
+                    "Regions",
+                    &[
+                        ("Normalize all regions", slices, Cmd::Edit(Ed::AllNormalize)),
+                        ("Declick in all regions", slices, Cmd::Edit(Ed::AllDeclickIn)),
+                        ("Declick out all regions", slices, Cmd::Edit(Ed::AllDeclickOut)),
+                        ("Perfect all regions", slices, Cmd::Edit(Ed::AllPerfect)),
+                    ],
+                );
             }
             4 => {
-                off(m, &["Add region", "Add marker", "Set loop", "Set first downbeat"]);
-                m.add(MenuItem::item("Delete").enabled(has), Cmd::DeleteSlice);
+                item(m, "Add region", sel, Cmd::AddRegion);
+                item(m, "Add marker (or take the one there away)", has, Cmd::Marker);
+                item(m, "Delete", slices && st.slices.len() > 1, Cmd::DeleteSlice);
                 m.sep(Cmd::None);
-                m.add(MenuItem::item("Assign trigger notes to all").enabled(has), Cmd::DefaultKeys);
+                item(m, "Assign trigger notes to all", slices, Cmd::DefaultKeys);
                 m.sep(Cmd::None);
-                let mut a = MenuDef::new(MenuStyle::Context);
-                for (n, name) in ["Dull (few slices)", "Medium", "Sharp (many slices)"].into_iter().enumerate() {
-                    a.add(MenuItem::item(name).enabled(self.frames() > 0), Cmd::Slice(Slicing::Auto(n)));
-                }
-                m.submenu("Auto slice", a, Cmd::None);
-                let mut g = MenuDef::new(MenuStyle::Context);
-                for (n, name) in [(4, "Small grid"), (2, "Medium grid"), (1, "Large grid")] {
-                    g.add(MenuItem::item(name).enabled(self.frames() > 0), Cmd::Slice(Slicing::Beats(n)));
-                }
-                m.submenu("Grid slicing", g, Cmd::None);
-                let cues = st.path().to_lowercase().ends_with(".wav");
-                m.add(MenuItem::item("Use the sample's own markers").enabled(cues), Cmd::Slice(Slicing::BuiltIn));
-                m.add(MenuItem::item("No slicing").enabled(self.frames() > 0), Cmd::Slice(Slicing::None));
+                sub(
+                    m,
+                    "Auto slice",
+                    &[("Dull (few slices)", has, Cmd::Slice(Slicing::Auto(0))), ("Medium", has, Cmd::Slice(Slicing::Auto(1))), ("Sharp (many slices)", has, Cmd::Slice(Slicing::Auto(2)))],
+                );
+                sub(m, "Grid slicing", &[("Small grid", has, Cmd::Slice(Slicing::Beats(4))), ("Medium grid", has, Cmd::Slice(Slicing::Beats(2))), ("Large grid", has, Cmd::Slice(Slicing::Beats(1)))]);
+                item(m, "Detect beats", has, Cmd::Slice(Slicing::Beats(1)));
+                item(m, "Use the sample's own markers", st.path().to_lowercase().ends_with(".wav"), Cmd::Slice(Slicing::BuiltIn));
+                item(m, "No slicing", has, Cmd::Slice(Slicing::None));
                 m.sep(Cmd::None);
-                m.add(MenuItem::item("Zero-cross check all regions").enabled(has), Cmd::Slice(Slicing::ZeroCross));
-                off(m, &["Detect beats", "Detect pitch regions", "Freeze all"]);
+                item(m, "Zero-cross check all regions", slices, Cmd::Slice(Slicing::ZeroCross));
             }
-            5 => off(m, &["Audio", "Spectrum", "Dual view", "Regions", "Loop"]),
-            6 => off(m, &["Snap to grid", "Snap to regions", "Snap to samples", "Snap to zero-crossing", "Snap to pitch period"]),
+            5 => {
+                m.add(MenuItem::item("Regions").mark(Mark::Check(ext.show_regions)), Cmd::ToggleRegions);
+            }
+            6 => {
+                for (n, name) in crate::ext::SNAPS.iter().enumerate() {
+                    m.add(MenuItem::item(name).mark(Mark::Radio(usize::from(ext.snap) == n)), Cmd::SetSnap(n as u8));
+                }
+            }
             7 => {
-                m.add(MenuItem::item("Select previous region").enabled(has), Cmd::Select(-1));
-                m.add(MenuItem::item("Select next region").enabled(has), Cmd::Select(1));
+                item(m, "Select previous region", slices, Cmd::Sel(SelOp::Prev));
+                item(m, "Select next region", slices, Cmd::Sel(SelOp::Next));
                 m.sep(Cmd::None);
-                off(m, &["Deselect", "Select before", "Select after", "Select zoomed part"]);
+                item(m, "Deselect", sel, Cmd::Sel(SelOp::Deselect));
+                item(m, "Select before", has, Cmd::Sel(SelOp::Before));
+                item(m, "Select after", has, Cmd::Sel(SelOp::After));
+                item(m, "Select zoomed part", has, Cmd::Sel(SelOp::Visible));
             }
-            _ => off(m, &["Zoom in 2x", "Zoom out 2x", "Zoom out full", "Zoom on selection"]),
+            _ => {
+                item(m, "Zoom in 2x", has, Cmd::Zoom(ZoomOp::In));
+                item(m, "Zoom out 2x", has, Cmd::Zoom(ZoomOp::Out));
+                item(m, "Zoom out full", has, Cmd::Zoom(ZoomOp::Full));
+                item(m, "Zoom on selection", sel, Cmd::Zoom(ZoomOp::Selection));
+            }
         }
     }
 
@@ -951,6 +1204,10 @@ impl Logic {
                     p.clear();
                 }
                 self.view.chosen = 0;
+                self.view.range = None;
+                self.view.zoom = (0.0, 1.0);
+                self.history.clear();
+                self.edit_file = None;
                 self.commit(&st);
             }
             Cmd::LoadDeck(n) => {
@@ -958,6 +1215,7 @@ impl Logic {
                 return vec![Act::OpenDialog];
             }
             Cmd::DeleteSlice => {
+                self.snapshot();
                 let mut st = self.state();
                 let i = self.chosen(&st);
                 if i < st.slices.len() && st.slices.len() > 1 {
@@ -965,6 +1223,15 @@ impl Logic {
                     self.commit(&st);
                 }
             }
+            Cmd::Edit(e) => return self.run_edit(e),
+            Cmd::SaveAs(k) => return vec![Act::Save(k)],
+            Cmd::Sel(op) => self.run_sel(op),
+            Cmd::Zoom(op) => self.run_zoom(op),
+            Cmd::SetSnap(n) => self.edit_ext(|e| e.snap = n.min(2)),
+            Cmd::ToggleRegions => self.edit_ext(|e| e.show_regions = !e.show_regions),
+            Cmd::ToggleClickFree => self.edit_ext(|e| e.click_free = !e.click_free),
+            Cmd::Marker => self.toggle_marker(),
+            Cmd::AddRegion => self.add_region(),
             Cmd::SetLayer(n) => self.edit_ext(|e| e.layer = n.min(6)),
             Cmd::SetFade(n) => self.edit_ext(|e| e.fade = n.min(4)),
             Cmd::ToggleSameDeck => self.edit_ext(|e| e.same_deck = !e.same_deck),
@@ -984,6 +1251,7 @@ impl Logic {
             }
             Cmd::Rename => return vec![Act::TypeIn(SLICE_NAME_ID.into(), x, y)],
             Cmd::DefaultKeys => {
+                self.snapshot();
                 let mut st = self.state();
                 for s in &mut st.slices {
                     s.root = -1;
@@ -1022,6 +1290,10 @@ impl Logic {
     /// Cuts the loop again (the slicing menu).
     pub fn slice(&mut self, how: Slicing) {
         let Some(s) = self.shared.sample() else { return };
+        if self.locked() {
+            return;
+        }
+        self.snapshot();
         let mut st = self.state();
         let frames = s.frames();
         st.slices = match how {
@@ -1100,6 +1372,506 @@ impl Logic {
         }
     }
 
+    // ------------------------------------------------------------------------------------------------------------
+    // The sample editor
+
+    fn say(&mut self, s: &str) {
+        self.said = s.to_string();
+        self.hint = s.to_string();
+    }
+
+    fn locked(&mut self) -> bool {
+        let f = self.params.ext().freeze;
+        if f {
+            self.say("The loop is frozen: switch Freeze off to edit it");
+        }
+        f
+    }
+
+    /// The state now and the audio, put on the history (Undo takes them back).
+    fn snapshot(&mut self) {
+        if let Some(s) = self.shared.sample() {
+            let st = self.state();
+            self.history.push((s, st));
+            if self.history.len() > 20 {
+                self.history.remove(0);
+            }
+        }
+    }
+
+    /// The loop's audio is `s` and its saved state `st` from now on: the audio goes to its edit file.
+    fn put_audio(&mut self, s: Sample, mut st: State) {
+        let dir = edit_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let file = self
+            .edit_file
+            .get_or_insert_with(|| {
+                let path = st.path().replace('\\', "/");
+                let name = path.rsplit('/').next().unwrap_or("loop");
+                let stem = name.rsplit_once('.').map_or(name, |(a, _)| a);
+                let stem = stem.split("-edit-").next().unwrap_or(stem);
+                let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
+                dir.join(format!("{stem}-edit-{n:x}.wav"))
+            })
+            .clone();
+        if std::fs::write(&file, edit::wav_bytes(&s)).is_err() {
+            self.say("The edit could not be kept in a file");
+        }
+        let path = file.to_string_lossy().into_owned();
+        st.set_path(&path);
+        if let Ok(mut p) = self.params.sample_path.write() {
+            *p = path.clone();
+        }
+        self.shared.set_sample(Some(Arc::new(s)), &path);
+        self.commit(&st);
+    }
+
+    /// An edit of the loop and its slices: `f` changes the audio and the state; the old ones go on the history.
+    fn edit_custom(&mut self, name: &str, f: impl FnOnce(&Sample, &mut State) -> Sample) -> bool {
+        if self.locked() {
+            return false;
+        }
+        let Some(s) = self.shared.sample() else { return false };
+        self.snapshot();
+        let mut st = self.state();
+        let new = f(&s, &mut st);
+        self.put_audio(new, st);
+        self.say(name);
+        true
+    }
+
+    /// An edit of the selection (the whole loop with none): `f` gives the new audio and how the slice starts move.
+    fn edit_with(&mut self, name: &str, f: impl FnOnce(&Sample, Range) -> (Sample, Shift)) -> bool {
+        let range = self.view.range;
+        let ok = self.edit_custom(name, |s, st| {
+            let r = edit::range_or_all(s, range);
+            let (new, shift) = f(s, r);
+            let last = (new.frames() as u32).saturating_sub(1);
+            for sl in &mut st.slices {
+                sl.start = shift.map(sl.start).min(last);
+            }
+            st.slices.dedup_by_key(|sl| sl.start);
+            new
+        });
+        if ok && self.shared.sample().is_some_and(|s| Some(s.frames()) != self.view.range.map(|r| r.1.max(r.0))) {
+            // A change of length leaves the old frame numbers meaningless.
+            let len = self.frames();
+            if self.view.range.is_some_and(|(a, b)| a.max(b) > len) {
+                self.view.range = None;
+            }
+        }
+        ok
+    }
+
+    fn edit_same(&mut self, name: &str, f: impl FnOnce(&Sample, Range) -> Sample) -> bool {
+        self.edit_with(name, |s, r| (f(s, r), Shift::None))
+    }
+
+    /// The slices as frame ranges.
+    fn regions(st: &State, frames: usize) -> Vec<Range> {
+        (0..st.slices.len()).map(|i| ((st.slices[i].start as usize).min(frames), st.slices.get(i + 1).map_or(frames, |s| (s.start as usize).min(frames)))).filter(|(a, b)| b > a).collect()
+    }
+
+    /// Where a paste or a marker goes: the selection's start, else the frame last clicked.
+    fn at(&self) -> usize {
+        self.view.range.map(|(a, b)| a.min(b)).or(self.last_frame).unwrap_or(0)
+    }
+
+    pub fn run_edit(&mut self, e: Ed) -> Vec<Act> {
+        let click = self.params.ext().click_free;
+        match e {
+            Ed::Undo => match self.history.pop() {
+                Some((s, st)) => {
+                    self.view.range = None;
+                    self.put_audio_plain(s, st);
+                    self.say("Undone");
+                }
+                None => self.say("Nothing to undo"),
+            },
+            Ed::Normalize => {
+                self.edit_same("Normalize", edit::normalize);
+            }
+            Ed::NormalizeEach => {
+                let frames = self.frames();
+                let regions = Self::regions(&self.state(), frames);
+                self.edit_custom("Normalize regions", |s, _| edit::normalize_each(s, &regions));
+            }
+            Ed::FadeIn => {
+                self.edit_same("Fade in", edit::fade_in);
+            }
+            Ed::FadeOut => {
+                self.edit_same("Fade out", edit::fade_out);
+            }
+            Ed::DeclickIn => {
+                self.edit_same("Declick in", edit::declick_in);
+            }
+            Ed::DeclickOut => {
+                self.edit_same("Declick out", edit::declick_out);
+            }
+            Ed::Reverse => {
+                self.edit_same("Reverse", edit::reverse);
+            }
+            Ed::Polarity => {
+                self.edit_same("Reverse polarity", edit::reverse_polarity);
+            }
+            Ed::Center => {
+                self.edit_same("Center", edit::center);
+            }
+            Ed::Swap => {
+                self.edit_same("Swap channels", edit::swap_channels);
+            }
+            Ed::Mono(from) => {
+                self.edit_same("Mono", |s, r| edit::to_mono(s, r, from));
+            }
+            Ed::Stereo => {
+                self.edit_same("Stereo", |s, r| edit::to_mono(s, r, Some(true)));
+            }
+            Ed::Clear => {
+                self.edit_same("Clear", edit::clear);
+            }
+            Ed::Noise => {
+                self.edit_same("Noise", edit::noise);
+            }
+            Ed::Delete => {
+                if self.view.range.is_none() {
+                    self.say("Select what to delete first");
+                } else {
+                    self.edit_with("Delete", |s, r| {
+                        let (o, sh) = edit::delete(s, r);
+                        (if click { edit::smooth_join(&o, r.0) } else { o }, sh)
+                    });
+                }
+            }
+            Ed::Trim => {
+                if self.view.range.is_none() {
+                    self.say("Select what to keep first");
+                } else {
+                    self.edit_with("Trim", edit::trim);
+                }
+            }
+            Ed::InsertSilence => {
+                let n = self.view.range.map_or(self.shared.sample().map_or(100, |s| s.rate as usize / 10), |(a, b)| a.max(b) - a.min(b));
+                let at = self.at();
+                self.edit_with("Insert silence", |s, _| edit::insert_silence(s, at, n));
+            }
+            Ed::Copy => match (self.shared.sample(), self.view.range.filter(|(a, b)| a != b)) {
+                (Some(s), Some(r)) => {
+                    self.clip = Some(edit::copy(&s, edit::range_or_all(&s, Some(r))));
+                    self.say("Copied");
+                }
+                _ => self.say("Select what to copy first"),
+            },
+            Ed::Cut => match (self.shared.sample(), self.view.range.filter(|(a, b)| a != b)) {
+                (Some(s), Some(r)) => {
+                    let r = edit::range_or_all(&s, Some(r));
+                    self.clip = Some(edit::copy(&s, r));
+                    self.edit_with("Cut", |s, r| {
+                        let (o, sh) = edit::delete(s, r);
+                        (if click { edit::smooth_join(&o, r.0) } else { o }, sh)
+                    });
+                }
+                _ => self.say("Select what to cut first"),
+            },
+            Ed::PasteInsert | Ed::PasteReplace | Ed::PasteMix => {
+                let Some(c) = self.clip.clone() else {
+                    self.say("Nothing copied yet");
+                    return vec![Act::Repaint];
+                };
+                let at = self.at();
+                match e {
+                    Ed::PasteInsert => self.edit_with("Paste insert", |s, _| {
+                        let (o, sh) = edit::paste_insert(s, at, &c);
+                        (if click { edit::smooth_join(&edit::smooth_join(&o, at), at + c.left.len()) } else { o }, sh)
+                    }),
+                    Ed::PasteReplace => self.edit_same("Paste replace", |s, _| edit::paste_replace(s, at, &c)),
+                    _ => self.edit_same("Paste mix", |s, _| edit::paste_mix(s, at, &c)),
+                };
+            }
+            Ed::DrumStretch => {
+                let Some(tempo) = self.shared.tempo() else {
+                    self.say("Play the project once so Slicex knows its tempo");
+                    return vec![Act::Repaint];
+                };
+                let bpm = self.state().bpm();
+                if bpm <= 0.0 || (bpm / tempo - 1.0).abs() < 1e-3 {
+                    self.say("The loop is at the project's tempo already");
+                    return vec![Act::Repaint];
+                }
+                let factor = bpm / tempo;
+                self.edit_custom("Drum (loop) stretch", |s, st| {
+                    let starts: Vec<u32> = st.slices.iter().map(|x| x.start).collect();
+                    let (o, new) = edit::drum_stretch(s, &starts, factor);
+                    for (sl, n) in st.slices.iter_mut().zip(new) {
+                        sl.start = n;
+                    }
+                    st.set_f32(H_BPM, tempo as f32);
+                    o
+                });
+            }
+            Ed::AllNormalize | Ed::AllDeclickIn | Ed::AllDeclickOut | Ed::AllPerfect => {
+                let frames = self.frames();
+                let regions = Self::regions(&self.state(), frames);
+                let name = match e {
+                    Ed::AllNormalize => "Normalize all regions",
+                    Ed::AllDeclickIn => "Declick in all regions",
+                    Ed::AllDeclickOut => "Declick out all regions",
+                    _ => "Perfect all regions",
+                };
+                self.edit_custom(name, |s, _| {
+                    regions.iter().fold(s.clone(), |acc, &r| match e {
+                        Ed::AllNormalize => edit::normalize(&acc, r),
+                        Ed::AllDeclickIn => edit::declick_in(&acc, r),
+                        Ed::AllDeclickOut => edit::declick_out(&acc, r),
+                        _ => edit::normalize(&edit::declick_out(&edit::declick_in(&acc, r), r), r),
+                    })
+                });
+            }
+            Ed::Send => {
+                let Some(s) = self.shared.sample() else { return vec![] };
+                let dir = edit_dir();
+                let _ = std::fs::create_dir_all(&dir);
+                let file = dir.join("sent.wav");
+                if std::fs::write(&file, edit::wav_bytes(&s)).is_ok() {
+                    return vec![Act::Send(file.to_string_lossy().into_owned())];
+                }
+                self.say("The loop could not be written for the playlist");
+            }
+        }
+        vec![Act::Repaint]
+    }
+
+    /// `put_audio` for Undo: no new history, no new file name.
+    fn put_audio_plain(&mut self, s: Arc<Sample>, st: State) {
+        self.put_audio((*s).clone(), st);
+    }
+
+    /// What the playlist hear about: said once the host answered.
+    pub fn sent(&mut self, ok: bool) {
+        self.say(if ok { "Sent to the playlist" } else { "Only Mango Studio takes the loop as an audio clip" });
+    }
+
+    /// The name the save dialog starts with.
+    pub fn save_name(&self, kind: SaveKind) -> String {
+        let path = self.state().path().replace('\\', "/");
+        let name = path.rsplit('/').next().unwrap_or("loop");
+        let stem = name.rsplit_once('.').map_or(name, |(a, _)| a);
+        let stem = stem.split("-edit-").next().unwrap_or(stem);
+        match kind {
+            SaveKind::Sample => format!("{stem}.wav"),
+            SaveKind::Regions => format!("{stem}.wav"),
+        }
+    }
+
+    /// Writes the loop (or each region, as `name-01.wav`...) to the file the save dialog picked.
+    pub fn save_to(&mut self, kind: SaveKind, path: &str) {
+        let Some(s) = self.shared.sample() else { return };
+        match kind {
+            SaveKind::Sample => {
+                let ok = std::fs::write(path, edit::wav_bytes(&s)).is_ok();
+                self.say(if ok { "Saved" } else { "The file could not be written" });
+            }
+            SaveKind::Regions => {
+                let st = self.state();
+                let base = path.strip_suffix(".wav").unwrap_or(path).to_string();
+                let regions = Self::regions(&st, s.frames());
+                let mut n = 0;
+                for (i, &(a, b)) in regions.iter().enumerate() {
+                    let piece = Sample { rate: s.rate, left: s.left[a..b].to_vec(), right: s.right[a..b].to_vec() };
+                    if std::fs::write(format!("{base}-{:02}.wav", i + 1), edit::wav_bytes(&piece)).is_ok() {
+                        n += 1;
+                    }
+                }
+                self.say(&format!("Saved {n} regions"));
+            }
+        }
+    }
+
+    // -- the selection and the view of the wave
+
+    /// A frame moved to what the snap setting wants: the nearest slice start, or zero crossing.
+    fn snap(&self, f: usize) -> usize {
+        let Some(s) = self.shared.sample() else { return f };
+        match self.params.ext().snap {
+            1 => {
+                let st = self.state();
+                let (z0, z1) = view::zoom_of(self.view.zoom);
+                let reach = (((z1 - z0) * s.frames() as f64) * 8.0 / f64::from(view::WAVE.w)) as usize;
+                st.slices.iter().map(|x| x.start as usize).filter(|&x| x.abs_diff(f) <= reach).min_by_key(|&x| x.abs_diff(f)).unwrap_or(f)
+            }
+            2 => {
+                let reach = (s.rate / 200) as usize;
+                let (a, b) = (f.saturating_sub(reach), (f + reach).min(s.frames().saturating_sub(1)));
+                (a..b).filter(|&i| (s.left[i] <= 0.0) != (s.left[i + 1] <= 0.0)).min_by_key(|&i| i.abs_diff(f)).unwrap_or(f)
+            }
+            _ => f,
+        }
+    }
+
+    /// The wave drag follows the pointer at x.
+    fn wave_to(&mut self, d: WaveDrag, x: f32) {
+        let (frames, zoom) = (self.frames(), self.view.zoom);
+        let f = self.snap(view::frame_at(x, frames, zoom));
+        match d {
+            WaveDrag::Pending { x0, frame0 } => {
+                if (x - x0).abs() > 3.0 {
+                    self.play(None);
+                    self.wave_drag = Some(WaveDrag::Select { frame0 });
+                    self.view.range = Some((frame0.min(f), frame0.max(f)));
+                }
+            }
+            WaveDrag::Select { frame0 } => self.view.range = Some((frame0.min(f), frame0.max(f))),
+            WaveDrag::Marker(i) => {
+                let mut st = self.state();
+                let n = st.slices.len();
+                let Some(old) = st.slices.get(i).map(|s| s.start) else { return };
+                let new = if i == 0 { f.min(st.slices.get(1).map_or(frames, |s| s.start as usize).saturating_sub(1)) } else { f }.min(frames.saturating_sub(1)) as u32;
+                if self.params.ext().slide {
+                    // The later markers keep their distance.
+                    let delta = i64::from(new) - i64::from(old);
+                    let last = st.slices[n - 1].start as i64 + delta;
+                    if last < frames as i64 && (i == 0 || i64::from(st.slices[i - 1].start) < i64::from(new)) {
+                        for s in &mut st.slices[i..] {
+                            s.start = (i64::from(s.start) + delta).max(0) as u32;
+                        }
+                    }
+                } else {
+                    let lo = if i == 0 { 0 } else { st.slices[i - 1].start + 1 };
+                    let hi = st.slices.get(i + 1).map_or(frames as u32, |s| s.start).saturating_sub(1);
+                    if lo <= hi {
+                        st.slices[i].start = new.clamp(lo, hi);
+                    }
+                }
+                self.commit(&st);
+            }
+        }
+    }
+
+    pub fn run_sel(&mut self, op: SelOp) {
+        let frames = self.frames();
+        let st = self.state();
+        if frames == 0 {
+            return;
+        }
+        let regions = Self::regions(&st, frames);
+        let at = self.at();
+        match op {
+            SelOp::Deselect => self.view.range = None,
+            SelOp::Before => self.view.range = Some((0, at)),
+            SelOp::After => self.view.range = Some((at, frames)),
+            SelOp::Visible => {
+                let (z0, z1) = view::zoom_of(self.view.zoom);
+                self.view.range = Some(((z0 * frames as f64) as usize, (z1 * frames as f64) as usize));
+            }
+            SelOp::Prev | SelOp::Next => {
+                if regions.is_empty() {
+                    return;
+                }
+                let n = regions.len() as i32;
+                let i = (self.chosen(&st) as i32 + if op == SelOp::Next { 1 } else { -1 }).clamp(0, n - 1) as usize;
+                self.view.chosen = i;
+                self.view.range = Some(regions[i]);
+            }
+        }
+    }
+
+    pub fn run_zoom(&mut self, op: ZoomOp) {
+        let frames = self.frames();
+        if frames == 0 {
+            return;
+        }
+        let (z0, z1) = view::zoom_of(self.view.zoom);
+        let mid = (z0 + z1) / 2.0;
+        self.view.zoom = match op {
+            ZoomOp::Full => (0.0, 1.0),
+            ZoomOp::In => self.zoom_span(mid, (z1 - z0) / 2.0),
+            ZoomOp::Out => self.zoom_span(mid, (z1 - z0) * 2.0),
+            ZoomOp::Selection => match self.view.range.filter(|(a, b)| a != b) {
+                Some((a, b)) => (a.min(b) as f64 / frames as f64, a.max(b) as f64 / frames as f64),
+                None => (z0, z1),
+            },
+        };
+    }
+
+    /// A view `span` wide (a fraction of the loop) centred on `mid`, kept inside the loop.
+    fn zoom_span(&self, mid: f64, span: f64) -> (f64, f64) {
+        let span = span.clamp(0.002, 1.0);
+        let a = (mid - span / 2.0).clamp(0.0, 1.0 - span);
+        (a, a + span)
+    }
+
+    /// Zooms by `k` (under 1: in) around the frame under x.
+    pub fn zoom_at(&mut self, x: f32, k: f64) {
+        let (z0, z1) = view::zoom_of(self.view.zoom);
+        let f = f64::from(((x - view::WAVE.x) / view::WAVE.w).clamp(0.0, 1.0));
+        let at = z0 + f * (z1 - z0);
+        let span = ((z1 - z0) * k).clamp(0.002, 1.0);
+        let a = (at - f * span).clamp(0.0, 1.0 - span);
+        self.view.zoom = (a, a + span);
+    }
+
+    /// Scrolls the view by a tenth of what it shows; `dir` -1 is left.
+    pub fn scroll(&mut self, dir: i8) {
+        let (z0, z1) = view::zoom_of(self.view.zoom);
+        let span = z1 - z0;
+        let a = (z0 + f64::from(dir) * span / 4.0).clamp(0.0, 1.0 - span);
+        self.view.zoom = (a, a + span);
+    }
+
+    /// Adds a marker at the selection's start (or the last click), or takes away the one that is there.
+    pub fn toggle_marker(&mut self) {
+        if self.locked() {
+            return;
+        }
+        let frames = self.frames();
+        if frames == 0 {
+            return;
+        }
+        let at = self.at().min(frames - 1) as u32;
+        let reach = (frames / 2000).max(1) as u32;
+        self.snapshot();
+        let mut st = self.state();
+        if let Some(i) = st.slices.iter().position(|s| s.start.abs_diff(at) <= reach) {
+            if st.slices.len() > 1 {
+                st.slices.remove(i);
+            }
+        } else {
+            let i = st.slices.iter().position(|s| s.start > at).unwrap_or(st.slices.len());
+            st.slices.insert(i, crate::state::Slice::at(at));
+            self.view.chosen = i;
+        }
+        self.commit(&st);
+    }
+
+    /// The selection as a region: a marker at each end.
+    pub fn add_region(&mut self) {
+        let Some((a, b)) = self.view.range.filter(|(a, b)| a != b) else {
+            self.say("Select the region first");
+            return;
+        };
+        if self.locked() {
+            return;
+        }
+        self.snapshot();
+        let mut st = self.state();
+        for at in [a.min(b) as u32, a.max(b) as u32] {
+            if at < self.frames() as u32 && !st.slices.iter().any(|s| s.start == at) {
+                let i = st.slices.iter().position(|s| s.start > at).unwrap_or(st.slices.len());
+                st.slices.insert(i, crate::state::Slice::at(at));
+            }
+        }
+        self.commit(&st);
+    }
+
+    /// The loop button keeps a slice playing: called as the window ticks.
+    pub fn tick(&mut self) {
+        if self.loop_on
+            && let Some(k) = self.playing
+            && !self.shared.voices.load(Ordering::Relaxed)
+        {
+            self.play(Some(k));
+        }
+    }
+
     /// Loads a loop (the open dialog's file).
     pub fn load(&mut self, path: &str) -> Vec<Act> {
         let deck = std::mem::take(&mut self.load_deck);
@@ -1107,6 +1879,10 @@ impl Logic {
             self.shared.load_b(path, &self.params)
         } else {
             self.view.chosen = 0;
+            self.view.range = None;
+            self.view.zoom = (0.0, 1.0);
+            self.history.clear();
+            self.edit_file = None;
             self.shared.load(path, &self.params)
         };
         match r {
@@ -1123,11 +1899,20 @@ impl Logic {
     /// The waveform's columns for the well (made again when the sample changes).
     fn peaks(&mut self) -> &[(f32, f32)] {
         let v = self.shared.kit_version.load(Ordering::Acquire);
-        if self.peaks.0 != v {
+        let zoom = view::zoom_of(self.view.zoom);
+        if self.peaks.0 != v || self.peaks.1 != zoom {
             let cols = view::WAVE.w as usize;
-            self.peaks = (v, self.shared.sample().map_or_else(Vec::new, |s| peaks(&s.left, &s.right, cols)));
+            self.peaks = (
+                v,
+                zoom,
+                self.shared.sample().map_or_else(Vec::new, |s| {
+                    let n = s.frames();
+                    let (a, b) = (((zoom.0 * n as f64) as usize).min(n), ((zoom.1 * n as f64).ceil() as usize).min(n));
+                    peaks(&s.left[a..b], &s.right[a..b], cols)
+                }),
+            );
         }
-        &self.peaks.1
+        &self.peaks.2
     }
 
     /// Paints the editor; `hint` is drawn when the host does not show it.
@@ -1143,8 +1928,17 @@ impl Logic {
         let a_name = std::path::Path::new(&st.path()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let b_name = if ext.deck_b.is_empty() { String::new() } else { crate::state::State::parse(&ext.deck_b).map(|s| std::path::Path::new(&s.path()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()).unwrap_or_default() };
         let rate = self.shared.sample().map_or(0, |s| s.rate);
-        let look = view::Look { state: &st, frames, rate, peaks: &self.peaks.1, can_dump, ext: &ext, decks: [a_name, b_name] };
+        let look = view::Look { state: &st, frames, rate, peaks: &self.peaks.2, can_dump, hosted: self.hosted, ext: &ext, decks: [a_name, b_name] };
         self.hits = view::paint(c, palette, &self.vals, &self.view, &look, &hint);
+    }
+}
+
+/// Where the edited loops are kept: Mango Studio's own folder (tests use a temporary one).
+fn edit_dir() -> std::path::PathBuf {
+    if cfg!(test) {
+        std::env::temp_dir().join(format!("lemon-slicex-test-{}", std::process::id()))
+    } else {
+        os_paths::user_dir().map(|d| d.join("Slicex")).unwrap_or_else(|| std::env::temp_dir().join("lemon-slicex"))
     }
 }
 
@@ -1186,7 +1980,7 @@ mod win32 {
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
     use windows_sys::Win32::Graphics::Gdi::InvalidateRect;
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows_sys::Win32::UI::Controls::Dialogs::{GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR, OPENFILENAMEW};
+    use windows_sys::Win32::UI::Controls::Dialogs::{GetOpenFileNameW, GetSaveFileNameW, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR, OFN_OVERWRITEPROMPT, OPENFILENAMEW};
     use windows_sys::Win32::UI::Controls::WM_MOUSELEAVE;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
     use windows_sys::Win32::UI::WindowsAndMessaging::*;
@@ -1418,6 +2212,7 @@ mod win32 {
 
         /// Timer / parameter change: expire confirmed overlay values; repaint when something changed.
         fn poll(&mut self) {
+            self.logic.tick();
             let gone = self.logic.vals.expire();
             let sig = self.logic.vals.signature();
             let raw = self.logic.params.raw_version.load(Ordering::Acquire);
@@ -1459,7 +2254,7 @@ mod win32 {
                         os_hostlink::to_host(self.hwnd as isize, os_hostlink::Cmd::Automate, i as isize);
                     }
                     Act::OpenDialog => {
-                        if let Some(path) = file_dialog(self.hwnd) {
+                        if let Some(path) = file_dialog(self.hwnd, None) {
                             let acts = self.logic.load(&path);
                             self.act(acts);
                         }
@@ -1470,6 +2265,22 @@ mod win32 {
                         if os_hostlink::to_host(self.hwnd as isize, os_hostlink::Cmd::Notes, token) == 0 {
                             os_hostlink::take_notes(token);
                         }
+                    }
+                    Act::Save(kind) => {
+                        let name = self.logic.save_name(kind);
+                        if let Some(path) = file_dialog(self.hwnd, Some(&name)) {
+                            self.logic.save_to(kind, &path);
+                        }
+                        repaint = true;
+                    }
+                    Act::Send(path) => {
+                        os_hostlink::post_audio(&path, os_hostlink::AudioTo::Playlist);
+                        let ok = os_hostlink::to_host(self.hwnd as isize, os_hostlink::Cmd::Audio, os_hostlink::AudioTo::Playlist as isize) == 1;
+                        if !ok {
+                            os_hostlink::take_audio();
+                        }
+                        self.logic.sent(ok);
+                        repaint = true;
                     }
                     Act::Resize(w, h) => {
                         self.size = ((w as f32 * self.scale).round() as u32, (h as f32 * self.scale).round() as u32);
@@ -1529,13 +2340,19 @@ mod win32 {
     }
 
     /// The open sample dialog; `None` when cancelled or in tests that allow no modal loops.
-    fn file_dialog(owner: HWND) -> Option<String> {
+    fn file_dialog(owner: HWND, save: Option<&str>) -> Option<String> {
         if os_plugkit::no_modal() {
             return None;
         }
         let mut file = vec![0u16; 1024];
-        let filter: Vec<u16> = "Audio files\0*.wav;*.flac;*.ogg;*.wv;*.aif;*.aiff;*.mp3\0All files\0*.*\0\0".encode_utf16().collect();
-        let title = pw::wide("Loop to slice");
+        if let Some(name) = save {
+            for (o, c) in file.iter_mut().zip(name.encode_utf16().take(1000)) {
+                *o = c;
+            }
+        }
+        let filter: Vec<u16> = if save.is_some() { "WAV files\0*.wav\0\0" } else { "Audio files\0*.wav;*.flac;*.ogg;*.wv;*.aif;*.aiff;*.mp3\0All files\0*.*\0\0" }.encode_utf16().collect();
+        let title = pw::wide(if save.is_some() { "Save sample as" } else { "Loop to slice" });
+        let ext = pw::wide("wav");
         unsafe {
             let mut ofn: OPENFILENAMEW = std::mem::zeroed();
             ofn.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as u32;
@@ -1544,8 +2361,10 @@ mod win32 {
             ofn.lpstrFile = file.as_mut_ptr();
             ofn.nMaxFile = file.len() as u32;
             ofn.lpstrTitle = title.as_ptr();
-            ofn.Flags = OFN_NOCHANGEDIR | OFN_FILEMUSTEXIST;
-            if GetOpenFileNameW(&mut ofn) == 0 {
+            ofn.lpstrDefExt = ext.as_ptr();
+            ofn.Flags = OFN_NOCHANGEDIR | if save.is_some() { OFN_OVERWRITEPROMPT } else { OFN_FILEMUSTEXIST };
+            let ok = if save.is_some() { GetSaveFileNameW(&mut ofn) } else { GetOpenFileNameW(&mut ofn) };
+            if ok == 0 {
                 return None;
             }
         }
@@ -1683,6 +2502,7 @@ mod gui {
         }
 
         fn poll(&mut self) {
+            self.logic.tick();
             self.logic.vals.expire();
             self.dirty = true;
             if self.logic.hint != self.last_hint {
@@ -1719,7 +2539,7 @@ mod gui {
                         self.link.to_host(Cmd::Automate, i as isize);
                     }
                     Act::OpenDialog => {
-                        if let Some(path) = file_dialog(&self.win) {
+                        if let Some(path) = file_dialog(&self.win, None) {
                             let acts = self.logic.load(&path);
                             self.act(acts);
                         }
@@ -1730,6 +2550,22 @@ mod gui {
                         if self.link.to_host(Cmd::Notes, token) == 0 {
                             os_hostlink::take_notes(token);
                         }
+                    }
+                    Act::Save(kind) => {
+                        let name = self.logic.save_name(kind);
+                        if let Some(path) = file_dialog(&self.win, Some(name)) {
+                            self.logic.save_to(kind, &path);
+                        }
+                        self.dirty = true;
+                    }
+                    Act::Send(path) => {
+                        os_hostlink::post_audio(&path, os_hostlink::AudioTo::Playlist);
+                        let ok = self.link.hosted() && self.link.to_host(Cmd::Audio, os_hostlink::AudioTo::Playlist as isize) == 1;
+                        if !ok {
+                            os_hostlink::take_audio();
+                        }
+                        self.logic.sent(ok);
+                        self.dirty = true;
                     }
                     Act::Resize(w, h) => {
                         self.size = ((w as f32 * self.scale).round() as u32, (h as f32 * self.scale).round() as u32);
@@ -1755,15 +2591,16 @@ mod gui {
     }
 
     /// The open sample dialog: the desktop's own (through its portal on Linux; on macOS AppKit's).
-    fn file_dialog(win: &Window) -> Option<String> {
+    fn file_dialog(win: &Window, save: Option<String>) -> Option<String> {
         if os_plugkit::no_modal() {
             return None;
         }
         let path = win.dialog(move || {
-            rfd::FileDialog::new()
-                .set_title("Loop to slice")
-                .add_filter("Audio files", &["wav", "flac", "ogg", "wv", "aif", "aiff", "mp3"])
-                .pick_file()
+            let d = rfd::FileDialog::new();
+            match save {
+                Some(name) => d.set_title("Save sample as").set_file_name(name).add_filter("WAV files", &["wav"]).save_file(),
+                None => d.set_title("Loop to slice").add_filter("Audio files", &["wav", "flac", "ogg", "wv", "aif", "aiff", "mp3"]).pick_file(),
+            }
         });
         path.flatten().map(|p| p.to_string_lossy().into_owned())
     }
@@ -1958,6 +2795,86 @@ mod tests {
         paint(&mut l);
         assert!(l.down(g.x + 5.0, g.bottom() - 40.0, Btn::Left, Mods::default(), false).contains(&Act::Lock));
         l.up(Btn::Left);
+    }
+
+    /// Edits work on the selection (the whole loop without one), can be undone, move the slices when they change the
+    /// length, and are kept in a file the saved state points to.
+    #[test]
+    fn editing_the_loop_and_undoing() {
+        let (mut l, p) = loaded();
+        let peak = |l: &Logic| l.shared.sample().unwrap().left.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        let before = peak(&l);
+        l.run_edit(Ed::Normalize);
+        assert!((peak(&l) - 1.0).abs() < 1e-6 && peak(&l) > before);
+        assert!(l.state().path().contains("-edit-"), "{}", l.state().path());
+        assert!(std::path::Path::new(&l.state().path()).exists());
+        l.run_edit(Ed::Undo);
+        assert!((peak(&l) - before).abs() < 1e-6);
+        // A selection by dragging over the wave: no slice plays from it, the edit works on it alone.
+        paint(&mut l);
+        let (x0, x1, y) = (view::WAVE.x + 40.0, view::WAVE.x + 200.0, view::WAVE.cy());
+        l.down(x0, y, Btn::Left, Mods::default(), false);
+        l.moved(x1, y, Mods::default());
+        l.up(Btn::Left);
+        let (a, b) = l.view.range.expect("selected");
+        assert!(a < b && l.shared.previews.lock().unwrap().last().is_some_and(|p| !p.2), "the click's note ended");
+        let frames = l.frames();
+        l.run_edit(Ed::Delete);
+        assert_eq!(l.frames(), frames - (b - a));
+        assert!(l.state().slices.iter().all(|s| (s.start as usize) < l.frames()));
+        l.run_edit(Ed::Undo);
+        assert_eq!(l.frames(), frames);
+        // Cut, copy and paste.
+        l.view.range = Some((100, 300));
+        l.run_edit(Ed::Copy);
+        l.view.range = Some((1000, 1000));
+        l.run_edit(Ed::PasteInsert);
+        assert_eq!(l.frames(), frames + 200);
+        // Frozen: the edits refuse.
+        l.edit_ext(|e| e.freeze = true);
+        assert!(!l.edit_same("Reverse", edit::reverse));
+        let _ = std::fs::remove_file(p);
+    }
+
+    /// Markers move by dragging (the later ones stay, or follow with Slide), the marker button adds and takes away, and
+    /// the wave zooms and scrolls.
+    #[test]
+    fn markers_zoom_and_loop() {
+        let (mut l, p) = loaded();
+        paint(&mut l);
+        let n = l.state().slices.len();
+        let y = view::WAVE.cy();
+        let frames = l.frames();
+        let x1 = view::x_of(l.state().slices[1].start, frames, l.view.zoom);
+        l.down(x1, y, Btn::Left, Mods::default(), false);
+        l.moved(x1 + 20.0, y, Mods::default());
+        l.up(Btn::Left);
+        let (s1, s2) = (l.state().slices[1].start, l.state().slices[2].start);
+        assert!(s1 > 22050 && s2 == 44100, "{s1} {s2}");
+        // The marker button: one at the selection's start, again to take it away.
+        l.view.range = Some((10_000, 10_100));
+        l.toggle_marker();
+        assert_eq!(l.state().slices.len(), n + 1);
+        l.toggle_marker();
+        assert_eq!(l.state().slices.len(), n);
+        // Undo puts the first drag back.
+        l.run_edit(Ed::Undo);
+        // Zoom in with the wheel, scroll with the arrows, back out in full.
+        l.wheel(view::WAVE.cx(), y, 1.0, Mods::default());
+        assert!(l.view.zoom.1 - l.view.zoom.0 < 1.0);
+        let z = l.view.zoom;
+        l.scroll(1);
+        assert!(l.view.zoom.0 > z.0 || z.1 >= 1.0);
+        l.run_zoom(ZoomOp::Full);
+        assert_eq!(l.view.zoom, (0.0, 1.0));
+        // The loop button plays the slice again once it ended.
+        l.loop_on = true;
+        l.play(Some(60));
+        l.shared.previews.lock().unwrap().clear();
+        l.shared.voices.store(false, Ordering::Relaxed);
+        l.tick();
+        assert!(l.shared.previews.lock().unwrap().iter().any(|p| p.0 == 60 && p.2), "played again");
+        let _ = std::fs::remove_file(p);
     }
 
     #[test]
