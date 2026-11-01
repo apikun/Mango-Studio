@@ -77,6 +77,8 @@ pub enum Ctl {
     Menu(u8),
     Edit(u8),
     Info(u8),
+    /// The row under the wave: the left icons (0..5) and the right switches (6..11).
+    Row(u8),
 }
 
 impl Ctl {

@@ -22,7 +22,7 @@ use crate::state::State;
 
 /// Editor size in logical pixels.
 pub const W: u32 = 660;
-pub const H: u32 = 624;
+pub const H: u32 = 630;
 
 /// A rect from its left, right, top and bottom edges (right and bottom exclusive).
 const fn edges(x0: f32, x1: f32, y0: f32, y1: f32) -> Rect {
@@ -69,21 +69,27 @@ pub const BPM_BOX: Rect = edges(130.0, 188.0, 381.0, 397.0);
 pub const BEATS_BOX: Rect = edges(486.0, 540.0, 381.0, 397.0);
 const DECK_A: Rect = edges(196.0, 214.0, 382.0, 398.0);
 const DECK_B: Rect = edges(216.0, 234.0, 382.0, 398.0);
-pub const WELL_R: Rect = edges(6.0, 654.0, 404.0, 516.0);
-pub const WAVE: Rect = edges(12.0, 648.0, 408.0, 512.0);
-/// The chosen slice's strip.
-pub const NAME: Rect = edges(96.0, 262.0, 523.0, 547.0);
-pub const KEY_BOX: Rect = edges(306.0, 366.0, 523.0, 547.0);
-const REVERSE: Rect = edges(430.0, 510.0, 523.0, 547.0);
-/// The keyboard: white keys 12 px wide from key `KEYS_FROM`.
-const KEYS_Y: f32 = 554.0;
-const KEYS_H: f32 = 62.0;
-const KEY_W: f32 = 12.0;
-const KEYS_FROM: i32 = 24;
+/// The wave panel: the scroll bar row, the wave, the row of switches (with the chosen slice's name, key and reverse
+/// switch between them) and the marker lane.
+const SCROLL_R: Rect = edges(6.0, 654.0, 402.0, 416.0);
+pub const WELL_R: Rect = edges(6.0, 654.0, 416.0, 512.0);
+pub const WAVE: Rect = edges(12.0, 648.0, 420.0, 508.0);
+const ROW_R: Rect = edges(6.0, 654.0, 512.0, 534.0);
+pub const NAME: Rect = edges(266.0, 370.0, 514.0, 532.0);
+pub const KEY_BOX: Rect = edges(402.0, 444.0, 514.0, 532.0);
+const REVERSE: Rect = edges(452.0, 512.0, 514.0, 532.0);
+const LANE: Rect = edges(6.0, 654.0, 534.0, 562.0);
+/// The keyboard: every key from 0 to 127, white keys `KEY_W` wide in the lower row, black keys over them in the upper.
+const KEYS_Y: f32 = 566.0;
+const KEY_X0: f32 = 12.0;
+const KEY_W: f32 = 8.4;
+const BLACK_H: f32 = 20.0;
+const WHITE_Y: f32 = 590.0;
+const WHITE_H: f32 = 32.0;
 
 /// The window's bands below the top strip (from, to), in the full layout: the middle panel, the audio editor and the
 /// keyboard.
-const BANDS: [(f32, f32); 3] = [(112.0, 326.0), (326.0, 554.0), (554.0, 624.0)];
+const BANDS: [(f32, f32); 3] = [(112.0, 326.0), (326.0, 562.0), (562.0, 630.0)];
 const TOP_H: f32 = 112.0;
 
 /// The bands a view shows with how far each moves up from the full layout, and the window's height: view 0 shows all,
@@ -232,7 +238,9 @@ pub fn paint(c: &mut Canvas, _t: &Palette, m: &dyn Model, st: &ViewState, look: 
     toolbar(&mut ui, look);
     info(&mut ui, look);
     well(&mut ui, look, hint);
-    slice_strip(&mut ui, look);
+    scroll_bar(&mut ui);
+    switches_row(&mut ui, look);
+    lane(&mut ui, look);
     keyboard(&mut ui, look);
     view_buttons(&mut ui, look);
     arrange_bands(ui, look)
@@ -623,6 +631,17 @@ enum Gl {
     WaveSpec,
     ClickFree,
     AutoScroll,
+    Menu,
+    Refresh,
+    Marks,
+    Prev,
+    Next,
+    Link,
+    NoiseT,
+    Flag,
+    Freeze,
+    Step,
+    Slide,
 }
 
 /// The menu buttons in the order of `MENUS`: their glyphs and names.
@@ -693,6 +712,47 @@ fn glyph(ui: &mut Ui, r: Rect, g: Gl, ink: Color) {
             ui.c.fill_circle(cx, cy, 2.4, ink);
         }
         Gl::Snap => ic(ui, &tb::MAGNET),
+        Gl::Menu => ui.c.fill_polygon(&[(cx - 4.0, cy - 2.0), (cx + 4.0, cy - 2.0), (cx, cy + 3.0)], ink),
+        Gl::Refresh => ic(ui, &tb::ROTATE_CLOCKWISE_2),
+        Gl::Marks => {
+            for dx in [-5.0, 0.0, 5.0] {
+                ui.c.line(cx + dx, cy - 6.0, cx + dx, cy + 6.0, 1.4, ink);
+            }
+            ui.c.line(cx - 7.0, cy, cx + 7.0, cy, 1.4, ink);
+        }
+        Gl::Prev => {
+            ui.c.fill_polygon(&[(cx + 3.0, cy - 5.0), (cx + 3.0, cy + 5.0), (cx - 3.0, cy)], ink);
+            ui.c.fill_rect(Rect::new(cx - 6.0, cy - 5.0, 1.6, 10.0), ink);
+        }
+        Gl::Next => {
+            ui.c.fill_polygon(&[(cx - 3.0, cy - 5.0), (cx - 3.0, cy + 5.0), (cx + 3.0, cy)], ink);
+            ui.c.fill_rect(Rect::new(cx + 4.4, cy - 5.0, 1.6, 10.0), ink);
+        }
+        Gl::Link => ic(ui, &tb::LINK),
+        Gl::NoiseT => {
+            for dy in [-4.0, 0.0, 4.0] {
+                ui.c.line(cx - 6.0, cy + dy, cx + 6.0, cy + dy, 1.4, ink);
+            }
+        }
+        Gl::Flag => {
+            ui.c.line(cx - 3.0, cy - 7.0, cx - 3.0, cy + 7.0, 1.4, ink);
+            ui.c.fill_polygon(&[(cx - 3.0, cy - 7.0), (cx + 6.0, cy - 4.0), (cx - 3.0, cy - 1.0)], ink);
+        }
+        Gl::Freeze => {
+            for a in 0..3 {
+                let t = a as f32 * std::f32::consts::PI / 3.0;
+                ui.c.line(cx - 6.0 * t.cos(), cy - 6.0 * t.sin(), cx + 6.0 * t.cos(), cy + 6.0 * t.sin(), 1.3, ink);
+            }
+        }
+        Gl::Step => {
+            let pts = [(cx - 7.0, cy + 5.0), (cx - 2.0, cy + 1.0), (cx + 2.0, cy - 2.0), (cx + 7.0, cy - 6.0)];
+            ui.c.polyline(&pts, 1.8, ink);
+        }
+        Gl::Slide => {
+            ui.c.line(cx - 7.0, cy, cx + 7.0, cy, 1.4, ink);
+            ui.c.fill_polygon(&[(cx - 7.0, cy - 3.0), (cx - 7.0, cy + 3.0), (cx - 11.0, cy)], ink);
+            ui.c.fill_polygon(&[(cx + 7.0, cy - 3.0), (cx + 7.0, cy + 3.0), (cx + 11.0, cy)], ink);
+        }
         Gl::Select => ic(ui, &tb::MARQUEE_2),
         Gl::Zoom => ic(ui, &tb::SEARCH),
         Gl::Undo => ic(ui, &tb::ARROW_BACK_UP),
@@ -836,10 +896,12 @@ fn info(ui: &mut Ui, look: &Look) {
 
 /// The loop in its well: the waveform, the slices' lines (the chosen slice lit), their numbers along the top.
 fn well(ui: &mut Ui, look: &Look, hint: &str) {
-    ui.c.fill_rect(WELL_R, WELL);
-    for i in 1..8 {
-        let x = WELL_R.x + WELL_R.w * i as f32 / 8.0;
-        ui.c.fill_rect(Rect::new(x.round(), WELL_R.y, 1.0, WELL_R.h), GRID.with_alpha(110));
+    ui.c.fill_rect(WELL_R, Color::rgb(0x2e3850));
+    // The original's wave sits on bands of two blues.
+    for i in 0..8 {
+        if i % 2 == 1 {
+            ui.c.fill_rect(Rect::new(WELL_R.x, WELL_R.y + WELL_R.h * i as f32 / 8.0, WELL_R.w, WELL_R.h / 8.0), Color::rgb(0x333d56));
+        }
     }
     let st = look.state;
     if look.frames == 0 || look.peaks.is_empty() {
@@ -885,19 +947,58 @@ fn well(ui: &mut Ui, look: &Look, hint: &str) {
     ui.hit(WAVE, Target::Well);
 }
 
-/// The chosen slice: its number, name, key and reverse switch.
-fn slice_strip(ui: &mut Ui, look: &Look) {
-    ui.c.fill_rect(edges(6.0, 654.0, 518.0, 552.0), Color::rgb(0x333b50));
+/// The wave's scroll bar row: arrows at both ends and the thumb.
+fn scroll_bar(ui: &mut Ui) {
+    ui.c.fill_rect(SCROLL_R, Color::rgb(0x353e53));
+    ui.c.fill_rect(Rect::new(SCROLL_R.x, SCROLL_R.bottom() - 1.0, SCROLL_R.w, 1.0), BTN_EDGE);
+    let (l, r) = (SCROLL_R.x + 9.0, SCROLL_R.right() - 9.0);
+    let cy = SCROLL_R.cy();
+    ui.c.fill_polygon(&[(l + 3.0, cy - 4.0), (l + 3.0, cy + 4.0), (l - 3.0, cy)], SOFT);
+    ui.c.fill_polygon(&[(r - 3.0, cy - 4.0), (r - 3.0, cy + 4.0), (r + 3.0, cy)], SOFT);
+    ui.c.fill_rect(Rect::new(l + 12.0, SCROLL_R.y + 3.0, r - l - 24.0, SCROLL_R.h - 6.0), Color::rgb(0x434d66));
+}
+
+/// The row under the wave: the editor's switches at both ends, the chosen slice between them.
+fn switches_row(ui: &mut Ui, look: &Look) {
+    ui.c.fill_rect(ROW_R, Color::rgb(0x353e53));
+    let has = look.frames > 0 && !look.state.slices.is_empty();
+    // Left: a menu arrow, refresh, add marks, then the previous and next region.
+    let left = [Gl::Menu, Gl::Refresh, Gl::Marks, Gl::Prev, Gl::Next, Gl::Link];
+    for (i, g) in left.iter().enumerate() {
+        let r = Rect::new(10.0 + 24.0 * i as f32, 513.0, 20.0, 20.0);
+        let enabled = matches!(g, Gl::Prev | Gl::Next) && has;
+        let ink = if enabled { LIGHT } else { Color::rgb(0x5d667c) };
+        let t = Target::Ext(Ctl::Row(i as u8));
+        let hov = enabled && ui.hover(r, &t);
+        if hov {
+            ui.c.fill_rrect(r, 3.0, BTN_FACE.shade(0.16));
+        }
+        glyph(ui, r, *g, ink);
+        ui.hit(r, t);
+    }
+    // Right: the switches of the original: Noise T., Regions, Freeze, Step, Snap, Slide. Regions' flag is lit.
+    let right = [Gl::NoiseT, Gl::Flag, Gl::Freeze, Gl::Step, Gl::Snap, Gl::Slide];
+    for (i, g) in right.iter().enumerate() {
+        let r = Rect::new(532.0 + 20.0 * i as f32, 513.0, 20.0, 20.0);
+        let ink = match g {
+            Gl::Flag => brand::MAIN,
+            Gl::Step => Color::rgb(0xd0527a),
+            _ => Color::rgb(0x707a92),
+        };
+        glyph(ui, r, *g, ink);
+        ui.hit(r, Target::Ext(Ctl::Row(6 + i as u8)));
+    }
+    // The chosen slice.
     let st = look.state;
     let n = st.slices.len();
     let chosen = ui.st.chosen.min(n.saturating_sub(1));
     let slice = st.slices.get(chosen);
     let head = if n == 0 { "SLICE".to_string() } else { format!("SLICE {} OF {n}", chosen + 1) };
-    ui.c.text(SMALL.bold(), 12.0, 530.0, SOFT, &head);
+    ui.c.text(SMALL.bold(), 178.0, 519.0, SOFT, &head);
     lemon::field(ui.c, NAME, Kst { disabled: slice.is_none(), ..Kst::NORMAL });
     let name = slice.map(|s| s.name()).filter(|s| !s.is_empty()).unwrap_or_else(|| if slice.is_some() { "(no name)".into() } else { String::new() });
-    ui.c.text_center(LABEL, NAME, if slice.is_some_and(|s| !s.name.is_empty()) { brand::TEXT } else { SOFT }, &name);
-    ui.c.text(SMALL.bold(), 272.0, 530.0, SOFT, "KEY");
+    ui.c.text_center(SMALL, NAME, if slice.is_some_and(|s| !s.name.is_empty()) { brand::TEXT } else { SOFT }, &name);
+    ui.c.text(SMALL.bold(), 376.0, 519.0, SOFT, "KEY");
     let mut kst = ui.state(KEY_BOX, &Target::Key);
     kst.disabled = slice.is_none();
     lemon::field(ui.c, KEY_BOX, kst);
@@ -914,30 +1015,47 @@ fn slice_strip(ui: &mut Ui, look: &Look) {
     ui.hit(REVERSE, Target::Rev);
 }
 
-/// A key's rect: white keys in a row, black keys over the gaps. `None` outside the keyboard.
+/// The marker lane under the wave: two lines, and a flag with the number at each slice's start.
+fn lane(ui: &mut Ui, look: &Look) {
+    ui.c.fill_rect(LANE, Color::rgb(0x2b3447));
+    for dy in [9.0, 18.0] {
+        ui.c.fill_rect(Rect::new(LANE.x, LANE.y + dy, LANE.w, 1.0), Color::rgb(0x394560));
+    }
+    if look.frames == 0 {
+        return;
+    }
+    let chosen = ui.st.chosen.min(look.state.slices.len().saturating_sub(1));
+    for (i, s) in look.state.slices.iter().enumerate() {
+        let x = x_of(s.start, look.frames).min(WAVE.right() - 1.0);
+        let col = if i == chosen { brand::MAIN } else { SOFT.with_alpha(170) };
+        ui.c.fill_rect(Rect::new(x, LANE.y + 2.0, 1.0, LANE.h - 4.0), col);
+        ui.c.fill_polygon(&[(x, LANE.y + 2.0), (x + 7.0, LANE.y + 5.0), (x, LANE.y + 8.0)], col);
+    }
+}
+
+/// A key's rect: white keys in the lower row, black keys in the upper. `None` outside the keyboard.
 fn key_rect(k: i32) -> Option<(Rect, bool)> {
-    // The white key's number within the octave for each pitch class; black keys sit after the white one before them.
+    // The white key's number within the octave for each pitch class; a black key sits after the white one before it.
     const WHITE: [i32; 12] = [0, -1, 1, -1, 2, 3, -1, 4, -1, 5, -1, 6];
-    let oct = k.div_euclid(12) - KEYS_FROM.div_euclid(12);
-    let n = k.rem_euclid(12) as usize;
-    if oct < 0 {
+    if !(0..128).contains(&k) {
         return None;
     }
+    let (oct, n) = (k.div_euclid(12), k.rem_euclid(12) as usize);
     if WHITE[n] >= 0 {
-        let x = 6.0 + KEY_W * (oct * 7 + WHITE[n]) as f32;
-        (x + KEY_W <= 654.5).then(|| (Rect::new(x, KEYS_Y, KEY_W, KEYS_H), false))
+        let x = KEY_X0 + KEY_W * (oct * 7 + WHITE[n]) as f32;
+        (x + KEY_W <= 650.0).then(|| (Rect::new(x, WHITE_Y, KEY_W - 0.6, WHITE_H), false))
     } else {
-        let x = 6.0 + KEY_W * (oct * 7 + WHITE[n - 1] + 1) as f32 - 4.0;
-        (x + 8.0 <= 654.5).then(|| (Rect::new(x, KEYS_Y, 8.0, KEYS_H * 0.62), true))
+        let x = KEY_X0 + KEY_W * (oct * 7 + WHITE[n - 1] + 1) as f32 - 2.6;
+        (x + 5.2 <= 650.0).then(|| (Rect::new(x, KEYS_Y, 5.2, BLACK_H), true))
     }
 }
 
 fn keyboard(ui: &mut Ui, look: &Look) {
-    ui.c.fill_rect(edges(6.0, 654.0, KEYS_Y - 2.0, KEYS_Y + KEYS_H + 2.0), Color::rgb(0x161a22));
+    ui.c.fill_rect(edges(6.0, 654.0, 562.0, 630.0), Color::rgb(0x1b212c));
     let st = look.state;
     let chosen = ui.st.chosen.min(st.slices.len().saturating_sub(1));
     for black in [false, true] {
-        for k in KEYS_FROM..KEYS_FROM + 12 * 8 {
+        for k in 0..128 {
             let Some((r, is_black)) = key_rect(k) else { continue };
             if is_black != black {
                 continue;
@@ -948,15 +1066,12 @@ fn keyboard(ui: &mut Ui, look: &Look) {
                 Some(i) if i == chosen => brand::MAIN,
                 Some(_) if black => Color::rgb(0x7f8aa6),
                 Some(_) => Color::rgb(0xb7c4e4),
-                None if black => KEY_BLACK,
+                None if black => Color::rgb(0x394258),
                 None => KEY_WHITE,
             };
             ui.c.fill_rect(r, if hov { face.shade(0.12) } else { face });
-            if !black {
-                ui.c.fill_rect(Rect::new(r.right() - 1.0, r.y, 1.0, r.h), Color::rgb(0x8b94a8));
-                if k % 12 == 0 {
-                    ui.c.text(Font::new(8), r.x + 1.0, r.bottom() - 11.0, INK_DIM, &key_name(k));
-                }
+            if !black && k % 12 == 0 {
+                ui.c.text(Font::new(7), r.x, r.bottom() + 1.0, SOFT.with_alpha(160), &key_name(k));
             }
             ui.hit(r, t);
         }
@@ -971,7 +1086,7 @@ mod tests {
     #[test]
     fn the_layout_fits_the_window() {
         let win = edges(0.0, W as f32, 0.0, H as f32);
-        for r in [KEYS_BTN, PAD, MOD_PANEL, LAYER_PANEL, LOGO, PLATE_R, ART_PANEL, FILTER_PANEL, GRAPH, KNOB_BAR, LOOP, PLAY, STOP, BPM_BOX, BEATS_BOX, WELL_R, WAVE, NAME, KEY_BOX, REVERSE] {
+        for r in [KEYS_BTN, PAD, MOD_PANEL, LAYER_PANEL, LOGO, PLATE_R, ART_PANEL, FILTER_PANEL, GRAPH, KNOB_BAR, LOOP, PLAY, STOP, BPM_BOX, BEATS_BOX, SCROLL_R, WELL_R, WAVE, ROW_R, NAME, KEY_BOX, REVERSE, LANE] {
             assert!(r.x >= 0.0 && r.right() <= win.right() && r.y >= 0.0 && r.bottom() <= win.bottom(), "{r:?}");
         }
         for (a, b) in [(MOD_PANEL, LAYER_PANEL), (LAYER_PANEL, LOGO), (PLATE_R, ART_PANEL), (ART_PANEL, FILTER_PANEL), (LOOP, PLAY), (PLAY, STOP)] {
@@ -980,7 +1095,7 @@ mod tests {
         }
         assert_eq!((key_name(60), key_name(36), key_name(61)), ("C5".into(), "C3".into(), "C#5".into()));
         // The keyboard covers the slices' keys (C5 up) inside the window.
-        assert!(key_rect(60).is_some_and(|k| !k.1) && key_rect(61).is_some_and(|k| k.1));
+        assert!(key_rect(60).is_some_and(|k| !k.1) && key_rect(61).is_some_and(|k| k.1) && key_rect(127).is_none_or(|k| k.0.right() <= 654.0));
     }
 
     /// The views keep their bands under the top strip: everything is the full window, no audio editor drops the
@@ -988,11 +1103,11 @@ mod tests {
     #[test]
     fn views_stack_their_bands() {
         assert_eq!(window_size(0, true), (W, H));
-        assert_eq!(window_size(1, true).1, H - 228);
+        assert_eq!(window_size(1, true).1, H - 236);
         assert_eq!(window_size(2, true).1, H - 214);
-        assert_eq!(window_size(0, false).1, H - 70);
+        assert_eq!(window_size(0, false).1, H - 68);
         assert_eq!(window_size(3, true).1, 112);
         let (bands, _) = arrange(2, true);
-        assert_eq!(bands, vec![(326.0, 554.0, -214.0), (554.0, 624.0, -214.0)]);
+        assert_eq!(bands, vec![(326.0, 562.0, -214.0), (562.0, 630.0, -214.0)]);
     }
 }

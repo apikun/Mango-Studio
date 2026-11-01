@@ -346,7 +346,14 @@ impl Logic {
                 return vec![Act::Repaint];
             }
             Ctl::Edit(8) => return self.dump(false).map(Act::Notes).into_iter().collect(),
-            Ctl::Loop | Ctl::Edit(_) | Ctl::Info(_) => {}
+            Ctl::Row(3) | Ctl::Row(4) => {
+                let n = self.state().slices.len() as i32;
+                if n > 0 {
+                    let d = if c == Ctl::Row(3) { -1 } else { 1 };
+                    self.view.chosen = (self.view.chosen as i32 + d).clamp(0, n - 1) as usize;
+                }
+            }
+            Ctl::Loop | Ctl::Edit(_) | Ctl::Info(_) | Ctl::Row(_) => {}
             Ctl::View(n) => {
                 self.edit_ext(|e| e.view = n.min(3));
                 let (w, h) = self.size();
@@ -1727,8 +1734,8 @@ mod tests {
         l.down(x, y, Btn::Left, Mods::default(), false);
         paint(&mut l);
         let (x, y) = centre(&l, &Target::Ext(Ctl::Keys));
-        assert!(l.down(x, y, Btn::Left, Mods::default(), false).contains(&Act::Resize(view::W, view::H - 70)));
-        assert_eq!(l.size(), (view::W, view::H - 70));
+        assert!(l.down(x, y, Btn::Left, Mods::default(), false).contains(&Act::Resize(view::W, view::H - 68)));
+        assert_eq!(l.size(), (view::W, view::H - 68));
         let _ = std::fs::remove_file(p);
     }
 
