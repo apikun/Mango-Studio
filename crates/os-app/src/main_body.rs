@@ -487,7 +487,7 @@ impl Shell {
             }
         }
         // Ctrl+C in the terminal, or a kill: closes without asking (`exiting` keeps unsaved changes as a backup).
-        #[cfg(unix)]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if stop_signal::asked() {
             el.exit();
         }
@@ -743,7 +743,7 @@ impl ApplicationHandler for Shell {
         }
         layout::save(&self.app.state);
         // Stopped by a signal with changes unsaved: nobody was asked, so they go to a backup.
-        #[cfg(unix)]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if stop_signal::asked() && self.app.unsaved() {
             let _ = self.app.write_backup(chrono::Local::now().naive_local());
         }
@@ -1740,7 +1740,7 @@ fn use_x11() -> bool {
 
 /// SIGINT (Ctrl+C in the terminal) and SIGTERM: the program closes as it does with its window, within a tick. A second
 /// one ends it at once, should the first not get through.
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod stop_signal {
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -2045,7 +2045,7 @@ pub(crate) fn run_from(mut builder: winit::event_loop::EventLoopBuilder<()>, pat
         #[cfg(target_os = "android")]
         touch: crate::touch_mouse::TouchMouse::default(),
     };
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     stop_signal::install();
     event_loop.run_app(&mut shell).unwrap_or_else(|e| fatal("the event loop stopped", e.to_string()));
     // After a contained plugin crash the process ends here, before plugin files are unloaded (a stopped plugin's code
