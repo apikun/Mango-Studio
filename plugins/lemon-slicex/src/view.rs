@@ -400,6 +400,8 @@ fn layer_card(ui: &mut Ui, look: &Look) {
     }
     small(ui, edges(362.0, 442.0, 66.0, 84.0), Ctl::SameDeck, "SAME DECK", x.same_deck, false);
     small(ui, edges(448.0, 528.0, 66.0, 84.0), Ctl::Crossfade, "CROSSFADE", x.crossfade, false);
+    small(ui, edges(534.0, 580.0, 66.0, 84.0), Ctl::LoadDeck(0), "LOAD A", false, false);
+    small(ui, edges(584.0, 630.0, 66.0, 84.0), Ctl::LoadDeck(1), "LOAD B", false, false);
     for (i, d) in look.decks.iter().enumerate() {
         let name = if d.is_empty() { "(empty)" } else { d.as_str() };
         let y = 94.0 + 14.0 * i as f32;

@@ -39,9 +39,49 @@ pub struct Kit {
     /// The articulator of each slice, and the articulators.
     pub art: Vec<u8>,
     pub ext: Arc<Ext>,
+    /// The second deck: its loop and slices.
+    pub b: Option<Deck>,
+}
+
+/// A deck's loop as the voices play it.
+#[derive(Clone, Debug)]
+pub struct Deck {
+    pub sample: Arc<Sample>,
+    pub spans: Vec<Span>,
+    pub keys: [Option<u16>; 128],
+}
+
+impl Deck {
+    pub fn new(sample: Arc<Sample>, st: &State) -> Self {
+        let frames = sample.frames();
+        let n = st.slices.len();
+        let spans = (0..n)
+            .map(|i| {
+                let start = (st.slices[i].start as usize).min(frames);
+                let next = st.slices.get(i + 1).map_or(frames, |s| (s.start as usize).min(frames)).max(start);
+                Span { start, next, reversed: st.slices[i].reversed() }
+            })
+            .collect();
+        let mut keys = [None; 128];
+        for (k, slot) in keys.iter_mut().enumerate() {
+            *slot = st.slice_for(k as i32).map(|i| i as u16);
+        }
+        Deck { sample, spans, keys }
+    }
 }
 
 impl Kit {
+    /// The kit with a second deck.
+    pub fn with_b(mut self, deck: Option<Deck>) -> Self {
+        self.b = deck;
+        self
+    }
+
+    /// Deck `d`'s sample and slices (`None`: no such deck).
+    fn deck(&self, d: u8) -> Option<(&Arc<Sample>, &[Span])> {
+        if d == 0 { Some((&self.sample, &self.spans)) } else { self.b.as_ref().map(|b| (&b.sample, b.spans.as_slice())) }
+    }
+
     pub fn new(sample: Arc<Sample>, st: &State, ext: Arc<Ext>) -> Self {
         let frames = sample.frames();
         let n = st.slices.len();
@@ -57,7 +97,7 @@ impl Kit {
             *slot = st.slice_for(k as i32).map(|i| i as u16);
         }
         let art = (0..n).map(|i| ext.art_of(i) as u8).collect();
-        Kit { sample, spans, keys, art, ext }
+        Kit { sample, spans, keys, art, ext, b: None }
     }
 }
 
@@ -76,11 +116,13 @@ pub struct Block {
     pub mod_y: f32,
     pub smooth: bool,
     pub beat: f64,
+    /// The pad's X fades from deck A to deck B.
+    pub crossfade: bool,
 }
 
 impl Default for Block {
     fn default() -> Self {
-        Block { cents: 0.0, attack_ms: 0.0, decay_ms: 4.0, declick: true, to_end: false, mod_x: 0.5, mod_y: 0.5, smooth: false, beat: 0.5 }
+        Block { cents: 0.0, attack_ms: 0.0, decay_ms: 4.0, declick: true, to_end: false, mod_x: 0.5, mod_y: 0.5, smooth: false, beat: 0.5, crossfade: false }
     }
 }
 
@@ -92,6 +134,8 @@ struct Voice {
     key: u8,
     id: Option<i32>,
     slice: usize,
+    /// The deck the slice is of: 0 = A, 1 = B.
+    deck: u8,
     art: usize,
     /// Frames into the slice (sample frames).
     pos: f64,
@@ -216,9 +260,28 @@ impl Engine {
         std::mem::take(&mut self.ended)
     }
 
-    /// Starts a voice for `key`; keys without a slice are silent.
+    /// Starts the voices for `key`: the slice it plays on each deck the layering lets sound; keys without a slice are
+    /// silent.
     pub fn note_on(&mut self, kit: Option<&Kit>, key: u8, velocity: f32, id: Option<i32>) {
-        let Some(slice) = kit.and_then(|k| k.keys.get(usize::from(key)).copied().flatten()) else { return };
+        let Some(kit) = kit else { return };
+        let a = kit.keys.get(usize::from(key)).copied().flatten();
+        let b = kit.b.as_ref().and_then(|d| {
+            let s = if kit.ext.same_deck { a } else { d.keys.get(usize::from(key)).copied().flatten() };
+            s.filter(|&i| usize::from(i) < d.spans.len())
+        });
+        let (a, b) = match kit.ext.layer {
+            1 => (a, None),
+            2 => (None, b),
+            _ => (a, b),
+        };
+        for (deck, slice) in [(0u8, a), (1u8, b)] {
+            if let Some(slice) = slice {
+                self.start(kit, deck, key, slice, velocity, id);
+            }
+        }
+    }
+
+    fn start(&mut self, kit: &Kit, deck: u8, key: u8, slice: u16, velocity: f32, id: Option<i32>) {
         if self.voices.len() >= VOICES
             && let Some(i) = (0..self.voices.len()).min_by_key(|&i| self.voices[i].age)
         {
@@ -226,11 +289,11 @@ impl Engine {
             self.ended.push((v.key, v.id));
         }
         self.clock += 1;
-        let art = kit.map_or(0, |k| usize::from(k.art.get(usize::from(slice)).copied().unwrap_or(0)).min(ARTICS - 1));
+        let art = usize::from(kit.ext.art_of(usize::from(slice))).min(ARTICS - 1);
         // A number for the note: a hash of the note's count.
         let h = (self.clock as u32).wrapping_mul(0x9e37_79b9) ^ u32::from(key).wrapping_mul(0x85eb_ca6b);
         let rand = ((h.wrapping_mul(0x2c1b_3c6d) >> 8) as f32) / (1u32 << 24) as f32;
-        self.voices.push(Voice { key, id, slice: usize::from(slice), art, pos: 0.0, gain: velocity.clamp(0.0, 1.0), rand, t: 0.0, filt: [[[0.0; 2]; 3]; 2], release: None, age: self.clock });
+        self.voices.push(Voice { key, id, slice: usize::from(slice), deck, art, pos: 0.0, gain: velocity.clamp(0.0, 1.0), rand, t: 0.0, filt: [[[0.0; 2]; 3]; 2], release: None, age: self.clock });
     }
 
     /// The note ends: its voices fade out (over the volume envelope's release when it shapes the volume).
@@ -258,13 +321,7 @@ impl Engine {
             self.all_off();
             return;
         };
-        let s = &kit.sample;
-        let sr = f64::from(s.rate.max(1));
         let out_rate = f64::from(self.rate);
-        let base_step = sr / out_rate * (b.cents / 1200.0).exp2();
-        let (att, dec) = (b.attack_ms / 1000.0 * sr, b.decay_ms / 1000.0 * sr);
-        let click = if b.declick { DECLICK_S * sr } else { 0.0 };
-        let frames = s.frames();
         let n = left.len().min(right.len());
         // The pad as the voices hear it.
         if b.smooth {
@@ -277,11 +334,23 @@ impl Engine {
         let mut i = 0;
         while i < self.voices.len() {
             let v = &mut self.voices[i];
-            let Some(span) = kit.spans.get(v.slice).copied() else {
+            let Some((s, spans)) = kit.deck(v.deck) else {
                 v.pos = f64::MAX;
                 i += 1;
                 continue;
             };
+            let Some(span) = spans.get(v.slice).copied() else {
+                v.pos = f64::MAX;
+                i += 1;
+                continue;
+            };
+            let sr = f64::from(s.rate.max(1));
+            let base_step = sr / out_rate * (b.cents / 1200.0).exp2();
+            let (att, dec) = (b.attack_ms / 1000.0 * sr, b.decay_ms / 1000.0 * sr);
+            let click = if b.declick { DECLICK_S * sr } else { 0.0 };
+            let frames = s.frames();
+            // The pad's X fades between the decks.
+            let fade = if !b.crossfade || kit.b.is_none() { 1.0 } else if v.deck == 0 { 1.0 - mx } else { mx };
             let art = &kit.ext.artic[v.art.min(ARTICS - 1)];
             let end = if b.to_end { frames } else { span.next };
             let len = end.saturating_sub(span.start) as f64;
@@ -300,7 +369,7 @@ impl Engine {
                         v.pos = len;
                         break 'voice;
                     }
-                    let mut g_out = m.gain;
+                    let mut g_out = m.gain * fade;
                     let left_of = len - v.pos;
                     for (fade, x) in [(att, v.pos), (dec, left_of), (click, v.pos), (click, left_of)] {
                         if fade > 0.0 && x < fade {
@@ -340,7 +409,7 @@ impl Engine {
         }
         let ended = &mut self.ended;
         self.voices.retain(|v| {
-            let len = kit.spans.get(v.slice).map_or(0.0, |sp| ((if b.to_end { frames } else { sp.next }).saturating_sub(sp.start)) as f64);
+            let len = kit.deck(v.deck).and_then(|(s, spans)| spans.get(v.slice).map(|sp| ((if b.to_end { s.frames() } else { sp.next }).saturating_sub(sp.start)) as f64)).unwrap_or(0.0);
             let done = v.pos >= len - 1.0 || v.release.is_some_and(|(n, _)| n == 0);
             if done {
                 ended.push((v.key, v.id));

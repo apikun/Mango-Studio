@@ -55,6 +55,8 @@ pub enum Ctl {
     Layer(u8),
     SameDeck,
     Crossfade,
+    /// Opens a loop into deck A (0) or B (1).
+    LoadDeck(u8),
 }
 
 impl Ctl {

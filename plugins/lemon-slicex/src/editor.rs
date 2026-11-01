@@ -211,12 +211,14 @@ pub struct Logic {
     /// A knob of the added panels being dragged (its control and position), and whether the pad is.
     ext_drag: Option<(Ctl, f32)>,
     pad_drag: bool,
+    /// The deck the open dialog's file goes to (0 = A, 1 = B).
+    load_deck: u8,
 }
 
 impl Logic {
     pub fn new(params: Arc<SlicexParams>, shared: Arc<Shared>, ctx: Option<Arc<dyn GuiContext>>) -> Self {
         let vals = Vals::new(&*params, params.live.clone(), ctx);
-        Logic { vals, params, shared, view: ViewState::default(), hits: Vec::new(), drag: None, hint: String::new(), copied: None, hosted: false, playing: None, peaks: (u64::MAX, Vec::new()), ext_drag: None, pad_drag: false }
+        Logic { vals, params, shared, view: ViewState::default(), hits: Vec::new(), drag: None, hint: String::new(), copied: None, hosted: false, playing: None, peaks: (u64::MAX, Vec::new()), ext_drag: None, pad_drag: false, load_deck: 0 }
     }
 
     pub fn dragging(&self) -> bool {
@@ -314,6 +316,10 @@ impl Logic {
             Ctl::Layer(n) => self.edit_ext(|e| e.layer = n.min(2)),
             Ctl::SameDeck => self.edit_ext(|e| e.same_deck = !e.same_deck),
             Ctl::Crossfade => self.edit_ext(|e| e.crossfade = !e.crossfade),
+            Ctl::LoadDeck(n) => {
+                self.load_deck = n.min(1);
+                return vec![Act::OpenDialog];
+            }
             _ => {}
         }
         vec![Act::Repaint]
@@ -419,7 +425,10 @@ impl Logic {
             (Target::Knob(id) | Target::Switch(id), Btn::Right) => acts.push(Act::Menu(MenuReq::Param(id.clone()), x, y)),
             (Target::Bpm, Btn::Left | Btn::Right) if has => acts.push(Act::TypeIn(BPM_ID.into(), x, y)),
             (Target::Beats, Btn::Left | Btn::Right) if has => acts.push(Act::TypeIn(BEATS_ID.into(), x, y)),
-            (Target::Load, Btn::Left) => acts.push(Act::OpenDialog),
+            (Target::Load, Btn::Left) => {
+                self.load_deck = 0;
+                acts.push(Act::OpenDialog)
+            }
             (Target::Slicing, Btn::Left | Btn::Right) if has => acts.push(Act::Menu(MenuReq::Slicing, view::SLICE.x, view::SLICE.bottom())),
             (Target::Dump, Btn::Left | Btn::Right) => acts.push(Act::Menu(MenuReq::Dump, view::DUMP.x, view::DUMP.bottom())),
             (Target::Well, Btn::Left) if has => {
@@ -714,8 +723,14 @@ impl Logic {
 
     /// Loads a loop (the open dialog's file).
     pub fn load(&mut self, path: &str) {
-        self.view.chosen = 0;
-        if let Err(e) = self.shared.load(path, &self.params) {
+        let deck = std::mem::take(&mut self.load_deck);
+        let r = if deck == 1 {
+            self.shared.load_b(path, &self.params)
+        } else {
+            self.view.chosen = 0;
+            self.shared.load(path, &self.params)
+        };
+        if let Err(e) = r {
             self.hint = e;
         }
     }
@@ -1427,6 +1442,33 @@ mod tests {
         assert_eq!(l.shared.kit.lock().unwrap().as_ref().unwrap().keys[36], Some(2));
         assert!(l.menu(&MenuReq::Key).find("C3").is_some());
         let _ = std::fs::remove_file(p);
+    }
+
+    /// Deck B loads a loop; layering picks the decks that sound, SAME DECK plays B's slice with A's number, and an
+    /// articulator button assigns the chosen slice.
+    #[test]
+    fn decks_layers_and_articulators() {
+        let (mut l, p) = loaded();
+        let q = loop_file("deck-b", &[]);
+        let (x, y) = centre(&l, &Target::Ext(Ctl::LoadDeck(1)));
+        assert!(l.down(x, y, Btn::Left, Mods::default(), false).contains(&Act::OpenDialog));
+        l.load(&q.to_string_lossy());
+        paint(&mut l);
+        assert!(l.shared.kit.lock().unwrap().as_ref().unwrap().b.is_some());
+        let (mut a, mut b) = (crate::dsp::Engine::new(44100.0), crate::dsp::Engine::new(44100.0));
+        let kit = l.shared.kit.lock().unwrap().clone().unwrap();
+        a.note_on(Some(&kit), 61, 1.0, None);
+        assert_eq!(a.sounding().count(), 2, "both decks play");
+        l.edit_ext(|e| e.layer = 1);
+        let kit = l.shared.kit.lock().unwrap().clone().unwrap();
+        b.note_on(Some(&kit), 61, 1.0, None);
+        assert_eq!(b.sounding().count(), 1, "deck A alone");
+        // Articulator 3 for the chosen slice.
+        l.view.chosen = 1;
+        let (x, y) = centre(&l, &Target::Ext(Ctl::Art(2)));
+        l.down(x, y, Btn::Left, Mods::default(), false);
+        assert_eq!((l.view.sel.art, l.params.ext().art_of(1)), (2, 2));
+        let _ = (std::fs::remove_file(p), std::fs::remove_file(q));
     }
 
     #[test]

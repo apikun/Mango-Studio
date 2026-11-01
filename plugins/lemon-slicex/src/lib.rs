@@ -40,6 +40,9 @@ pub struct Shared {
     /// The sample loaded and the file it came from (also kept when it could not be read).
     sample: Mutex<Option<Arc<Sample>>>,
     loaded_path: Mutex<String>,
+    /// Deck B's loop and the file it came from.
+    sample_b: Mutex<Option<Arc<Sample>>>,
+    loaded_b: Mutex<String>,
     /// The project's tempo as the host last gave it (f64 bits; 0 = not known).
     pub tempo: AtomicU64,
     /// Set while an editor is open.
@@ -62,11 +65,58 @@ impl Shared {
 
     /// Rebuilds what the voices play from the sample and the saved state's slices.
     pub fn rebuild(&self, params: &SlicexParams) {
-        let kit = self.sample().map(|s| Arc::new(dsp::Kit::new(s, &params.state(), Arc::new(params.ext()))));
+        let ext = params.ext();
+        let b = self.sample_b.lock().ok().and_then(|s| s.clone()).zip(State::parse(&ext.deck_b)).map(|(s, st)| dsp::Deck::new(s, &st));
+        let kit = self.sample().map(|s| Arc::new(dsp::Kit::new(s, &params.state(), Arc::new(ext)).with_b(b)));
         if let Ok(mut k) = self.kit.lock() {
             *k = kit;
         }
         self.kit_version.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// Deck B's loop as the state names it (empty: none); a file that cannot be read leaves the deck silent.
+    pub fn open_b(&self, params: &SlicexParams) -> Result<(), String> {
+        let path = State::parse(&params.ext().deck_b).map(|s| s.path()).unwrap_or_default();
+        let s = if path.is_empty() { Ok(None) } else { os_engine::sample::load_shared(Path::new(&path)).map(Some).map_err(|e| format!("{path}: {e}")) };
+        if let Ok(mut l) = self.loaded_b.lock() {
+            *l = path;
+        }
+        let ok = s.is_ok();
+        if let Ok(mut cur) = self.sample_b.lock() {
+            *cur = s.clone().unwrap_or(None);
+        }
+        self.rebuild(params);
+        if ok { Ok(()) } else { Err(s.err().unwrap_or_default()) }
+    }
+
+    pub fn loaded_b(&self) -> String {
+        self.loaded_b.lock().map(|p| p.clone()).unwrap_or_default()
+    }
+
+    /// Loads a loop into deck B: sliced as deck A's loops are (its file's markers, else Medium auto slicing).
+    pub fn load_b(&self, path: &str, params: &SlicexParams) -> Result<(), String> {
+        let s = os_engine::sample::load_shared(Path::new(path)).map_err(|e| format!("{path}: {e}"))?;
+        let info = std::fs::read(path).map(|b| slicing::wav_info(&b)).unwrap_or_default();
+        let mut st = State::default();
+        st.set_path(path);
+        let (gb, gt) = slicing::guess_tempo(s.frames(), s.rate);
+        st.set_f32(H_BEATS, info.beats.unwrap_or(gb));
+        st.set_f32(H_BPM, info.bpm.unwrap_or(gt));
+        st.slices = slicing::builtin(&info, s.frames());
+        if st.slices.is_empty() {
+            st.slices = slicing::auto(&s.left, &s.right, s.rate, slicing::AUTO_DB[1]);
+        }
+        let mut x = params.ext();
+        x.deck_b = st.to_bytes();
+        params.set_ext(x);
+        if let Ok(mut l) = self.loaded_b.lock() {
+            *l = path.to_string();
+        }
+        if let Ok(mut cur) = self.sample_b.lock() {
+            *cur = Some(s);
+        }
+        self.rebuild(params);
+        Ok(())
     }
 
     /// Replaces the saved state (slices, tempo, ...) and plays it.
@@ -169,9 +219,9 @@ impl LemonSlicex {
     fn block(&self) -> dsp::Block {
         let v = self.params.values();
         let (mod_x, mod_y) = self.params.pad();
-        let smooth = self.params.ext.try_read().map_or(true, |e| e.smooth);
+        let (smooth, crossfade) = self.params.ext.try_read().map_or((true, false), |e| (e.smooth, e.crossfade));
         let beat = 60.0 / self.shared.tempo().unwrap_or(120.0);
-        dsp::Block { cents: f64::from(v.pitch), attack_ms: f64::from(v.attack), decay_ms: f64::from(v.decay), declick: v.declick, to_end: v.to_end, mod_x, mod_y, smooth, beat }
+        dsp::Block { cents: f64::from(v.pitch), attack_ms: f64::from(v.attack), decay_ms: f64::from(v.decay), declick: v.declick, to_end: v.to_end, mod_x, mod_y, smooth, beat, crossfade }
     }
 }
 
@@ -211,6 +261,11 @@ impl Plugin for LemonSlicex {
             }
         } else {
             self.shared.rebuild(&self.params);
+        }
+        if State::parse(&self.params.ext().deck_b).map(|s| s.path()).unwrap_or_default() != self.shared.loaded_b()
+            && let Err(e) = self.shared.open_b(&self.params)
+        {
+            nih_log!("Mango Slicex: {e}");
         }
         self.take_kit();
         true
