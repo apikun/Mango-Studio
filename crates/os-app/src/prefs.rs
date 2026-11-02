@@ -404,6 +404,14 @@ pub const SMART_DISABLE: Check = Check { key: "smart_disable", label: "Smart dis
 /// Audio ▸ CPU: stored and shown only. Lemon Studio's ticks follow audio/timing.md whatever it says. Spec: as above.
 pub const ALIGN_TICK_LENGTHS: Check = Check { key: "align_tick_lengths", label: "Align tick lengths", default: false };
 
+/// Audio ▸ CPU (Linux): while it is on, the program holds the kernel's PM QoS CPU latency constraint through
+/// `/dev/cpu_dma_latency` at 0 (`crate::cpu_dma_latency`), so the CPUs keep out of their deep sleep states (C-states)
+/// — wake-up latencies that at small buffers make the audio callback late: dropouts. Writing the device is the root's
+/// on most systems (a udev rule lets a group in); a refused toggle says so where it was clicked. Windows and macOS
+/// have no such device, so the check shows only where it works (the Audio page's CPU group, Linux).
+#[cfg(target_os = "linux")]
+pub const CPU_DEEP_SLEEP: Check = Check { key: "cpu_dma_latency", label: "Prevent CPU deep sleep (C-states)", default: false };
+
 /// Audio ▸ Mixer: stored and shown only. The sampler keeps the one kernel audio/sampler.md gives, whatever is chosen;
 /// when the live kernels are measured, the choice will pick among them. Its menu groups the choices under grey
 /// headings (`headings`). Spec: as above.
@@ -677,11 +685,16 @@ fn slider_in(st: &Store, s: &Slider) -> u16 {
 pub const TEST_CHECK: Check = Check { key: "test_check", label: "Automatically check for updates", default: true };
 
 fn checks() -> impl Iterator<Item = &'static Check> {
+    // Linux only (`CPU_DEEP_SLEEP`): the check is declared, listed and painted where the device it holds exists.
+    #[cfg(target_os = "linux")]
+    let linux: &[&Check] = &[&CPU_DEEP_SLEEP];
+    #[cfg(not(target_os = "linux"))]
+    let linux: &[&Check] = &[];
     #[cfg(test)]
     let more: &[&Check] = &[&TEST_CHECK];
     #[cfg(not(test))]
     let more: &[&Check] = &[];
-    CHECKS.iter().chain(more).copied()
+    CHECKS.iter().chain(linux).chain(more).copied()
 }
 
 /// The declared check its page labels `label`.
@@ -787,7 +800,31 @@ impl App {
         if c.key == ROLLING_SAMPLER.key {
             self.rolling_sync();
         }
+        // Linux: the CPU deep sleep check holds the constraint or lets it go the moment it flips, and the hint bar
+        // tells how that went (`App::cpu_deep_sleep`), in the kernel's own words when it refuses.
+        #[cfg(target_os = "linux")]
+        if c.key == CPU_DEEP_SLEEP.key {
+            self.cpu_deep_sleep(on);
+        }
         self.invalidate();
+    }
+
+    /// Linux: the Audio ▸ CPU "Prevent CPU deep sleep (C-states)" check just flipped to `on` (`App::pref_toggle`):
+    /// the kernel's CPU latency constraint is held or let go now (`crate::cpu_dma_latency`), and the hint bar says how
+    /// that went — the device's permissions refuse a plain user on most systems, and the kernel's own words say so.
+    #[cfg(target_os = "linux")]
+    fn cpu_deep_sleep(&mut self, on: bool) {
+        let said: Result<String, String> = if on {
+            crate::cpu_dma_latency::enable_low_latency()
+                .map(|()| "held: the CPUs stay out of their deep sleep states".to_string())
+        } else {
+            crate::cpu_dma_latency::disable_low_latency();
+            Ok("released: the CPUs sleep as usual".to_string())
+        };
+        self.state.message = Some(match said {
+            Ok(said) => format!("{}: {said}", CPU_DEEP_SLEEP.label),
+            Err(e) => format!("{}: {e}", CPU_DEEP_SLEEP.label),
+        });
     }
 
     /// A declared combo was clicked (`SAct::Combo`): the menu of its choices under its box (`x`, `y`), the current one

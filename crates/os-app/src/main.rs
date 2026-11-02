@@ -33,6 +33,8 @@ mod score_log;
 mod clip_colors;
 mod clock;
 mod cpu;
+#[cfg(target_os = "linux")]
+mod cpu_dma_latency;
 mod data_folder;
 mod device;
 mod dialog;
