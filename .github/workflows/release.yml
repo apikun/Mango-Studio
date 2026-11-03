@@ -79,11 +79,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # libclang for the time stretcher's bindings, ALSA's and Wayland's development files for the build (as ci.yml).
+      # libclang for the time stretcher's bindings, ALSA's, JACK's and Wayland's development files for the build (as ci.yml).
       - name: Native dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libasound2-dev libwayland-dev libclang-dev pkg-config
+          sudo apt-get install -y --no-install-recommends libasound2-dev libjack-jackd2-dev libwayland-dev libclang-dev pkg-config
 
       - uses: dtolnay/rust-toolchain@stable
 
