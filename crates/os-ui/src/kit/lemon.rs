@@ -443,9 +443,9 @@ pub fn bar_knob(c: &mut Canvas, cx: f32, cy: f32, r: f32, value: f32, bipolar: b
         (inner.bottom() - v * inner.h, inner.bottom())
     };
     if y1 - y0 >= 1.0 {
-        let top = if lit { arc.mix(Color::rgb(0xffffff), 0.5) } else { arc.mix(Color::rgb(0xffffff), 0.28) };
-        let bottom = if lit { arc.mix(Color::rgb(0xffffff), 0.12) } else { arc };
-        c.fill_rect_gradient(Rect::new(inner.x, y0, inner.w, y1 - y0), top, bottom, (inner.w / 2.0).min((y1 - y0) / 2.0));
+        // One flat colour, a little lighter under the pointer.
+        let col = if lit { arc.mix(Color::rgb(0xffffff), 0.18) } else { arc };
+        c.fill_rrect(Rect::new(inner.x, y0, inner.w, y1 - y0), (inner.w / 2.0).min((y1 - y0) / 2.0), col);
     }
 }
 
@@ -478,7 +478,16 @@ pub fn toggle(c: &mut Canvas, cx: f32, cy: f32, on: bool, st: State) {
 
 /// Panel or card: outlined, radius 10.
 pub fn plug_panel(c: &mut Canvas, r: Rect) {
-    outlined(c, r, 10.0, plug::PANEL_LINE, plug::PANEL);
+    // The mixer strips' card: black edge, a grey rim, a face lit from the top and a shine along its top edge, so the
+    // panel stands out of the window like a real object.
+    let (top, low) = (Color::rgb(0x202020), Color::rgb(0x121212));
+    c.fill_rrect(r, 10.0, Color::rgb(0x000000));
+    c.fill_rrect(r.inset(1.0), 9.0, Color::rgb(0x2e2e2e));
+    let face = r.inset(2.0);
+    c.fill_rect_gradient(face, top, low, 8.0);
+    if face.w > 12.0 {
+        c.fill_rrect(Rect::new(face.x + 5.0, face.y + 1.0, face.w - 10.0, 1.0), 0.5, top.mix(Color::rgb(0xffffff), 0.12));
+    }
 }
 
 /// Greys out a panel (`plug_panel`) whose controls do nothing yet: the editor background over it, at the strength of
