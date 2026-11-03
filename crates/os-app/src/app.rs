@@ -8817,8 +8817,10 @@ impl App {
                 crate::prefs::set_check(&crate::prefs::BABY_MODE, on);
                 if on {
                     crate::baby::seed_demo(self);
+                    self.state.message = Some("Baby mode: on — the simple studio".into());
+                } else {
+                    self.state.message = Some("Baby mode: off — the full studio".into());
                 }
-                s.message = Some(if on { "Baby mode: on — the simple studio".into() } else { "Baby mode: off — the full studio".into() });
                 self.invalidate();
             }
             Action::BabyAdd => {
@@ -8837,13 +8839,13 @@ impl App {
             }
             Action::BabySeek => {
                 // A tap on the ruler moves the playhead; while playing, playback jumps with it.
-                let tick = crate::baby::tick_at(s, self.mouse.0);
+                let tick = crate::baby::tick_at(&self.state, self.mouse.0);
                 let running = matches!(self.transport.state(), crate::transport::State::Playing | crate::transport::State::Paused);
                 if running {
                     self.transport.stop();
                     self.record_stopped();
                 }
-                s.playlist.pos = tick;
+                self.state.playlist.pos = tick;
                 if running {
                     self.play_song_from(tick);
                 } else {
