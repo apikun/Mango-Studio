@@ -186,6 +186,18 @@ pub enum Action {
     Monitor,
     /// The rolling sampler's strip (issue #82): the wave (select / drag out) and the collapse arrow.
     Rolling(crate::views::rolling::Act),
+    /// Baby Mode (crate::baby): the switch (toolbar, settings), then its screen's controls — the
+    /// lanes, a track row, the Add-track sheet, the ruler, an effect's LED / open tap, the note
+    /// preview's edit hand-off.
+    Baby,
+    BabyArea,
+    BabyTrack(u16),
+    BabyAdd,
+    BabyAddFamily(usize),
+    BabySeek,
+    BabyFxLed(u16, u8),
+    BabyFxShow(u16, u8),
+    BabyEditNotes,
     /// The toolbar's CPU panel: double-click opens the Plugin performance monitor, right-click its menu.
     CpuPanel,
     /// The Plugin performance monitor's controls (spec: ui/plugin-performance.md).
@@ -659,6 +671,8 @@ pub enum Seg {
     PlPicker,
     /// The rolling sampler's strip between the toolbar and the playlist.
     RollStrip,
+    /// Baby Mode's whole workspace (crate::baby): it repaints as one part.
+    Baby,
 }
 
 /// What each part registered and where it drew in the last paint, so a partial repaint can keep the hits of the parts
@@ -904,6 +918,8 @@ pub enum Drag {
     /// next step is due at `next`) (spec: ui/song-position-slider.md §3).
     SongPos { dx: f32 },
     SongPosHold { next: std::time::Instant },
+    /// Baby Mode's timeline: the lanes scroll with the drag (`x0` press x, `scroll0` scroll at it).
+    BabyScroll { x0: f32, scroll0: u32 },
     /// The piano roll's grid / event panel splitter: `dy` = grab offset from the band's top, `top` = the grid's top,
     /// `h` = the height the grid and the panel share.
     PianoSplit { dy: f32, top: f32, h: f32 },
@@ -1063,6 +1079,8 @@ pub struct State {
     pub plugin_pos: (f32, f32),
     pub selected_channel: usize,
     pub selected_mixer: u16,
+    /// Baby Mode's own bits: whether the Add-track sheet is open and the timeline's scroll.
+    pub baby: crate::baby::BabyState,
     pub pattern: u16,
     pub pattern_mixer_filter: Option<u16>,
     pub song_mode: bool,
@@ -1523,6 +1541,7 @@ impl App {
                 perf: crate::perf::Perf::default(),
                 tapper: Default::default(),
                 touch: Default::default(),
+                baby: Default::default(),
                 strum: Default::default(),
                 arp: Default::default(),
                 piano_dlg: Default::default(),
@@ -4120,6 +4139,14 @@ impl App {
                         self.damage_rect(Rect::new(x - 8.0, top, 20.0, g.bottom() - top));
                     }
                 }
+            } else if now.song && crate::baby::on() {
+                // Baby Mode's playhead (crate::baby): the ruler's marker and the lanes' line.
+                for t in [old.tick, now.tick] {
+                    let x = crate::baby::x_of_tick(&self.state, t as u32);
+                    let lanes = crate::baby::lanes_rect(&self.state);
+                    let ruler = crate::baby::ruler_rect(&self.state);
+                    self.damage_rect(Rect::new(x - 8.0, ruler.y, 20.0, lanes.bottom() - ruler.y));
+                }
             }
             if piano {
                 if let Some(g) = self.piano_geom() {
@@ -5997,6 +6024,12 @@ impl App {
                     self.damage_band(TEMPO_RECT);
                     self.damage_band(HINT_RECT);
                 }
+                Drag::BabyScroll { x0, scroll0 } => {
+                    let s = &mut self.state;
+                    let ppt = crate::baby::px_per_tick(s).max(0.01);
+                    s.baby.scroll_x = (scroll0 as f32 - (x - x0) / ppt).max(0.0) as u32;
+                    self.invalidate();
+                }
             }
             return true;
         }
@@ -6312,6 +6345,11 @@ impl App {
                     self.act(a);
                 }
             }
+            return;
+        }
+        // Baby Mode's lanes take their own simple press (an open popup closes just below, on the way).
+        if action == Some(Action::BabyArea) && self.state.playlist.popup.is_none() {
+            self.baby_press();
             return;
         }
         // Playlist popup menus close on any click outside them (their scroll bars are in them); a click elsewhere
@@ -6678,6 +6716,37 @@ impl App {
         self.invalidate();
     }
 
+    /// Baby Mode's left press on the lanes (crate::baby): a clip selects (its pattern feeds the note
+    /// preview, its track takes the selection), the ground clears it; any lanes press then drags a
+    /// scroll of the timeline.
+    fn baby_press(&mut self) {
+        let (x, y) = self.mouse;
+        let s = &mut self.state;
+        if let Some(i) = crate::baby::clip_at(s, x, y) {
+            let c = crate::playlist::clips(s)[i].clone();
+            s.playlist.sel = vec![i];
+            s.playlist.track = c.track;
+            if let os_model::ClipSource::Pattern(n) = c.source {
+                s.pattern = n;
+            }
+        } else {
+            s.playlist.sel.clear();
+        }
+        self.drag = Some(Drag::BabyScroll { x0: x, scroll0: s.baby.scroll_x });
+        self.invalidate();
+    }
+
+    /// Baby Mode's right press (long-press on touch) on the lanes: a clip's usual menu at the mouse —
+    /// the playlist's own, so mute, colour, delete and the rest all work here too.
+    fn baby_right_press(&mut self) {
+        let (x, y) = self.mouse;
+        if let Some(i) = crate::baby::clip_at(&self.state, x, y) {
+            self.state.playlist.sel = vec![i];
+            self.state.playlist.popup = Some(crate::playlist::clip_menu(&self.state, i, x, y));
+            self.invalidate();
+        }
+    }
+
     /// Middle button: grab-scroll the Piano roll and Playlist (FL manual: middle-drag scrolls
     /// both directions).
     pub fn mouse_down_middle(&mut self) {
@@ -6799,6 +6868,8 @@ impl App {
                 crate::patterns::run(&mut self.state, crate::patterns::Cmd::FindNext, (at.x, at.y));
                 return self.invalidate();
             }
+            // Baby Mode's lanes: a clip's usual menu at the mouse (its long-press on touch).
+            Some(Action::BabyArea) => return self.baby_right_press(),
             Some(Action::CpuPanel) => {
                 self.cpu_menu(x, y);
                 return self.invalidate();
@@ -8738,6 +8809,70 @@ impl App {
                 s.monitor.debug = false;
                 self.invalidate();
             }
+            // The lanes take their press in mouse_down (select / scroll / menu); a click's release does nothing.
+            Action::BabyArea => {}
+            // Baby Mode (crate::baby): the switch, then its screen's controls.
+            Action::Baby => {
+                let on = !crate::baby::on();
+                crate::prefs::set_check(&crate::prefs::BABY_MODE, on);
+                if on {
+                    crate::baby::seed_demo(self);
+                    self.state.message = Some("Baby mode: on — the simple studio".into());
+                } else {
+                    self.state.message = Some("Baby mode: off — the full studio".into());
+                }
+                self.invalidate();
+            }
+            Action::BabyAdd => {
+                s.baby.add_open = !s.baby.add_open;
+                self.invalidate();
+            }
+            Action::BabyAddFamily(tile) => {
+                s.baby.add_open = false;
+                crate::baby::add_family(self, tile);
+                self.invalidate();
+            }
+            Action::BabyTrack(t) => {
+                s.playlist.track = t;
+                s.playlist.sel.clear();
+                self.invalidate();
+            }
+            Action::BabySeek => {
+                // A tap on the ruler moves the playhead; while playing, playback jumps with it.
+                let tick = crate::baby::tick_at(&self.state, self.mouse.0);
+                let running = matches!(self.transport.state(), crate::transport::State::Playing | crate::transport::State::Paused);
+                if running {
+                    self.transport.stop();
+                    self.record_stopped();
+                }
+                self.state.playlist.pos = tick;
+                if running {
+                    self.play_song_from(tick);
+                } else {
+                    self.invalidate();
+                }
+            }
+            Action::BabyFxLed(track, slot) => {
+                if let Some(m) = s.project.mixer.get_mut(usize::from(track))
+                    && let Some(on) = m.slot_on.get_mut(slot as usize)
+                {
+                    *on = !*on;
+                }
+                s.piano.dirty = true;
+                self.invalidate();
+            }
+            Action::BabyFxShow(track, slot) => {
+                // The usual path: a hosted effect opens its editor (where plugin windows do not exist, the app says so).
+                s.mixer.pending.push(crate::mixer::FxReq::Show { track, slot });
+                self.invalidate();
+            }
+            Action::BabyEditNotes => {
+                // The notes edit in the piano roll, the full studio's editor: Baby Mode steps aside for it.
+                s.raise(Win::PianoRoll);
+                crate::prefs::set_check(&crate::prefs::BABY_MODE, false);
+                s.message = Some("Baby mode: off — editing in the full studio".into());
+                self.invalidate();
+            }
             Action::CableDebug(d) => self.cable_debug(d),
             Action::Tempo => {
                 // The digit under the press sets the step: the whole number, else the decimal place it is over.
@@ -8782,6 +8917,11 @@ impl App {
             Action::ToggleWin(Win::Tapper) => self.toggle_tapper(),
             Action::ToggleWin(Win::Touch) => self.toggle_touch(),
             Action::ToggleWin(w) => {
+                // The studio's windows belong to the full studio: opening one leaves Baby Mode first.
+                if crate::baby::on() && matches!(w, Win::Playlist | Win::Mixer | Win::PianoRoll | Win::ChannelRack) {
+                    crate::prefs::set_check(&crate::prefs::BABY_MODE, false);
+                    s.message = Some("Baby mode: off — the full studio".into());
+                }
                 if s.shown(w) && s.in_front(w) {
                     s.hide(w);
                 } else {
@@ -9007,6 +9147,10 @@ impl App {
             }
             // A second one leaves it maximized (spec: ui/toolbar-buttons.md §2).
             Action::ShowMax(w) => {
+                if crate::baby::on() && matches!(w, Win::Playlist | Win::Mixer | Win::PianoRoll | Win::ChannelRack) {
+                    crate::prefs::set_check(&crate::prefs::BABY_MODE, false);
+                    s.message = Some("Baby mode: off — the full studio".into());
+                }
                 s.raise(w);
                 if let Some(i) = w.slot() {
                     s.wins[i].mini = false;
@@ -10649,6 +10793,48 @@ mod tests {
         }
         assert!(seen.len() > 3, "{seen:?}");
         assert_ne!(col(&a), None, "the colour is set");
+    }
+
+    /// Baby Mode paints the simple, GarageBand-like studio: the switch seeds a demo song, its hits
+    /// fill the workspace, a clip tap selects it and feeds the note preview, and switching back
+    /// brings the full studio's playlist with it. Set PAINT_BABY_PNG to drop a screenshot in /tmp.
+    #[test]
+    fn baby_mode_paints_the_simple_studio() {
+        let mut a = App::new(None);
+        a.plugins.available = crate::plugins::builtin();
+        a.state.project = test_project();
+        let mut c = Canvas::new(1280, 800, 1.0).unwrap();
+        frame(&mut a, &mut c, None);
+        // On: the toolbar's switch toggles, the demo seeds, the screen paints its own controls.
+        a.act(Action::Baby);
+        assert!(crate::baby::on());
+        assert!(!crate::playlist::clips(&a.state).is_empty(), "the demo song seeded");
+        frame(&mut a, &mut c, None);
+        let area = hit_rect(&a, &Action::BabyArea);
+        assert!(area.w > 100.0, "the lanes are there");
+        assert!(hit_rect(&a, &Action::BabyTrack(0)).h > 10.0, "a track row is there");
+        assert!(hit_rect(&a, &Action::BabyAdd).w > 50.0, "the Add Track button is there");
+        assert!(hit_rect(&a, &Action::BabySeek).h > 10.0, "the ruler is there");
+        // A tap on the first clip selects it and feeds the preview; a tap on the ground clears.
+        let clip0 = crate::baby::clip_rect(&a.state, &crate::playlist::clips(&a.state)[0]);
+        a.mouse_move(clip0.x + 6.0, clip0.y + 20.0);
+        a.mouse_down();
+        a.mouse_up();
+        assert!(a.state.playlist.sel.contains(&0), "the tap selected the clip");
+        assert_eq!(a.state.playlist.track, 0);
+        assert!(a.state.pattern >= 1, "the pattern feeds the preview");
+        a.mouse_move(area.right() - 4.0, area.y + 4.0);
+        a.mouse_down();
+        a.mouse_up();
+        assert!(a.state.playlist.sel.is_empty(), "the ground cleared it");
+        if std::env::var("PAINT_BABY_PNG").is_ok() {
+            c.pixmap.save_png(std::path::Path::new("/tmp/baby_mode.png")).unwrap();
+        }
+        // Off again: the full studio's playlist is back.
+        a.act(Action::Baby);
+        assert!(!crate::baby::on());
+        frame(&mut a, &mut c, None);
+        assert!(a.pl_grid.is_some(), "the playlist is back");
     }
 
     use super::*;
