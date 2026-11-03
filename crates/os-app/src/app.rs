@@ -198,6 +198,18 @@ pub enum Action {
     BabyFxLed(u16, u8),
     BabyFxShow(u16, u8),
     BabyEditNotes,
+    /// Baby Mode (crate::baby): the switch (toolbar, settings), then its screen's controls — the
+    /// lanes, a track row, the Add-track sheet, the ruler, an effect's LED / open tap, the note
+    /// preview's edit hand-off.
+    Baby,
+    BabyArea,
+    BabyTrack(u16),
+    BabyAdd,
+    BabyAddFamily(usize),
+    BabySeek,
+    BabyFxLed(u16, u8),
+    BabyFxShow(u16, u8),
+    BabyEditNotes,
     /// The toolbar's CPU panel: double-click opens the Plugin performance monitor, right-click its menu.
     CpuPanel,
     /// The Plugin performance monitor's controls (spec: ui/plugin-performance.md).
@@ -673,6 +685,8 @@ pub enum Seg {
     RollStrip,
     /// Baby Mode's whole workspace (crate::baby): it repaints as one part.
     Baby,
+    /// Baby Mode's whole workspace (crate::baby): it repaints as one part.
+    Baby,
 }
 
 /// What each part registered and where it drew in the last paint, so a partial repaint can keep the hits of the parts
@@ -1079,6 +1093,8 @@ pub struct State {
     pub plugin_pos: (f32, f32),
     pub selected_channel: usize,
     pub selected_mixer: u16,
+    /// Baby Mode's own bits: whether the Add-track sheet is open and the timeline's scroll.
+    pub baby: crate::baby::BabyState,
     /// Baby Mode's own bits: whether the Add-track sheet is open and the timeline's scroll.
     pub baby: crate::baby::BabyState,
     pub pattern: u16,
@@ -1541,6 +1557,7 @@ impl App {
                 perf: crate::perf::Perf::default(),
                 tapper: Default::default(),
                 touch: Default::default(),
+                baby: Default::default(),
                 baby: Default::default(),
                 strum: Default::default(),
                 arp: Default::default(),
@@ -10789,6 +10806,48 @@ mod tests {
         }
         assert!(seen.len() > 3, "{seen:?}");
         assert_ne!(col(&a), None, "the colour is set");
+    }
+
+    /// Baby Mode paints the simple, GarageBand-like studio: the switch seeds a demo song, its hits
+    /// fill the workspace, a clip tap selects it and feeds the note preview, and switching back
+    /// brings the full studio's playlist with it. Set PAINT_BABY_PNG to drop a screenshot in /tmp.
+    #[test]
+    fn baby_mode_paints_the_simple_studio() {
+        let mut a = App::new(None);
+        a.plugins.available = crate::plugins::builtin();
+        a.state.project = test_project();
+        let mut c = Canvas::new(1280, 800, 1.0).unwrap();
+        frame(&mut a, &mut c, None);
+        // On: the toolbar's switch toggles, the demo seeds, the screen paints its own controls.
+        a.act(Action::Baby);
+        assert!(crate::baby::on());
+        assert!(!crate::playlist::clips(&a.state).is_empty(), "the demo song seeded");
+        frame(&mut a, &mut c, None);
+        let area = hit_rect(&a, &Action::BabyArea);
+        assert!(area.w > 100.0, "the lanes are there");
+        assert!(hit_rect(&a, &Action::BabyTrack(0)).h > 10.0, "a track row is there");
+        assert!(hit_rect(&a, &Action::BabyAdd).w > 50.0, "the Add Track button is there");
+        assert!(hit_rect(&a, &Action::BabySeek).h > 10.0, "the ruler is there");
+        // A tap on the first clip selects it and feeds the preview; a tap on the ground clears.
+        let clip0 = crate::baby::clip_rect(&a.state, &crate::playlist::clips(&a.state)[0]);
+        a.mouse_move(clip0.x + 6.0, clip0.y + 20.0);
+        a.mouse_down();
+        a.mouse_up();
+        assert!(a.state.playlist.sel.contains(&0), "the tap selected the clip");
+        assert_eq!(a.state.playlist.track, 0);
+        assert!(a.state.pattern >= 1, "the pattern feeds the preview");
+        a.mouse_move(area.right() - 4.0, area.y + 4.0);
+        a.mouse_down();
+        a.mouse_up();
+        assert!(a.state.playlist.sel.is_empty(), "the ground cleared it");
+        if std::env::var("PAINT_BABY_PNG").is_ok() {
+            c.pixmap.save_png(std::path::Path::new("/tmp/baby_mode.png")).unwrap();
+        }
+        // Off again: the full studio's playlist is back.
+        a.act(Action::Baby);
+        assert!(!crate::baby::on());
+        frame(&mut a, &mut c, None);
+        assert!(a.pl_grid.is_some(), "the playlist is back");
     }
 
     use super::*;
