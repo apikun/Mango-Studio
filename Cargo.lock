@@ -2029,6 +2029,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lemon-formula-controller"
+version = "0.6.1"
+dependencies = [
+ "lemon-small-fx",
+ "nih_plug",
+ "os-engine",
+ "os-plugkit",
+]
+
+[[package]]
 name = "lemon-keys"
 version = "0.6.1"
 dependencies = [
@@ -2083,6 +2093,16 @@ dependencies = [
  "serde_json",
  "tiny-skia",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "lemon-peak-controller"
+version = "0.6.1"
+dependencies = [
+ "lemon-small-fx",
+ "nih_plug",
+ "os-engine",
+ "os-plugkit",
 ]
 
 [[package]]
@@ -3210,11 +3230,13 @@ dependencies = [
  "lemon-fast-distortion",
  "lemon-filter",
  "lemon-flanger",
+ "lemon-formula-controller",
  "lemon-keys",
  "lemon-kick",
  "lemon-limiter",
  "lemon-mini",
  "lemon-parametric-eq-2",
+ "lemon-peak-controller",
  "lemon-phaser",
  "lemon-pluck",
  "lemon-reverb",
@@ -3284,9 +3306,12 @@ name = "os-clap"
 version = "0.6.1"
 dependencies = [
  "clap-sys 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lemon-formula-controller",
  "lemon-limiter",
  "lemon-parametric-eq-2",
+ "lemon-peak-controller",
  "lemon-sampler",
+ "lemon-small-fx",
  "libloading 0.8.9",
  "os-engine",
  "os-host",

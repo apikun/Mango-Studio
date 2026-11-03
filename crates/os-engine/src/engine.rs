@@ -27,6 +27,7 @@ use crate::instrument::{Instrument, SharedInstrument, Slot, TransportInfo};
 use crate::laws;
 use crate::sample::{Sample, SampleLibrary};
 
+mod controllers;
 mod layers;
 mod marks;
 mod notes;
@@ -1111,6 +1112,8 @@ pub struct Engine {
     /// which values are set in place rather than smoothed (playback's first tick after a start, seek or loop).
     auto_last: Vec<(os_model::target::Target, i64)>,
     auto_from: u64,
+    /// Controller links from slots to targets (spec: plugins/lemon-peak-controller.md "Links").
+    ctl_links: Vec<controllers::CtlLink>,
     /// The project's initial values the engine can set (song mode), as automation values: a song that loops sets them
     /// again at its start (spec: ui/settings-choices.md "Advanced: Initialize controls automatically").
     init: Vec<(os_model::target::Target, i64)>,
@@ -1571,6 +1574,7 @@ impl Engine {
             curves,
             auto_last: Vec::new(),
             auto_from: 0,
+            ctl_links: controllers::links(project),
             init,
             rate,
             channels,
@@ -2710,6 +2714,7 @@ impl Engine {
         self.run_controls();
         self.run_automation(len);
         self.run_param_automation(len);
+        self.run_controllers(len);
         for b in &mut self.bus {
             b.clear();
             b.resize(len * 2, 0.0);
@@ -3377,6 +3382,8 @@ impl Engine {
                 }
             }
             let rate = self.rate;
+            // The tick being mixed is the one before `tick` (controllers that work on the song's ticks).
+            let tick = (self.tick.saturating_sub(1), self.ppq);
             let (dry, l, r) = (&mut self.fx_dry, &mut self.scratch.0, &mut self.scratch.1);
             let busy = (&mut self.busy_until, self.busy_wait, self.exporting, &mut self.missed);
             let bus = &mut self.bus;
@@ -3389,7 +3396,7 @@ impl Engine {
                     let key = feed(fx.key).map(|k| (k, &mut *key_buf));
                     let main = feed(fx.main).map(|k| (k, &mut *main_buf));
                     let extra = (t, &track.routes[..], &mut bus[..]);
-                    run_slot(fx, &mut buf, rate, limit, song, dry, l, r, (&mut *busy.0, busy.1, busy.2, &mut *busy.3), &mut moved, extra, (key, main));
+                    run_slot(fx, &mut buf, rate, limit, (song, tick), dry, l, r, (&mut *busy.0, busy.1, busy.2, &mut *busy.3), &mut moved, extra, (key, main));
                 }
             }
             track.eq.process(&mut buf);
@@ -3811,7 +3818,7 @@ fn run_slot(
     buf: &mut [f32],
     rate: u32,
     limit: f32,
-    song: &TransportInfo,
+    (song, tick): (&TransportInfo, (u64, u16)),
     dry: &mut Vec<f32>,
     l: &mut Vec<f32>,
     r: &mut Vec<f32>,
@@ -3857,6 +3864,7 @@ fn run_slot(
             if fresh {
                 e.reset();
             }
+            e.transport(song, tick);
             match key {
                 Some(key) => e.process_keyed(buf, key),
                 None => e.process(buf),
