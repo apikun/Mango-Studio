@@ -804,6 +804,7 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
                 Check2("Force refreshes", true, "Transparent menus", true),
                 Check("Thick lines", false),
                 Check("High visibility", false),
+                Check("Baby mode", false),
                 combo("Off", 146.0, "Colorful waveforms"),
             ]),
             gf("Language", false, vec![

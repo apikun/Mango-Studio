@@ -812,6 +812,7 @@ fn modes(ui: &mut Ui, c: &Ctx) -> bool {
         (Icon::StepEdit, "Step editing (Ctrl+E)"),
         (Icon::Link, "Enable groups (Shift+Alt+G)"),
         (Icon::MidiControl, "Multilink to controllers (Ctrl+J)"),
+        (Icon::Touch, "Baby Mode: the simple, GarageBand-like studio"),
     ]
     .into_iter()
     .enumerate()
@@ -825,6 +826,7 @@ fn modes(ui: &mut Ui, c: &Ctx) -> bool {
             1 => (crate::autoscroll::on(), Action::AutoScroll),
             2 => (crate::step_edit::on(), Action::StepEdit),
             3 => (crate::enable_groups::on(), Action::EnableGroups),
+            5 => (crate::baby::on(), Action::Baby),
             _ => (s.multilink.on, Action::Multilink),
         };
         tool_button(ui, r, icon, on, action, hint);

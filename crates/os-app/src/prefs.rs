@@ -364,6 +364,11 @@ pub const LEGACY_SCALING: Combo =
 /// visibility (2026-10-16)".
 pub const HIGH_VISIBILITY: Check = Check { key: "high_visibility", label: "High visibility", default: false };
 
+/// General ▸ Display / the toolbar's mode buttons: Baby Mode, the simple GarageBand-like studio over
+/// the same project (a user request, "a way easier version of Mango"). On, the workspace is the Baby
+/// layout (`crate::baby`); off, the full studio. Live-read, so the toolbar switch and this row agree.
+pub const BABY_MODE: Check = Check { key: "baby_mode", label: "Baby mode", default: false };
+
 /// General ▸ Display: stored and shown only. Lemon Studio redraws its whole window itself each frame, so there is
 /// nothing to force. Spec: ui/settings-choices.md "Display: PPI ruler, Force refreshes, Thick lines, High visibility
 /// (2026-10-16)".
@@ -587,6 +592,7 @@ pub const CHECKS: &[&Check] = &[
     &AUTO_KEEP_ON_DISK,
     &THREADED_SAMPLE_LOADING,
     &HIGH_VISIBILITY,
+    &BABY_MODE,
     &FORCE_REFRESHES,
     &THICK_LINES,
     &TRANSPARENT_MENUS,

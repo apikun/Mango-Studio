@@ -14,6 +14,7 @@ pub mod cabledebug;
 pub mod channel_win;
 pub mod data_folder;
 pub mod factory_folder;
+pub mod baby;
 pub mod dialog;
 pub mod menus;
 pub mod midi_form;
@@ -206,14 +207,25 @@ pub fn browser_w(s: &State) -> f32 {
 pub fn paint(ui: &mut Ui, s: &State, f: &FrameInfo) -> usize {
     let (w, h) = ui.c.size();
     // A maximized Playlist or Piano roll paints all of its rect (`framed`): the workspace under it needs no clear.
-    let cover = s.docked().filter(|w| matches!(w, Win::Playlist | Win::PianoRoll)).map(|w| s.win_rect(w));
+    // Baby Mode paints the whole workspace itself, so nothing under it needs keeping either.
+    let cover = (!crate::baby::on())
+        .then(|| s.docked())
+        .flatten()
+        .filter(|w| matches!(w, Win::Playlist | Win::PianoRoll))
+        .map(|w| s.win_rect(w));
     ui.c.set_cover(cover);
     ui.c.clear(ui.t.workspace);
     ui.c.set_cover(None);
 
+    // Baby Mode replaces the workspace with the simple, GarageBand-like screen (crate::baby): the
+    // toolbar band above and the overlays below keep working as they do.
+    let top = work_y(s);
+    if crate::baby::on() {
+        let r = Rect::new(0.0, top, w, h - top);
+        ui.part(Seg::Baby, r, |ui| baby::paint(ui, s, f));
+    } else {
     // Workspace (§9): the theme's picture or the watermark, then docked windows on top.
     let left = if s.show_browser { browser_w(s) } else { 0.0 };
-    let top = work_y(s);
     let work = Rect::new(left, top, w - left, h - top);
     let docked = s.docked();
     // spec: ui/flstheme.md §3 (BackMode, BackPicFilename); no watermark over a picture (`wallpaper`).
@@ -269,6 +281,7 @@ pub fn paint(ui: &mut Ui, s: &State, f: &FrameInfo) -> usize {
         }
         ui.c.pop_clip();
         ui.win = None;
+    }
     }
     if !s.toolbar.hidden {
         // At Toolbars scaling (spec: ui/ui-scaling.md §1): the band works in its own px, `k` of the window's each, so

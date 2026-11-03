@@ -15,6 +15,7 @@ mod audio_cfg;
 mod audio_file;
 mod audiolog;
 mod auto_close;
+mod baby;
 mod rolling;
 mod auto_tools;
 mod autoscroll;
