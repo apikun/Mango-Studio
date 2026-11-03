@@ -10630,6 +10630,27 @@ mod tests {
         assert_eq!((c.window, c.length), (Some((f64::from(beat), f64::from(3 * beat))), 2 * beat));
     }
 
+    /// Random colour gives a clip a different colour each press (issue #139: it seeded from the clip count and
+    /// index, so the same clip came back the same colour every time).
+    #[test]
+    fn a_clips_random_color_changes_each_press() {
+        use crate::playlist as pl;
+        let mut a = App::new(None);
+        a.state.project = test_project();
+        let bar = a.state.project.bar_ticks();
+        a.state.project.patterns.push(os_model::Pattern { number: 1, ..Default::default() });
+        pl::arr_mut(&mut a.state).clips.push(os_model::Clip::new(0, 2 * bar, 0, os_model::ClipSource::Pattern(1)));
+        let col = |a: &App| a.state.project.patterns.iter().find(|p| p.number == 1).and_then(|p| p.color).map(|c| format!("{c:?}"));
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..6 {
+            pl::run(&mut a, pl::Cmd::ClipRandomColor(0));
+            seen.insert(col(&a));
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        }
+        assert!(seen.len() > 3, "{seen:?}");
+        assert_ne!(col(&a), None, "the colour is set");
+    }
+
     use super::*;
 
     fn frame(app: &mut App, c: &mut Canvas, damage: Option<Rect>) {
