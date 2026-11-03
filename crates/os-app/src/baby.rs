@@ -41,7 +41,7 @@ pub struct BabyState {
 // ---------------------------------------------------------------------------------------------------------------
 // Layout (shared by the view, the click handlers and the tests)
 
-/// Width of the track list on the left.
+/// Width of the track list on the left, on a screen wide enough for it.
 pub const LIST_W: f32 = 190.0;
 /// Height of a track row (list and timeline lanes are the same rows).
 pub const ROW_H: f32 = 40.0;
@@ -62,15 +62,20 @@ pub fn work(s: &State) -> Rect {
     Rect::new(0.0, top, s.screen.0, s.screen.1 - top)
 }
 
+/// Width of the track list: the full 190 on desktop, down to 120 on a phone.
+pub fn list_w(s: &State) -> f32 {
+    LIST_W.min((s.screen.0 * 0.34).max(120.0))
+}
+
 pub fn list_rect(s: &State) -> Rect {
     let w = work(s);
-    Rect::new(0.0, w.y, LIST_W, w.h)
+    Rect::new(0.0, w.y, list_w(s), w.h)
 }
 
 /// The bar-number ruler (between the list and the instrument panel).
 pub fn ruler_rect(s: &State) -> Rect {
     let w = work(s);
-    Rect::new(LIST_W, w.y, w.w - LIST_W - panel_w(s), RULER_H)
+    Rect::new(list_w(s), w.y, w.w - list_w(s) - panel_w(s), RULER_H)
 }
 
 pub fn lanes_rect(s: &State) -> Rect {
@@ -103,8 +108,13 @@ fn lanes_h(s: &State) -> f32 {
     (h - PREVIEW_H).max((h * 0.55).max(2.0 * ROW_H))
 }
 
-/// Width of the instrument panel: a quarter of the screen, 190..300.
+/// Width of the instrument panel: a quarter of the screen, 190..300. A narrow phone keeps its width
+/// for the list and the timeline (GarageBand's library slides away there too); the panel comes back
+/// on landscape and on desktop.
 pub fn panel_w(s: &State) -> f32 {
+    if s.screen.0 < 620.0 {
+        return 0.0;
+    }
     (s.screen.0 * 0.25).clamp(190.0, 300.0)
 }
 
@@ -382,8 +392,9 @@ mod tests {
         let mut a = app();
         a.state.screen = (360.0, 640.0);
         let s = &a.state;
-        assert!(panel_w(s) <= 190.0 + 1.0, "a narrow screen keeps the panel slim");
-        assert!(lanes_rect(s).w > 100.0);
+        assert_eq!(panel_w(s), 0.0, "a phone keeps its width for the list and the timeline");
+        assert!(lanes_rect(s).w > 200.0, "the timeline takes the panel's share");
+        assert!(list_w(s) >= 120.0, "the list never collapses to nothing");
         assert_eq!(preview_rect(s), None, "too short for the preview");
         a.state.screen = (1280.0, 800.0);
         let s = &a.state;
