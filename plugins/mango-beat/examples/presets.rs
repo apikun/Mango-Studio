@@ -3,7 +3,8 @@
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
 //! Writes the factory presets (`crates/os-app/factory-presets/Mango Beat/*.ospreset`): one Mango Beat state each,
-//! the grids of a classic shape and the parameters at their defaults. Run from the repository root:
+//! the grids of a classic shape over the plugin's one-bar cycle and the parameters at their defaults. Run from the
+//! repository root:
 //!
 //! ```text
 //! cargo run -p mango-beat --example presets
@@ -49,13 +50,13 @@ fn presets() -> Vec<(&'static str, GridState)> {
         ("Tape Stop", mut_with_time(tape_stop)),
         ("Reverse", const_time(-1.0)),
         ("Scratch", mut_with_time(scratch)),
-        ("Trance Gate 1-8", mut_with_vol(dsp::gate(2))),
-        ("Trance Gate 1-16", mut_with_vol(dsp::gate(4))),
-        ("Triplet Chop", mut_with_vol(dsp::gate(3))),
+        ("Trance Gate 1-8", mut_with_vol(dsp::gate(8))),
+        ("Trance Gate 1-16", mut_with_vol(dsp::gate(16))),
+        ("Triplet Chop", mut_with_vol(dsp::gate(12))),
         ("Sidechain Pump", mut_with_vol(pump)),
         ("Half Time Gate", {
             let mut g = const_time(0.5);
-            g.volume[0] = dsp::gate(2);
+            g.volume[0] = dsp::gate(8);
             g
         }),
     ]
