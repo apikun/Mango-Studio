@@ -85,8 +85,8 @@ fn ruler(ui: &mut Ui, s: &State, f: &super::FrameInfo) {
     let x = playhead_x(s, f);
     if r.x <= x && x <= r.right() {
         for dy in 0..5i32 {
-            let w = 9.0 - f32::from(dy) * 2.0;
-            ui.c.fill_rect(Rect::new(x - w / 2.0, r.y + 2.0 + f32::from(dy) * 2.0, w, 2.0), t.s(baby::PLAYHEAD));
+            let w = 9.0 - dy as f32 * 2.0;
+            ui.c.fill_rect(Rect::new(x - w / 2.0, r.y + 2.0 + dy as f32 * 2.0, w, 2.0), t.s(baby::PLAYHEAD));
         }
     }
 }
@@ -239,7 +239,7 @@ fn panel(ui: &mut Ui, s: &State) {
     let fx_y = card.bottom() + 52.0;
     ui.c.text(fnt(10.0), inner.x, fx_y, t.s(baby::TEXT_DIM), "EFFECTS");
     let mt = s.project.channel(ch).map(|c| c.mixer_track).unwrap_or(0);
-    let (slots, ons) = crate::mixer::track(s, mt).map(|m| (m.slots, m.slot_on)).unwrap_or_default();
+    let (slots, ons) = crate::mixer::track(s, mt).map(|m| (m.slots.clone(), m.slot_on)).unwrap_or_default();
     let mut any = false;
     for (i, slot) in slots.iter().enumerate() {
         let Some(slot) = slot else { continue };
@@ -329,5 +329,6 @@ fn add_sheet(ui: &mut Ui, s: &State) {
     }
     let cancel = Rect::new(card.x + 14.0, card.bottom() - 40.0, card.w - 28.0, 30.0);
     ui.hit(cancel, Action::BabyAdd, "Close");
-    ui.c.text(fnt(12.0), card.cx() - ui.c.text_width(fnt(12.0), "Cancel") / 2.0, cancel.y + 7.0, t.s(baby::TEXT_DIM), "Cancel");
+    let cw = ui.c.text_width(fnt(12.0), "Cancel");
+    ui.c.text(fnt(12.0), card.cx() - cw / 2.0, cancel.y + 7.0, t.s(baby::TEXT_DIM), "Cancel");
 }

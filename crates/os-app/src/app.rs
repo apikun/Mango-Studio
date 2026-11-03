@@ -8809,6 +8809,8 @@ impl App {
                 s.monitor.debug = false;
                 self.invalidate();
             }
+            // The lanes take their press in mouse_down (select / scroll / menu); a click's release does nothing.
+            Action::BabyArea => {}
             // Baby Mode (crate::baby): the switch, then its screen's controls.
             Action::Baby => {
                 let on = !crate::baby::on();
