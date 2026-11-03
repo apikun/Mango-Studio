@@ -181,6 +181,10 @@ struct Frame {
     dirty: Cell<bool>,
     /// The last left press (server time, position) for double clicks.
     last_press: Cell<Option<(u32, i16, i16)>>,
+    /// Hyprland took its border off (`hyprland::plain`) since it was last mapped.
+    plain: Cell<bool>,
+    /// A title-bar drag Hyprland carries out (`hyprland::Drag`).
+    hypr_drag: RefCell<Option<super::hyprland::Drag>>,
 }
 
 /// A plugin window. Dropping it destroys the native window (close the plugin's editor first).
@@ -279,6 +283,7 @@ impl FrameWindow {
             if !docked && conn.above.get() {
                 c.change_property32(PropMode::REPLACE, win, a._NET_WM_STATE, AtomEnum::ATOM, &[a._NET_WM_STATE_ABOVE])?;
             }
+            // A detached frame tells the window manager where it opens (`centred`).
             size_hints(c, win, px(w, k), px(h, k), (!docked).then_some(at))?;
             // Clicks in the plugin's editor come here first (then go on to it, `pump`): they bring the window to the
             // front of the app's windows, as clicks on the frame do.
@@ -309,6 +314,8 @@ impl FrameWindow {
             scale: Cell::new(k),
             dirty: Cell::new(true),
             last_press: Cell::new(None),
+            plain: Cell::new(false),
+            hypr_drag: RefCell::new(None),
         });
         conn.frames.borrow_mut().insert(win, Rc::downgrade(&f));
         Ok(FrameWindow { f })
@@ -336,6 +343,7 @@ impl FrameWindow {
         let (c, root) = (&f.conn.c, f.conn.root);
         let screen = f.to_screen(0.0, 0.0);
         let _ = c.unmap_window(f.win);
+        f.plain.set(false);
         let _ = shape_reset(c, f.win);
         if on {
             expose();
@@ -392,6 +400,9 @@ impl FrameWindow {
     pub fn raise(&self) {
         let (c, a, win) = (&self.f.conn.c, &self.f.conn.atoms, self.f.win);
         let _ = c.map_window(win);
+        if self.detached() && !self.f.plain.replace(true) {
+            super::hyprland::plain();
+        }
         let _ = c.configure_window(win, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE));
         if !self.detached() {
             self.f.dirty.set(true);
@@ -753,6 +764,13 @@ impl Frame {
                 self.state.borrow_mut().moving = Some((i32::from(root.0), i32::from(root.1), x, y));
                 self.dirty.set(true);
             }
+            Reply::Move if super::hyprland::running() => {
+                // Hyprland ignores the request below: it moves the frame on our asking, in its own coordinates, as the
+                // pointer goes (the press's grab brings the motion here).
+                *self.hypr_drag.borrow_mut() = super::hyprland::Drag::start();
+                let (x, y) = self.top_left();
+                self.state.borrow_mut().moving = Some((i32::from(root.0), i32::from(root.1), x, y));
+            }
             Reply::Move => {
                 // The window manager moves it (it needs the pointer the press grabbed).
                 let _ = c.ungrab_pointer(x11rb::CURRENT_TIME);
@@ -824,13 +842,20 @@ impl Frame {
                 self.reply(r, (e.root_x, e.root_y));
             }
             Event::ButtonRelease(e) if e.detail == 1 => {
+                if let Some(mut d) = self.hypr_drag.borrow_mut().take() {
+                    d.follow(true);
+                }
                 let r = self.state.borrow_mut().left_up(f32::from(e.event_x) / k, f32::from(e.event_y) / k);
                 self.reply(r, (e.root_x, e.root_y));
             }
             Event::MotionNotify(e) if self.state.borrow().moving.is_some() => {
                 let Some((cx, cy, wx, wy)) = self.state.borrow().moving else { return };
                 let at = (wx + i32::from(e.root_x) - cx, wy + i32::from(e.root_y) - cy);
-                if at != self.pos.get() {
+                if self.state.borrow().detached {
+                    if let Some(d) = self.hypr_drag.borrow_mut().as_mut() {
+                        d.follow(false);
+                    }
+                } else if at != self.pos.get() {
                     self.pos.set(at);
                     let _ = self.conn.c.configure_window(self.win, &ConfigureWindowAux::new().x(at.0).y(at.1));
                     // Re-clip at once for the new place; what the move uncovered is shown by the next present.
