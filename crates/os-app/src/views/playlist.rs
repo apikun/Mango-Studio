@@ -262,7 +262,7 @@ pub fn paint(ui: &mut Ui, s: &State, r: Rect, f: &FrameInfo) {
     // start, named like the clip will be. Under the playhead, after FL's.
     if let Some(d) = &s.browser_drag {
         if let Some(dg) = drop_ghost(s, grid, d.x, d.y) {
-            let rad = lk::r_btn(t).min(dg.rect.w / 2.0).min(dg.rect.h / 2.0);
+            let rad = 0.0_f32; // square, like the clips
             ui.c.fill_rrect(dg.rect, rad, t.tx(0xffffff).with_alpha(26));
             ui.c.stroke_rrect(dg.rect, rad, 1.0, t.tx(0xd0d8dc).with_alpha(130));
             if dg.rect.w > 24.0 && dg.rect.h > TITLE_H {
@@ -491,7 +491,7 @@ fn picker(ui: &mut Ui, s: &State, p: Rect) {
             ui.c.fill_rect_gradient(row, ui.t.s(0x2a2d2e).shade(k), ui.t.s(0x232627).shade(k), 0.0);
         }
         if src == cur && !filled {
-            ui.c.stroke_rrect(row.inset(0.5), if lemon { lk::r_btn(ui.t) } else { 0.0 }, 1.0, ui.t.a(0xa8e44a));
+            ui.c.stroke_rrect(row.inset(0.5), if lemon { lk::r_btn(ui.t) } else { 0.0 }, 1.0, Color::rgb(0x8c8c8c));
         }
         let ic = Color::rgb(if filled { TITLE_TEXT } else { 0xa6aaab });
         icons::draw(ui.c, kind_icon(pl::source_kind(s, src)), Rect::new(row.x + 4.0, title.cy() - 6.0, 12.0, 12.0), ic);
@@ -894,7 +894,9 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
     // Body colour: the track's colour, else the source's (§2 "Body colour source").
     let color = pl::track_info(s, c.track).and_then(|t| t.color).or_else(|| pl::source_color(s, c.source)).map(rgb);
     let darken = |c: Color| c.mix(ui.t.s(0x000000), 0.55);
-    let tint = pl::clip_tint(s, c.source).map(rgb);
+    // A pattern clip's title strip takes the pattern's (or its track's) colour, as in FL's newer versions; the older
+    // measured look (a neutral strip) stays for a pattern with no colour.
+    let tint = pl::clip_tint(s, c.source).map(rgb).or_else(|| if kind == PickKind::Pattern { color } else { None });
 
     // Title strip: (edge rows, highlight row, gradient top, gradient bottom, text).
     let (edge, high, top, bottom, text, body) = if selected {
@@ -906,7 +908,7 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
     } else {
         let body = color.map_or(cc(t, DEFAULT_BODY), darken);
         match (kind, tint) {
-            (PickKind::Audio | PickKind::Automation, Some(c)) => {
+            (PickKind::Audio | PickKind::Automation | PickKind::Pattern, Some(c)) => {
                 (offset(c, -42), offset(c, -8), offset(c, -17), offset(c, -26), cc(t, TITLE_TEXT), body)
             }
             _ => (cc(t, CLIP_BORDER), cc(t, TITLE_TOP), cc(t, TITLE_TOP), cc(t, TITLE_BOTTOM), cc(t, TITLE_TEXT), body),
@@ -918,7 +920,7 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
     let lemon = super::lemon(ui);
     // Rect fills with the top corners knocked out (cheaper than rounded paths for hundreds of clips).
     if lemon {
-        ui.c.fill_rrect(r, lk::r_btn(t).min(r.w / 2.0).min(r.h / 2.0), outline);
+        ui.c.fill_rect(r, outline); // square, as FL's clips are
     } else {
         ui.c.fill_rect(r, outline);
     }
@@ -932,7 +934,7 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
     let title_h = TITLE_H - 2.0;
     // Edge colour behind the strip (its top corners in the outline's colour), then the highlight row and the gradient.
     // Lemon (spec: ui/lemon-design.md §7): a rounded tile with a flat title strip.
-    let ir = (lk::r_btn(t) - 1.0).min(inner.w / 2.0).min(inner.h / 2.0);
+    let ir = 0.0_f32;
     if lemon {
         ui.c.fill_rrect(inner, ir, dim(top));
     } else {
@@ -962,7 +964,7 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
 
     ui.c.push_clip(inner.intersect(&g.grid));
     // Type icon (✕ when muted) and name; a narrow clip shows only its strip.
-    let (ix, iy) = (inner.x + 3.0, inner.y + 2.0);
+    let (ix, iy) = (inner.x + 3.0, inner.y + 1.0);
     let ic = dim(text);
     if r.w >= 12.0 {
         if c.muted {
@@ -970,7 +972,7 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
             ui.c.line(ix + 7.0, iy + 1.0, ix, iy + 8.0, 1.2, ic);
         } else {
             // On whole pixels: a partial repaint draws it exactly as a full one (smooth scrolling stops between them).
-            icons::draw(ui.c, kind_icon(kind), Rect::new((ix - 0.5).round(), iy.round(), 10.0, 10.0), ic);
+            icons::draw(ui.c, kind_icon(kind), Rect::new((ix - 0.5).round(), iy.round(), 9.0, 9.0), ic);
         }
     }
     if r.w > 16.0 {
@@ -985,13 +987,14 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
                 name.push_str(&format!(" ({:+.1} dB)", db));
             }
         }
-        ui.c.text_clip(Font::new(12), inner.x + 14.0, inner.y - 1.0, inner.w - 16.0, ic, &name);
+        ui.c.text_clip(Font::new(10), inner.x + 13.0, inner.y - 1.0, inner.w - 15.0, ic, &name);
     }
     // Content.
     let content = if c.muted { dim(text).with_alpha(90) } else { dim(cc(t, NOTE)) };
     if !(c.muted && kind == PickKind::Pattern) {
         match (kind, c.source) {
-            (PickKind::Pattern, ClipSource::Pattern(n)) => pattern_notes(ui, s, g, c, n, body_at, content),
+            // The notes lighter than the theme's grey, so they read on the clip's colour.
+            (PickKind::Pattern, ClipSource::Pattern(n)) => pattern_notes(ui, s, g, c, n, body_at, content.mix(Color::rgb(0xffffff), 0.45)),
             (PickKind::Audio, ClipSource::Channel(ch)) => {
                 // The channel colour lifted by 80 (§2); without one the measured default.
                 let wave = tint.map_or(cc(t, WAVE), |c| offset(c, 80));
@@ -1004,7 +1007,8 @@ fn clip_paint(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip) {
                 }
             }
             (PickKind::Automation, ClipSource::Channel(ch)) => {
-                let col = if c.muted { content } else { dim(cc(t, CURVE)) };
+                // As FL's: a thin line in a pale tint of the clip's colour over a lighter fill.
+                let col = if c.muted { content } else { dim(body.mix(Color::rgb(0xffffff), 0.55)) };
                 curve(ui, s, g, i, c, ch, body_at, dim(body), col);
             }
             _ => {}
@@ -1034,7 +1038,7 @@ fn pattern_notes(ui: &mut Ui, s: &State, g: &PGeom, c: &Clip, n: u16, body: Body
     pitches.sort_unstable();
     pitches.dedup();
     let pitch_count = pitches.len() as f32;
-    let h = (((br.h - 4.0).max(1.0) / pitch_count * 0.45).clamp(1.5, 2.5)).min(br.h.max(1.0));
+    let h = (((br.h - 4.0).max(1.0) / pitch_count * 0.6).clamp(2.0, 3.5)).min(br.h.max(1.0));
     let usable = (br.h - 4.0 - h).max(0.0);
     let pad = (br.h - h - usable) / 2.0;
     let step = (g.ppq / 4).max(1);
@@ -1348,8 +1352,8 @@ fn curve(ui: &mut Ui, s: &State, g: &PGeom, i: usize, c: &Clip, ch: u16, edges: 
     let mut area = pts.clone();
     area.push((x1, body.bottom()));
     area.push((x0, body.bottom()));
-    ui.c.fill_polygon(&area, bg.shade(0.07));
-    ui.c.polyline(&pts, 2.25, col);
+    ui.c.fill_polygon(&area, bg.mix(Color::rgb(0xffffff), 0.12));
+    ui.c.polyline(&pts, 1.25, col);
     // Points and tension handles while the mouse is over the clip (§8).
     if s.playlist.hover_clip == Some(i) {
         for (k, p) in a.points.iter().enumerate() {

@@ -197,7 +197,7 @@ pub fn led_round(c: &mut Canvas, t: &Palette, cx: f32, cy: f32, radius: f32, st:
 
 /// Selection frame: a rounded lemon outline.
 pub fn focus_frame(c: &mut Canvas, t: &Palette, r: Rect, width: f32) {
-    c.stroke_rrect(r, r_small(t), width.min(2.0), t.accent);
+    c.stroke_rrect(r, r_small(t), width.min(2.0), Color::rgb(0x8c8c8c));
 }
 
 // ---------------------------------------------------------------- knobs and faders
@@ -339,7 +339,7 @@ pub fn name_button(c: &mut Canvas, t: &Palette, r: Rect, col: Option<Color>, foc
     let face_c = if hover { face_c.mix(hi, 0.3) } else { face_c };
     let rad = r_btn(t).min(r.h / 2.0);
     if focused {
-        outlined(c, r, rad, t.brand_sel(brand::MAIN), face_c.mix(hi, 0.2));
+        outlined(c, r, rad, Color::rgb(0x8c8c8c), face_c.mix(hi, 0.2));
     } else {
         c.fill_rrect(r, rad, face_c);
     }

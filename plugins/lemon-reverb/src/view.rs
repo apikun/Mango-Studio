@@ -13,7 +13,7 @@
 use os_theme::design::lemon as brand;
 use os_theme::Palette;
 use os_ui::kit::lemon::{self, plug};
-use os_ui::kit::{eq as keq, inst, State};
+use os_ui::kit::{inst, State};
 use os_ui::{Canvas, Color, Font, Rect};
 
 use crate::room;
@@ -207,18 +207,19 @@ fn fader(ui: &mut Ui, id: &str, cx: f32, caption: &str) {
     let target = Target::Fader(id.into());
     let hr = Rect::new(cx - 11.0, FADER_TOP - 8.0, 22.0, FADER_BOT - FADER_TOP + 16.0);
     let st = ui.state(hr, &target);
-    let slot = Rect::new(cx - 3.0, FADER_TOP - 4.0, 6.0, FADER_BOT - FADER_TOP + 8.0);
-    keq::slot(ui.c, slot, st);
+    // As the mixer's: a rounded trough, the level a bar whose rounded top is where it is held.
+    let (top_y, bot_y) = (FADER_TOP - 4.0, FADER_BOT + 4.0);
+    ui.c.fill_rrect(Rect::new(cx - 7.0, top_y, 14.0, bot_y - top_y), 7.0, Color::rgb(0x141618));
     // 100 % (128 of 160).
     let y100 = fader_y(128.0 / 160.0).round();
     for side in [-1.0, 1.0] {
-        ui.c.fill_rect(Rect::new(cx + side * 6.0 - if side < 0.0 { 3.0 } else { 0.0 }, y100, 3.0, 1.0), plug::FAINT);
+        ui.c.fill_rect(Rect::new(cx + side * 10.0 - if side < 0.0 { 3.0 } else { 0.0 }, y100, 3.0, 1.0), plug::FAINT);
     }
     let y = fader_y(ui.m.norm(id));
-    if FADER_BOT - y > 1.0 {
-        ui.c.fill_rrect(Rect::span(cx - 1.0, cx + 1.0, y, FADER_BOT), 1.0, brand::MAIN.with_alpha(170));
-    }
-    keq::handle(ui.c, cx, y.round(), brand::MAIN, st);
+    let held = st.pressed;
+    let lift = if held { 0.07 } else if st.hover { 0.12 } else { 0.0 };
+    let bar = Rect::new(cx - 6.0, y - 6.0, 12.0, (bot_y - 1.0 - (y - 6.0)).max(12.0));
+    ui.c.fill_rrect(bar, 6.0, brand::MAIN.shade(lift));
     inst::caption(ui.c, ui.t, cx, FADER_BOT + 14.0, caption, false);
     ui.hit(hr, target);
 }

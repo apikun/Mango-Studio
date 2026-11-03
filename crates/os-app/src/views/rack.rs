@@ -403,7 +403,7 @@ pub fn paint(ui: &mut Ui, s: &State, f: &FrameInfo) {
             lk::outlined(ui.c, slot, 3.0, ui.t.s(0x1f2224), fill);
             if selected {
                 let fr = Rect::span(x + c.slot_x - 1.5, x + c.slot_x + 7.5, ry - 0.5, ry + 26.5);
-                ui.c.stroke_rrect(fr, 4.0, 1.5, t.accent);
+                ui.c.stroke_rrect(fr, 4.0, 1.5, Color::rgb(0x8c8c8c));
             }
         } else {
             ui.c.fill_rect(slot, ui.t.s(0x1f2224));
