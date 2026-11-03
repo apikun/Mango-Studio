@@ -192,6 +192,9 @@ pub enum Action {
     Baby,
     BabyArea,
     BabyTrack(u16),
+    /// A click on a track's volume slider (crate::baby::vol_slider): sets its channel's volume from
+    /// the click's x, the way the ruler's tap seeks.
+    BabyVol(u16),
     BabyAdd,
     BabyAddFamily(usize),
     BabySeek,
@@ -8815,6 +8818,24 @@ impl App {
             Action::Baby => {
                 let on = !crate::baby::on();
                 crate::prefs::set_check(&crate::prefs::BABY_MODE, on);
+                // GarageBand is one clean window: the full studio's band (its menus, its transport,
+                // its LCD) steps aside while Baby Mode is on and comes back as it was. The band's
+                // window controls live on as the simple screen's traffic lights.
+                if on {
+                    s.baby.band_was_hidden = s.toolbar.hidden;
+                    if !s.toolbar.hidden {
+                        s.toolbar.hidden = true;
+                        s.bar.editing = false;
+                        s.menu_open = None;
+                        s.menu_sub = None;
+                        lift_windows(s, -views::band_h(s));
+                    }
+                } else if !s.baby.band_was_hidden && s.toolbar.hidden {
+                    s.toolbar.hidden = false;
+                    s.menu_open = None;
+                    s.menu_sub = None;
+                    lift_windows(s, views::band_h(s));
+                }
                 if on {
                     crate::baby::seed_demo(self);
                     self.state.message = Some("Baby mode: on — the simple studio".into());
@@ -8835,6 +8856,20 @@ impl App {
             Action::BabyTrack(t) => {
                 s.playlist.track = t;
                 s.playlist.sel.clear();
+                self.invalidate();
+            }
+            Action::BabyVol(t) => {
+                // A click on the track's volume slider sets its channel's volume from the click's x
+                // (the groove's share), like the ruler's tap seeks — Baby Mode's edits stay one tap.
+                let v = crate::baby::vol_at(&self.state, self.mouse.0, t);
+                if let Some(ch) = crate::baby::track_channel(&self.state, t) {
+                    for c in self.state.project.channels.iter_mut() {
+                        if c.index == ch {
+                            c.volume = f64::from(v);
+                            break;
+                        }
+                    }
+                }
                 self.invalidate();
             }
             Action::BabySeek => {
@@ -10809,18 +10844,30 @@ mod tests {
         a.act(Action::Baby);
         assert!(crate::baby::on());
         assert!(!crate::playlist::clips(&a.state).is_empty(), "the demo song seeded");
+        assert!(a.state.toolbar.hidden, "the full studio's band steps aside for the simple screen");
         frame(&mut a, &mut c, None);
         let area = hit_rect(&a, &Action::BabyArea);
         assert!(area.w > 100.0, "the lanes are there");
         assert!(hit_rect(&a, &Action::BabyTrack(0)).h > 10.0, "a track row is there");
         assert!(a.hits.iter().any(|h| h.action == Action::BabyAdd && h.rect.w > 50.0), "the Add Track button is there");
         assert!(hit_rect(&a, &Action::BabySeek).h > 10.0, "the ruler is there");
-        // The Aqua transport: the round buttons and the LCD keep to their band, play is the big ball.
+        assert!(hit_rect(&a, &Action::Minimize).w > 0.0 && hit_rect(&a, &Action::Maximize).w > 0.0, "the traffic lights are the window controls");
+        assert!(a.hits.iter().any(|h| h.action == Action::Baby && h.rect.x > 100.0), "the mango goes back to the full studio");
+        // The transport: the buttons and the LCD keep to their band, play is the big button.
         let tr = crate::baby::transport_rect(&a.state);
         let tc = crate::baby::transport_controls(&a.state);
         assert!(tc.play.bottom() <= tr.bottom() + 1.0 && tc.lcd.right() <= tr.right() + 1.0, "the transport keeps to its band");
-        assert!(tc.play.w > tc.stop.w, "play is the big glossy ball");
+        assert!(tc.play.w > tc.stop.w, "play is the big button");
         assert!(crate::baby::preview_rect(&a.state).is_none_or(|p| p.bottom() <= tr.y + 1.0), "the preview yields to the transport");
+        // A click on the first track's volume slider sets its channel's volume from the click's x.
+        let g = crate::baby::vol_slider(&a.state, 0).expect("the demo's first track has a volume slider");
+        let ch0 = crate::baby::track_channel(&a.state, 0).expect("and an instrument");
+        let before = a.state.project.channel(ch0).unwrap().volume;
+        a.mouse_move(g.x + g.w * 0.95, g.cy());
+        a.mouse_down();
+        a.mouse_up();
+        let after = a.state.project.channel(ch0).unwrap().volume;
+        assert!(after > 0.9 && after > before, "the click set the volume: {before} -> {after}");
         // A tap on the first clip selects it and feeds the preview; a tap on the ground clears.
         let clip0 = crate::baby::clip_rect(&a.state, &crate::playlist::clips(&a.state)[0]);
         a.mouse_move(clip0.x + 6.0, clip0.y + 20.0);
@@ -10836,9 +10883,10 @@ mod tests {
         if std::env::var("PAINT_BABY_PNG").is_ok() {
             c.pixmap.save_png(std::path::Path::new("/tmp/baby_mode.png")).unwrap();
         }
-        // Off again: the full studio's playlist is back.
+        // Off again: the full studio's playlist is back, the band with it.
         a.act(Action::Baby);
         assert!(!crate::baby::on());
+        assert!(!a.state.toolbar.hidden, "the band came back");
         frame(&mut a, &mut c, None);
         assert!(a.pl_grid.is_some(), "the playlist is back");
     }
