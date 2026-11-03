@@ -395,7 +395,9 @@ mod tests {
         assert_eq!(panel_w(s), 0.0, "a phone keeps its width for the list and the timeline");
         assert!(lanes_rect(s).w > 200.0, "the timeline takes the panel's share");
         assert!(list_w(s) >= 120.0, "the list never collapses to nothing");
-        assert_eq!(preview_rect(s), None, "too short for the preview");
+        let p = preview_rect(s).expect("the lanes yield, the preview still fits");
+        assert!(p.h == PREVIEW_H);
+        assert!(lanes_rect(s).h >= 2.0 * ROW_H, "two lanes at least even on a phone");
         a.state.screen = (1280.0, 800.0);
         let s = &a.state;
         let p = preview_rect(s).expect("a tall screen shows the preview");
