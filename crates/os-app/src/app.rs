@@ -10813,8 +10813,14 @@ mod tests {
         let area = hit_rect(&a, &Action::BabyArea);
         assert!(area.w > 100.0, "the lanes are there");
         assert!(hit_rect(&a, &Action::BabyTrack(0)).h > 10.0, "a track row is there");
-        assert!(hit_rect(&a, &Action::BabyAdd).w > 50.0, "the Add Track button is there");
+        assert!(a.hits.iter().any(|h| h.action == Action::BabyAdd && h.rect.w > 50.0), "the Add Track button is there");
         assert!(hit_rect(&a, &Action::BabySeek).h > 10.0, "the ruler is there");
+        // The Aqua transport: the round buttons and the LCD keep to their band, play is the big ball.
+        let tr = crate::baby::transport_rect(&a.state);
+        let tc = crate::baby::transport_controls(&a.state);
+        assert!(tc.play.bottom() <= tr.bottom() + 1.0 && tc.lcd.right() <= tr.right() + 1.0, "the transport keeps to its band");
+        assert!(tc.play.w > tc.stop.w, "play is the big glossy ball");
+        assert!(crate::baby::preview_rect(&a.state).is_none_or(|p| p.bottom() <= tr.y + 1.0), "the preview yields to the transport");
         // A tap on the first clip selects it and feeds the preview; a tap on the ground clears.
         let clip0 = crate::baby::clip_rect(&a.state, &crate::playlist::clips(&a.state)[0]);
         a.mouse_move(clip0.x + 6.0, clip0.y + 20.0);

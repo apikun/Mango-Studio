@@ -5,9 +5,10 @@
 //! Baby Mode: the simple studio (a user request, "a way easier version of Mango"). One flat,
 //! GarageBand-like screen over the same project the full studio edits — a track list on the left, a
 //! clip timeline in the middle, the selected track's instrument and effects on the right and a note
-//! preview along the foot — so nothing new to learn and nothing is lost switching back. This module
-//! holds the state, the layout maths and the model edits (add a track, a starter riff, the demo
-//! song); `views::baby` paints it.
+//! preview along the foot, over a transport band — so nothing new to learn and nothing is lost
+//! switching back. The look is Mac OS X Aqua, as the user asked: brushed-metal bands, glossy round
+//! buttons and a dark LCD read-out. This module holds the state, the layout maths and the model
+//! edits (add a track, a starter riff, the demo song); `views::baby` paints it.
 
 use os_model::{Clip, ClipSource, Note, Pattern, PlaylistTrack, Rgb};
 use os_ui::Rect;
@@ -55,6 +56,8 @@ pub const KEYS_W: f32 = 52.0;
 pub const BAR_PX: f32 = 64.0;
 /// The add-track sheet's size.
 pub const SHEET: (f32, f32) = (330.0, 372.0);
+/// Height of the transport band along the foot (the round buttons and the LCD).
+pub const TRANSPORT_H: f32 = 64.0;
 
 /// The workspace Baby Mode paints over (under the toolbar band and the rolling strip).
 pub fn work(s: &State) -> Rect {
@@ -67,33 +70,47 @@ pub fn list_w(s: &State) -> f32 {
     LIST_W.min((s.screen.0 * 0.34).max(120.0))
 }
 
-pub fn list_rect(s: &State) -> Rect {
+/// The stage: the workspace above the transport — the list, the ruler, the lanes, the panel and the
+/// preview share it; the transport band takes the foot.
+pub fn stage(s: &State) -> Rect {
     let w = work(s);
+    Rect::new(w.x, w.y, w.w, (w.h - TRANSPORT_H).max(2.0 * ROW_H))
+}
+
+/// The transport band along the foot: GarageBand's brushed metal with the glossy round buttons and
+/// the dark LCD read-out. Never taller than the workspace itself.
+pub fn transport_rect(s: &State) -> Rect {
+    let w = work(s);
+    let y = (w.bottom() - TRANSPORT_H).max(stage(s).bottom());
+    Rect::new(w.x, y, w.w, w.bottom() - y)
+}
+
+pub fn list_rect(s: &State) -> Rect {
+    let w = stage(s);
     Rect::new(0.0, w.y, list_w(s), w.h)
 }
 
 /// The bar-number ruler (between the list and the instrument panel).
 pub fn ruler_rect(s: &State) -> Rect {
-    let w = work(s);
+    let w = stage(s);
     Rect::new(list_w(s), w.y, w.w - list_w(s) - panel_w(s), RULER_H)
 }
 
 pub fn lanes_rect(s: &State) -> Rect {
-    let w = work(s);
     let r = ruler_rect(s);
     Rect::new(LIST_W, r.bottom(), r.w, lanes_h(s))
 }
 
-/// The instrument panel on the right, the whole workspace tall.
+/// The instrument panel on the right, the whole stage tall.
 pub fn panel_rect(s: &State) -> Rect {
-    let w = work(s);
+    let w = stage(s);
     Rect::new(w.right() - panel_w(s), w.y, panel_w(s), w.h)
 }
 
-/// The note preview along the foot (under the list and the lanes, left of the panel). `None` on a
-/// screen too short for the lanes to keep two rows under the ruler.
+/// The note preview along the foot of the stage (under the list and the lanes, left of the panel,
+/// above the transport). `None` on a screen too short for the lanes to keep two rows.
 pub fn preview_rect(s: &State) -> Option<Rect> {
-    let w = work(s);
+    let w = stage(s);
     let lanes = lanes_rect(s);
     if lanes.bottom() + PREVIEW_H > w.bottom() + 1.0 {
         return None;
@@ -102,10 +119,43 @@ pub fn preview_rect(s: &State) -> Option<Rect> {
 }
 
 fn lanes_h(s: &State) -> f32 {
-    let w = work(s);
-    let h = w.h - RULER_H;
+    let h = stage(s).h - RULER_H;
     // The lanes keep at least two rows; the preview gives up its height first.
     (h - PREVIEW_H).max((h * 0.55).max(2.0 * ROW_H))
+}
+
+/// The transport's controls, laid out inside `transport_rect` (the view draws them, the tests check
+/// them): the LCD at the right, the play / stop / record cluster left of it and the metronome and
+/// add-track buttons at the band's left edge. A narrow band shrinks the LCD and the buttons rather
+/// than spilling out of it.
+pub struct Transport {
+    /// The dark LCD well (bar.beat.tick, the tempo at its right on a wide band).
+    pub lcd: Rect,
+    /// Play / pause: the big glossy blue ball.
+    pub play: Rect,
+    pub stop: Rect,
+    /// The record button (a red dot in a metal ball).
+    pub rec: Rect,
+    /// The metronome's LED ball.
+    pub metro: Rect,
+    /// The add-track ball.
+    pub add: Rect,
+}
+
+/// The transport's control rects, all inside `transport_rect`.
+pub fn transport_controls(s: &State) -> Transport {
+    let tr = transport_rect(s);
+    let cy = tr.cy();
+    let wide = tr.w >= 460.0;
+    let (small, big, lcd_w) = if wide { (36.0, 46.0, 210.0) } else { (30.0, 38.0, 124.0) };
+    let right_of = |right: f32, size: f32| Rect::new(right - size, cy - size / 2.0, size, size);
+    let lcd = Rect::new(tr.right() - 12.0 - lcd_w, cy - 20.0, lcd_w, 40.0);
+    let play = right_of(lcd.x - 12.0, big);
+    let stop = right_of(play.x - 10.0, small);
+    let rec = right_of(stop.x - 10.0, small);
+    let add = Rect::new(tr.x + 12.0, cy - small / 2.0, small, small);
+    let metro = Rect::new(add.right() + 8.0, cy - small / 2.0, small, small);
+    Transport { lcd, play, stop, rec, metro, add }
 }
 
 /// Width of the instrument panel: a quarter of the screen, 190..300. A narrow phone keeps its width
@@ -177,15 +227,33 @@ pub const BG: u32 = 0xE9E9EC;
 pub const LIST_BG: u32 = 0xF1F1F4;
 pub const ROW_BG: u32 = 0xFBFBFD;
 pub const ROW_SEL: u32 = 0xD9E4FB;
-pub const TIMELINE_BG: u32 = 0xE2E2E6;
-pub const LANE_BG: u32 = 0xEDEDF0;
-pub const RULER_BG: u32 = 0xD8D8DD;
+pub const TIMELINE_BG: u32 = 0xE6E6E9;
+pub const LANE_BG: u32 = 0xF3F3F5;
 pub const RULER_TEXT: u32 = 0x5A5A60;
 pub const TEXT: u32 = 0x3C3C42;
 pub const TEXT_DIM: u32 = 0x8A8A92;
-pub const ADD_BLUE: u32 = 0x4B7BE5;
 pub const SEL_BLUE: u32 = 0x2F6BD8;
 pub const PLAYHEAD: u32 = 0xE04040;
+// Aqua metal: the brushed bands (list, ruler, panel, transport), GarageBand's chrome.
+pub const METAL: u32 = 0xD8D9DD;
+pub const METAL_LIGHT: u32 = 0xE9EAEE;
+pub const METAL_DARK: u32 = 0xC7C8CD;
+pub const METAL_EDGE: u32 = 0x96979D;
+/// Aqua's glossy blue: the selection rows, the Add Track capsule and the play ball.
+pub const AQUA_TOP: u32 = 0xA6C8F5;
+pub const AQUA_BOT: u32 = 0x3670D6;
+pub const AQUA_EDGE: u32 = 0x25539F;
+/// The LCD's dark well and its digits.
+pub const LCD_BG: u32 = 0x2E2F33;
+pub const LCD_EDGE: u32 = 0x1B1C1E;
+pub const LCD_DIGIT: u32 = 0xEFF0EA;
+pub const LCD_DIM: u32 = 0x85878C;
+pub const LCD_AMBER: u32 = 0xE8B33C;
+/// The traffic lights and the record dot.
+pub const TL_RED: u32 = 0xF26057;
+pub const TL_YELLOW: u32 = 0xF6BD2F;
+pub const TL_GREEN: u32 = 0x61C554;
+pub const REC_RED: u32 = 0xD93A2B;
 /// Pattern (note) clips: GarageBand's greens.
 pub const GREEN_TOP: u32 = 0x8CC973;
 pub const GREEN_BOT: u32 = 0x64A94A;
@@ -435,6 +503,31 @@ mod tests {
         let clips = crate::playlist::clips(&a.state).len();
         seed_demo(&mut a);
         assert_eq!(crate::playlist::clips(&a.state).len(), clips, "a started project is left alone");
+    }
+
+    /// The transport bands the foot: every control stays inside it, play is the big ball, the LCD
+    /// never crosses the band's right edge and the preview yields to the band.
+    #[test]
+    fn the_transport_bands_the_foot() {
+        let mut a = app();
+        a.state.screen = (1280.0, 800.0);
+        let s = &a.state;
+        let tr = transport_rect(s);
+        assert_eq!(tr.h, TRANSPORT_H);
+        assert!(stage(s).bottom() <= tr.y + 1.0, "the stage ends where the transport starts");
+        let tc = transport_controls(s);
+        for (name, r) in [("lcd", tc.lcd), ("play", tc.play), ("stop", tc.stop), ("rec", tc.rec), ("metro", tc.metro), ("add", tc.add)] {
+            assert!(tr.x <= r.x && r.right() <= tr.right() + 1.0 && tr.y <= r.y && r.bottom() <= tr.bottom() + 1.0, "{name} leaves the band");
+        }
+        assert!(tc.play.w > tc.stop.w && tc.play.h > tc.stop.h, "play is the big ball");
+        assert!(preview_rect(s).is_none_or(|p| p.bottom() <= tr.y + 1.0), "the preview yields to the transport");
+        // A phone: the LCD and the buttons shrink; the clusters never cross.
+        a.state.screen = (360.0, 640.0);
+        let s = &a.state;
+        let tr = transport_rect(s);
+        let tc = transport_controls(s);
+        assert!(tc.lcd.right() <= tr.right() + 1.0, "the LCD stays in the band");
+        assert!(tc.rec.x >= tc.metro.right(), "the left and centre clusters never cross");
     }
 
     /// Geometry round-trips: a clip lands where its tick says, and `clip_at` finds it again.
