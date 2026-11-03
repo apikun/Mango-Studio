@@ -198,18 +198,6 @@ pub enum Action {
     BabyFxLed(u16, u8),
     BabyFxShow(u16, u8),
     BabyEditNotes,
-    /// Baby Mode (crate::baby): the switch (toolbar, settings), then its screen's controls — the
-    /// lanes, a track row, the Add-track sheet, the ruler, an effect's LED / open tap, the note
-    /// preview's edit hand-off.
-    Baby,
-    BabyArea,
-    BabyTrack(u16),
-    BabyAdd,
-    BabyAddFamily(usize),
-    BabySeek,
-    BabyFxLed(u16, u8),
-    BabyFxShow(u16, u8),
-    BabyEditNotes,
     /// The toolbar's CPU panel: double-click opens the Plugin performance monitor, right-click its menu.
     CpuPanel,
     /// The Plugin performance monitor's controls (spec: ui/plugin-performance.md).
@@ -685,8 +673,6 @@ pub enum Seg {
     RollStrip,
     /// Baby Mode's whole workspace (crate::baby): it repaints as one part.
     Baby,
-    /// Baby Mode's whole workspace (crate::baby): it repaints as one part.
-    Baby,
 }
 
 /// What each part registered and where it drew in the last paint, so a partial repaint can keep the hits of the parts
@@ -1093,8 +1079,6 @@ pub struct State {
     pub plugin_pos: (f32, f32),
     pub selected_channel: usize,
     pub selected_mixer: u16,
-    /// Baby Mode's own bits: whether the Add-track sheet is open and the timeline's scroll.
-    pub baby: crate::baby::BabyState,
     /// Baby Mode's own bits: whether the Add-track sheet is open and the timeline's scroll.
     pub baby: crate::baby::BabyState,
     pub pattern: u16,
@@ -1557,7 +1541,6 @@ impl App {
                 perf: crate::perf::Perf::default(),
                 tapper: Default::default(),
                 touch: Default::default(),
-                baby: Default::default(),
                 baby: Default::default(),
                 strum: Default::default(),
                 arp: Default::default(),
