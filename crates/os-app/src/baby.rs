@@ -6,9 +6,11 @@
 //! GarageBand-like screen over the same project the full studio edits — a track list on the left, a
 //! clip timeline in the middle, the selected track's instrument and effects on the right and a note
 //! preview along the foot, over a transport band — so nothing new to learn and nothing is lost
-//! switching back. The look is Mac OS X Aqua, as the user asked: brushed-metal bands, glossy round
-//! buttons and a dark LCD read-out. This module holds the state, the layout maths and the model
-//! edits (add a track, a starter riff, the demo song); `views::baby` paints it.
+//! switching back. The look is GarageBand's own dark one, taken from real GarageBand screenshots:
+//! the dark gray window, the green and blue regions, the dark track headers with working volume
+//! sliders and the silver control bar with the dark LCD at the foot. This module holds the state,
+//! the layout maths and the model edits (add a track, a starter riff, the demo song); `views::baby`
+//! paints it.
 
 use os_model::{Clip, ClipSource, Note, Pattern, PlaylistTrack, Rgb};
 use os_ui::Rect;
@@ -37,6 +39,9 @@ pub struct BabyState {
     pub add_open: bool,
     /// The timeline's horizontal scroll, in ticks from the song's start.
     pub scroll_x: u32,
+    /// How the toolbar band was before Baby Mode came on: GarageBand is one clean window, so the
+    /// band hides while Baby Mode is on and comes back exactly as it was when it leaves.
+    pub band_was_hidden: bool,
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -56,8 +61,10 @@ pub const KEYS_W: f32 = 52.0;
 pub const BAR_PX: f32 = 64.0;
 /// The add-track sheet's size.
 pub const SHEET: (f32, f32) = (330.0, 372.0);
-/// Height of the transport band along the foot (the round buttons and the LCD).
+/// Height of the transport band along the foot (the buttons and the LCD — the control bar).
 pub const TRANSPORT_H: f32 = 64.0;
+/// Height of the track list's header (the traffic lights' row).
+pub const HEAD_H: f32 = 34.0;
 
 /// The workspace Baby Mode paints over (under the toolbar band and the rolling strip).
 pub fn work(s: &State) -> Rect {
@@ -98,7 +105,9 @@ pub fn ruler_rect(s: &State) -> Rect {
 
 pub fn lanes_rect(s: &State) -> Rect {
     let r = ruler_rect(s);
-    Rect::new(LIST_W, r.bottom(), r.w, lanes_h(s))
+    // The ruler and the lanes start where the list ends (`list_w`, not `LIST_W`: the two differ on a
+    // phone, and the clips once sat a gap right of the ruler there).
+    Rect::new(list_w(s), r.bottom(), r.w, lanes_h(s))
 }
 
 /// The instrument panel on the right, the whole stage tall.
@@ -125,24 +134,23 @@ fn lanes_h(s: &State) -> f32 {
 }
 
 /// The transport's controls, laid out inside `transport_rect` (the view draws them, the tests check
-/// them): the LCD at the right, the play / stop / record cluster left of it and the metronome and
-/// add-track buttons at the band's left edge. A narrow band shrinks the LCD and the buttons rather
-/// than spilling out of it.
+/// them): the LCD at the right, the play / stop / record cluster left of it and the metronome at the
+/// band's left edge. A narrow band shrinks the LCD and the buttons rather than spilling out of it.
 pub struct Transport {
-    /// The dark LCD well (bar.beat.tick, the tempo at its right on a wide band).
+    /// The dark LCD well (GarageBand's: bar.beat over its caption, the tempo and the signature
+    /// beside it on a wide band).
     pub lcd: Rect,
-    /// Play / pause: the big glossy blue ball.
+    /// Play / pause: the big dark glyph on the silver band.
     pub play: Rect,
     pub stop: Rect,
-    /// The record button (a red dot in a metal ball).
+    /// The record button (the red dot).
     pub rec: Rect,
-    /// The metronome's LED ball.
+    /// The metronome's round button (blue while it clicks).
     pub metro: Rect,
-    /// The add-track ball.
-    pub add: Rect,
 }
 
-/// The transport's control rects, all inside `transport_rect`.
+/// The transport's control rects, all inside `transport_rect`. The Add Track button lives in the
+/// track list, where GarageBand's `+` is; the band keeps only the playing controls.
 pub fn transport_controls(s: &State) -> Transport {
     let tr = transport_rect(s);
     let cy = tr.cy();
@@ -153,9 +161,32 @@ pub fn transport_controls(s: &State) -> Transport {
     let play = right_of(lcd.x - 12.0, big);
     let stop = right_of(play.x - 10.0, small);
     let rec = right_of(stop.x - 10.0, small);
-    let add = Rect::new(tr.x + 12.0, cy - small / 2.0, small, small);
-    let metro = Rect::new(add.right() + 8.0, cy - small / 2.0, small, small);
-    Transport { lcd, play, stop, rec, metro, add }
+    let metro = Rect::new(tr.x + 12.0, cy - small / 2.0, small, small);
+    Transport { lcd, play, stop, rec, metro }
+}
+
+/// The Add Track bar at the top of the list, under the header — GarageBand's `+`, labelled for the
+/// ones who never used GarageBand.
+pub fn add_button(s: &State) -> Rect {
+    Rect::new(8.0, list_rect(s).y + HEAD_H + 8.0, list_w(s) - 16.0, 32.0)
+}
+
+/// Track row `row`'s rect in the list (the view draws in it, the volume's click does the maths).
+pub fn row_rect(s: &State, row: u16) -> Rect {
+    Rect::new(4.0, add_button(s).bottom() + 6.0 + f32::from(row) * ROW_H, list_w(s) - 8.0, ROW_H - 4.0)
+}
+
+/// The track's volume slider inside its row (GarageBand's groove under the name): `None` while the
+/// track has no instrument to set a volume on.
+pub fn vol_slider(s: &State, row: u16) -> Option<Rect> {
+    track_channel(s, row)?;
+    let r = row_rect(s, row);
+    Some(Rect::new(r.x + 46.0, r.y + 24.0, (r.w - 46.0 - 32.0).max(30.0), 9.0))
+}
+
+/// The volume a click at window `x` on track `row`'s slider sets: 0..=1 across the groove.
+pub fn vol_at(s: &State, x: f32, row: u16) -> f32 {
+    vol_slider(s, row).map(|g| ((x - g.x) / g.w).clamp(0.0, 1.0)).unwrap_or(0.0)
 }
 
 /// Width of the instrument panel: a quarter of the screen, 190..300. A narrow phone keeps its width
@@ -221,48 +252,68 @@ pub fn visible_tracks(s: &State) -> u16 {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Colours: the light, GarageBand-like look of the Baby screen (the rest of the app stays dark)
+// Colours: GarageBand's dark look for the Baby screen (taken from real GarageBand screenshots: the
+// dark gray window, the green and blue regions, the silver control bar, the dark LCD)
 
-pub const BG: u32 = 0xE9E9EC;
-pub const LIST_BG: u32 = 0xF1F1F4;
-pub const ROW_BG: u32 = 0xFBFBFD;
-pub const ROW_SEL: u32 = 0xD9E4FB;
-pub const TIMELINE_BG: u32 = 0xE6E6E9;
-pub const LANE_BG: u32 = 0xF3F3F5;
-pub const RULER_TEXT: u32 = 0x5A5A60;
-pub const TEXT: u32 = 0x3C3C42;
-pub const TEXT_DIM: u32 = 0x8A8A92;
-pub const SEL_BLUE: u32 = 0x2F6BD8;
-pub const PLAYHEAD: u32 = 0xE04040;
-// Aqua metal: the brushed bands (list, ruler, panel, transport), GarageBand's chrome.
-pub const METAL: u32 = 0xD8D9DD;
-pub const METAL_LIGHT: u32 = 0xE9EAEE;
-pub const METAL_DARK: u32 = 0xC7C8CD;
-pub const METAL_EDGE: u32 = 0x96979D;
-/// Aqua's glossy blue: the selection rows, the Add Track capsule and the play ball.
-pub const AQUA_TOP: u32 = 0xA6C8F5;
-pub const AQUA_BOT: u32 = 0x3670D6;
-pub const AQUA_EDGE: u32 = 0x25539F;
-/// The LCD's dark well and its digits.
-pub const LCD_BG: u32 = 0x2E2F33;
-pub const LCD_EDGE: u32 = 0x1B1C1E;
-pub const LCD_DIGIT: u32 = 0xEFF0EA;
-pub const LCD_DIM: u32 = 0x85878C;
+/// The lanes' ground, the timeline's near-black.
+pub const BG: u32 = 0x1C1C1F;
+/// The track header column's dark gray.
+pub const LIST_BG: u32 = 0x2D2D31;
+/// A selected track header: GarageBand's lighter gray row.
+pub const ROW_SEL: u32 = 0x4B4B52;
+/// The lane rows' dark (even rows); every other row tints a touch lighter.
+pub const TIMELINE_BG: u32 = 0x232327;
+pub const LANE_ALT: u32 = 0x26262B;
+/// The hairline under a lane row and the bar lines through them.
+pub const LANE_LINE: u32 = 0x323238;
+/// The beat grid's quiet lines (in the lanes and the note preview).
+pub const GRID_LINE: u32 = 0x2C2C31;
+/// A muted track's lane and row dim.
+pub const MUTED: u32 = 0x3A3A3F;
+/// The ruler's strip and its numbers.
+pub const RULER_BG: u32 = 0x2A2A2F;
+pub const RULER_TEXT: u32 = 0xB4B4BC;
+pub const TEXT: u32 = 0xE8E8EC;
+pub const TEXT_DIM: u32 = 0x8E8E98;
+/// The selected region's yellow outline, GarageBand's.
+pub const SEL_EDGE: u32 = 0xE9C63F;
+/// The playhead: GarageBand's thin white line.
+pub const PLAYHEAD: u32 = 0xF2F2F0;
+// The silver control bar (the foot band), its pinstripes and the glyphs on it.
+pub const METAL: u32 = 0x8E8F94;
+pub const METAL_LIGHT: u32 = 0xABACB1;
+pub const METAL_DARK: u32 = 0x7C7D83;
+pub const METAL_EDGE: u32 = 0x585962;
+/// A transport glyph's dark on the silver.
+pub const GLYPH: u32 = 0x2B2B30;
+// The LCD's dark well and its digits.
+pub const LCD_BG: u32 = 0x23252C;
+pub const LCD_EDGE: u32 = 0x101114;
+pub const LCD_DIGIT: u32 = 0xF2F2EE;
+pub const LCD_DIM: u32 = 0x77797F;
 pub const LCD_AMBER: u32 = 0xE8B33C;
 /// The traffic lights and the record dot.
 pub const TL_RED: u32 = 0xF26057;
 pub const TL_YELLOW: u32 = 0xF6BD2F;
 pub const TL_GREEN: u32 = 0x61C554;
-pub const REC_RED: u32 = 0xD93A2B;
-/// Pattern (note) clips: GarageBand's greens.
-pub const GREEN_TOP: u32 = 0x8CC973;
-pub const GREEN_BOT: u32 = 0x64A94A;
-pub const GREEN_EDGE: u32 = 0x4E8F33;
+pub const REC_RED: u32 = 0xE0392B;
+/// The metronome's blue while it clicks (GarageBand's active toolbar blue) and its rim.
+pub const AQUA_TOP: u32 = 0x7FA8E8;
+pub const AQUA_BOT: u32 = 0x3D6EC8;
+pub const AQUA_EDGE: u32 = 0x2A529E;
+/// Pattern (note) clips: GarageBand's greens (the fill's top and foot, the edge, the pips).
+pub const GREEN_TOP: u32 = 0x79D45F;
+pub const GREEN_BOT: u32 = 0x55B63C;
+pub const GREEN_EDGE: u32 = 0x3E9229;
+pub const GREEN_PIP: u32 = 0x275F15;
 /// Audio clips: GarageBand's blues.
-pub const BLUE_TOP: u32 = 0x74A3DC;
-pub const BLUE_BOT: u32 = 0x4F80C4;
-pub const BLUE_EDGE: u32 = 0x3A669F;
-/// The starter riffs' pattern colours.
+pub const BLUE_TOP: u32 = 0x74ABE8;
+pub const BLUE_BOT: u32 = 0x4E85CE;
+pub const BLUE_EDGE: u32 = 0x3A68A8;
+pub const BLUE_PIP: u32 = 0x28497C;
+/// The note preview's green notes.
+pub const NOTE_GREEN: u32 = 0x5FCE4A;
+/// The starter riffs' pattern colours (the track chips and the add sheet).
 pub const DRUM_COL: u32 = 0xE07050;
 pub const KEYS_COL: u32 = 0x67B862;
 pub const BASS_COL: u32 = 0x5B8FD9;
@@ -505,7 +556,7 @@ mod tests {
         assert_eq!(crate::playlist::clips(&a.state).len(), clips, "a started project is left alone");
     }
 
-    /// The transport bands the foot: every control stays inside it, play is the big ball, the LCD
+    /// The transport bands the foot: every control stays inside it, play is the big glyph, the LCD
     /// never crosses the band's right edge and the preview yields to the band.
     #[test]
     fn the_transport_bands_the_foot() {
@@ -516,10 +567,11 @@ mod tests {
         assert_eq!(tr.h, TRANSPORT_H);
         assert!(stage(s).bottom() <= tr.y + 1.0, "the stage ends where the transport starts");
         let tc = transport_controls(s);
-        for (name, r) in [("lcd", tc.lcd), ("play", tc.play), ("stop", tc.stop), ("rec", tc.rec), ("metro", tc.metro), ("add", tc.add)] {
+        for (name, r) in [("lcd", tc.lcd), ("play", tc.play), ("stop", tc.stop), ("rec", tc.rec), ("metro", tc.metro)] {
             assert!(tr.x <= r.x && r.right() <= tr.right() + 1.0 && tr.y <= r.y && r.bottom() <= tr.bottom() + 1.0, "{name} leaves the band");
         }
-        assert!(tc.play.w > tc.stop.w && tc.play.h > tc.stop.h, "play is the big ball");
+        assert!(tc.play.w > tc.stop.w && tc.play.h > tc.stop.h, "play is the big button");
+        assert!(tc.rec.x > tr.x, "the band's left edge keeps the metronome room");
         assert!(preview_rect(s).is_none_or(|p| p.bottom() <= tr.y + 1.0), "the preview yields to the transport");
         // A phone: the LCD and the buttons shrink; the clusters never cross.
         a.state.screen = (360.0, 640.0);
@@ -530,7 +582,8 @@ mod tests {
         assert!(tc.rec.x >= tc.metro.right(), "the left and centre clusters never cross");
     }
 
-    /// Geometry round-trips: a clip lands where its tick says, and `clip_at` finds it again.
+    /// Geometry round-trips: a clip lands where its tick says, and `clip_at` finds it again. On a
+    /// phone the lanes start where the ruler starts (the list shrinks; the two once came apart).
     #[test]
     fn timeline_geometry_round_trips() {
         let mut a = app();
@@ -545,5 +598,20 @@ mod tests {
         assert_eq!(clip_at(s, lanes_rect(s).x + 2.0, r.y + 4.0), None, "the ground before it is empty");
         // Seek maths: the ruler's x gives the tick back.
         assert_eq!(tick_at(s, x_of_tick(s, 3 * bar)), 3 * bar);
+        // A phone: the ruler's left edge is the lanes' left edge.
+        a.state.screen = (360.0, 640.0);
+        let s = &a.state;
+        assert_eq!(lanes_rect(s).x, ruler_rect(s).x, "the lanes sit under the ruler, not a gap right of it");
+        // The volume slider sits in its row and a click's x reads back as a volume.
+        a.state.screen = (1280.0, 800.0);
+        a.state.project.patterns.push(Pattern { number: 9, notes: vec![note(0, 0, 60, 1)], ..Default::default() });
+        crate::playlist::arr_mut(&mut a.state).clips.push(Clip::new(bar, 2 * bar, 1, ClipSource::Pattern(9)));
+        crate::playlist::arr_mut(&mut a.state).tracks[1].name = Some("Mango Keys".into());
+        let s = &a.state;
+        let g = vol_slider(s, 1).expect("the named track with a clip has a slider");
+        let row = row_rect(s, 1);
+        assert!(row.x <= g.x && g.right() <= row.right() && row.y <= g.y && g.bottom() <= row.bottom(), "the slider stays in its row");
+        assert_eq!(vol_at(s, g.x, 1), 0.0);
+        assert_eq!(vol_at(s, g.right(), 1), 1.0);
     }
 }
