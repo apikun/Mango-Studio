@@ -443,6 +443,7 @@ pub fn builtin_effects() -> Vec<Available> {
         &lemon_twelve::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
         &lemon_peak_controller::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
         &lemon_formula_controller::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
+        &mango_master::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
     ];
     let names = FILE_MAPPED.into_iter().chain(LINKED_EFFECTS);
     LIBS.iter().zip(entries).zip(names).flat_map(|((lib, entry), name)| linked(lib, entry, name)).collect()
@@ -595,6 +596,42 @@ impl Plugins {
     fn native_ready(&mut self, dll: &std::path::Path) -> bool {
         let (Some(checks), Ok(program)) = (&mut self.native_checks, std::env::current_exe()) else { return true };
         checks.ready(&program, dll)
+    }
+
+    /// A plugin file the user picked anywhere (the browser's files tree): one the scans already know joins its list at
+    /// once; the others are scanned now, in the scanner child, so a broken file never takes the program down, and the
+    /// plugins it names join the instrument or effect lists (a shell file joins every plugin it offers). The plugin
+    /// plays from the file on first use, the way a scanned one does. `Err` is what to tell the user.
+    pub fn host_file(&mut self, path: &Path) -> Result<(), String> {
+        let Some(format) = crate::plugin_db::format_of_file(path) else {
+            return Err("is not a plugin file this program hosts (.clap, .vst3, .vst)".into());
+        };
+        if self.available.iter().chain(&self.effects).any(|a| crate::plugin_db::same_path(&a.desc.path, path)) {
+            return Ok(());
+        }
+        if format == os_host::Format::Vst2 {
+            if let Some(why) = os_vst2::unsupported(path) {
+                return Err(why);
+            }
+        }
+        // Tests scan in this process (a test program is no scanner).
+        let scanned = if cfg!(test) { crate::plugin_scan::scan_here(path, format) } else { crate::plugin_scan::scan_in_child(path, format) };
+        if scanned.status != crate::plugin_db::Status::Ok {
+            return Err(if scanned.error.is_empty() { "the scan could not read it".into() } else { scanned.error });
+        }
+        let descs: Vec<Descriptor> = scanned.plugins.iter().map(|r| r.descriptor(format, path)).collect();
+        if descs.is_empty() {
+            return Err("the scan found no plugin in it".into());
+        }
+        let lib: Arc<dyn Library> = Arc::new(LazyLibrary { path: path.to_path_buf(), format, plugins: descs.clone(), real: OnceLock::new() });
+        for d in descs {
+            match d.kind {
+                os_host::Kind::Instrument => self.available.push(Available { lib: lib.clone(), desc: d }),
+                os_host::Kind::Effect => self.effects.push(Available { lib: lib.clone(), desc: d }),
+                os_host::Kind::Other => {}
+            }
+        }
+        Ok(())
     }
 
     /// The built-in plugins plus every plugin file in the standard folders, scanned in this process at once (tests).
@@ -1681,7 +1718,7 @@ pub const LEMON_EQ: &str = "Mango Parametric EQ";
 /// Lemon Studio's effects compiled in besides the EQ (`builtin_effects`, in this order). They have no file plugin of
 /// their own to be stored as, so a project stores them wrapped, as it stored their plugin files
 /// (`project_plugins::is_wrapped`).
-pub const LINKED_EFFECTS: [&str; 20] = [
+pub const LINKED_EFFECTS: [&str; 21] = [
     "Mango Limiter",
     "Mango Reverb",
     "Mango Delay",
@@ -1702,6 +1739,7 @@ pub const LINKED_EFFECTS: [&str; 20] = [
     "Mango 12",
     LEMON_PEAK_CONTROLLER,
     LEMON_FORMULA_CONTROLLER,
+    "Mango Master",
 ];
 /// Lemon Studio's effects compiled in that a project stores under the FL plugin they recreate, with that plugin's
 /// state (`new_slot`, `store_builtin_states`), so they are never saved wrapped.

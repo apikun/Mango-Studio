@@ -41,11 +41,16 @@ pub fn standard_dirs() -> Vec<PathBuf> {
         let program_files = env("ProgramFiles");
         let program_files_x86 = env("ProgramFiles(x86)");
         let common = env("CommonProgramFiles");
+        let common_x86 = env("CommonProgramFiles(x86)");
         let usual = [
             program_files.as_ref().map(|p| p.join("VSTPlugins")),
             program_files.as_ref().map(|p| p.join("Steinberg").join("VSTPlugins")),
             common.as_ref().map(|c| c.join("VST2")),
             common.as_ref().map(|c| c.join("Steinberg").join("VST2")),
+            // FL Studio scans these too: 32-bit VSTs still ship, and Steinberg's shared components live here.
+            common_x86.as_ref().map(|c| c.join("VST2")),
+            common_x86.as_ref().map(|c| c.join("Steinberg").join("VST2")),
+            common.as_ref().map(|c| c.join("Steinberg").join("Shared Components")),
             program_files_x86.as_ref().map(|p| p.join("VSTPlugins")),
             program_files_x86.as_ref().map(|p| p.join("Steinberg").join("VSTPlugins")),
         ];

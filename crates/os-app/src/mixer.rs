@@ -142,6 +142,8 @@ pub struct MixerUi {
     /// Slot names typed in the rename box (session only).
     pub slot_names: HashMap<(u16, u8), String>,
     pub pending: Vec<FxReq>,
+    /// Slots whose plugin is made without opening its editor (the master's Mango Master in a new project).
+    pub quiet: std::collections::HashSet<(u16, u8)>,
     /// Meter state per track (`meters::Meter`), fed by `feed_meters`.
     pub meters: Vec<crate::meters::Meter>,
     /// Meter ballistics and look.
@@ -157,7 +159,7 @@ pub struct MixerUi {
 
 impl Default for MixerUi {
     fn default() -> Self {
-        MixerUi { sel: Vec::new(), layout: if cfg!(test) { WIDE } else { saved_layout() }, slot_names: HashMap::new(), pending: Vec::new(), meters: Vec::new(),
+        MixerUi { sel: Vec::new(), layout: if cfg!(test) { WIDE } else { saved_layout() }, slot_names: HashMap::new(), pending: Vec::new(), quiet: Default::default(), meters: Vec::new(),
             meter_cfg: Default::default(), meter_at: None, solo: None, wheel_grab: None }
     }
 }
@@ -1681,9 +1683,12 @@ impl App {
                     Ok(_) => {
                         self.plugins.added(crate::plugins::fx_key(track, slot));
                         relink = true;
-                        self.open_fx(track, slot);
+                        if !self.state.mixer.quiet.remove(&(track, slot)) {
+                            self.open_fx(track, slot);
+                        }
                     }
                     Err(e) => {
+                        self.state.mixer.quiet.remove(&(track, slot));
                         if let Some(m) = track_mut(&mut self.state, track) {
                             m.slots[usize::from(slot)] = None;
                         }

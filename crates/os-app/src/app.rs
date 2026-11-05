@@ -2344,6 +2344,33 @@ impl App {
         s.piano.dirty = true;
         s.message = Some("New project".into());
         self.mark_saved();
+        self.master_into_new_project();
+    }
+
+    /// A new project starts with the master selected and Mango Master in its first slot: it changes nothing until Auto
+    /// Master (or a knob) does. The project still counts as untouched, and undo does not take it out.
+    pub(crate) fn master_into_new_project(&mut self) {
+        // The mixer shows the master, where Mango Master is.
+        self.state.selected_mixer = 0;
+        let Some(index) = self.plugins.effect_index("Mango Master") else { return };
+        if self.state.project.mixer.iter().find(|m| m.index == 0).is_none_or(|m| m.slots[0].is_some()) {
+            return;
+        }
+        let _ = crate::mixer::run(self, crate::mixer::MCmd::AddEffect(0, index));
+        // Made quietly: its editor opens when asked for, not at the start.
+        self.state.mixer.quiet.insert((0, 0));
+        self.state.history.reset();
+        self.mark_saved();
+    }
+
+    /// The program started with the built-in new project (no file, no template): it gets Mango Master as a new one does,
+    /// once the plugins are known.
+    pub(crate) fn master_into_default_start(&mut self) {
+        let p = &self.state.project;
+        let empty = p.mixer.iter().all(|m| m.slots.iter().all(Option::is_none)) && p.arrangements.iter().all(|a| a.clips.is_empty());
+        if self.state.path.is_none() && !self.unsaved() && empty {
+            self.master_into_new_project();
+        }
     }
 
     /// FILE > Open: the open dialog, starting in the project's folder.
@@ -10672,6 +10699,30 @@ fn load_theme_inner() -> Theme {
 
 #[cfg(test)]
 mod tests {
+    /// A new project starts with Mango Master in the master's first slot (doing nothing yet), counted as untouched.
+    #[test]
+    fn a_new_project_has_mango_master_in_the_master() {
+        let mut app = App::new(None);
+        app.plugins.effects = crate::plugins::builtin_effects();
+        assert!(app.state.project.mixer[0].slots[0].is_none());
+        app.master_into_default_start();
+        let slot = app.state.project.mixer[0].slots[0].as_ref().expect("Mango Master");
+        assert_eq!(slot.name, "Mango Master");
+        assert!(app.state.mixer.pending.iter().any(|r| matches!(r, crate::mixer::FxReq::Create { track: 0, slot: 0, .. })), "asked to host it");
+        assert!(!app.unsaved(), "still an untouched project");
+        assert_eq!(app.state.selected_mixer, 0, "the mixer shows the master");
+        // Made when the mixer ticks, without opening its editor over the mixer.
+        app.mixer_tick();
+        assert!(app.plugins.hosted.contains_key(&crate::plugins::fx_key(0, 0)), "hosted");
+        assert!(app.state.mixer.quiet.is_empty(), "its editor stays closed");
+        // Another project is left alone.
+        let mut other = App::new(None);
+        other.plugins.effects = crate::plugins::builtin_effects();
+        other.state.project = test_project();
+        other.master_into_default_start();
+        assert!(other.state.project.mixer[0].slots[0].is_none());
+    }
+
     /// Middle-click renames (from battlemountain2's fork): a channel's name button, a playlist track's header and a
     /// mixer strip each open their name box. Esc closes a message box and a piano roll tool dialog.
     #[test]
