@@ -723,10 +723,35 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
                 .into_iter()
                 .flatten()
                 .collect()),
-                g("CPU", vec![
-                    Check2("Multithreaded generator processing", true, "Smart disable", true),
-                    Check2("Multithreaded mixer processing", true, "Align tick lengths", false),
-                ]),
+                g("CPU", {
+                    // Linux adds the deep sleep check (`crate::prefs::CPU_DEEP_SLEEP`, `crate::cpu_dma_latency`): while
+                    // it is on the kernel's PM QoS keeps the CPUs out of their C-states, which the audio callback at
+                    // small buffers needs. The line under it says where the constraint stands: held, or what refused it
+                    // (the device's permissions).
+                    #[cfg(target_os = "linux")]
+                    let deep_sleep = {
+                        let mut rows = vec![Check(crate::prefs::CPU_DEEP_SLEEP.label, false)];
+                        if crate::prefs::check(&crate::prefs::CPU_DEEP_SLEEP) {
+                            let note = if crate::cpu_dma_latency::is_enabled() {
+                                "Holding /dev/cpu_dma_latency at 0 µs: the CPUs keep out of their deep sleep states (C-states)."
+                            } else {
+                                "The device refused (it is the root's on most systems: sudo to test, or a udev rule — the README's Permissions)."
+                            };
+                            rows.push(Text(note.to_string(), true));
+                        }
+                        rows
+                    };
+                    #[cfg(not(target_os = "linux"))]
+                    let deep_sleep: Vec<Row> = Vec::new();
+                    [
+                        vec![Check2("Multithreaded generator processing", true, "Smart disable", true)],
+                        vec![Check2("Multithreaded mixer processing", true, "Align tick lengths", false)],
+                        deep_sleep,
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect()
+                }),
                 g("Mixer", vec![
                     combo("24-point sinc", 122.0, "Resampling quality"),
                     Value(crate::prefs::number_text(&crate::prefs::BROWSER_PREVIEW_TRACK), "Browser preview track"),

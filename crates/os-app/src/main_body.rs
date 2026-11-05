@@ -1884,6 +1884,15 @@ pub(crate) fn main_impl() {
     }
     // Run from source: Lemon Studio's own plugins are rebuilt and installed before the plugin scan looks for them.
     plugin_rebuild::run();
+    // Linux: the Audio settings' CPU deep sleep check (`crate::prefs::CPU_DEEP_SLEEP`) holds the kernel's CPU latency
+    // constraint (`crate::cpu_dma_latency`) for the whole run; the toggle keeps it as it flips. The one-shot children
+    // (the plugin scanner and its kind) leave before this, and the constraint belongs to the process that holds it.
+    #[cfg(target_os = "linux")]
+    if crate::prefs::check(&crate::prefs::CPU_DEEP_SLEEP) {
+        if let Err(e) = crate::cpu_dma_latency::enable_low_latency() {
+            eprintln!("Audio: {e}");
+        }
+    }
     let path = args.first().map(std::path::PathBuf::from);
     let start = path.is_none();
     let mut builder = EventLoop::<()>::with_user_event();
