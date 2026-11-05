@@ -443,6 +443,7 @@ pub fn builtin_effects() -> Vec<Available> {
         &lemon_twelve::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
         &lemon_peak_controller::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
         &lemon_formula_controller::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
+        &mango_master::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
     ];
     let names = FILE_MAPPED.into_iter().chain(LINKED_EFFECTS);
     LIBS.iter().zip(entries).zip(names).flat_map(|((lib, entry), name)| linked(lib, entry, name)).collect()
@@ -1681,7 +1682,7 @@ pub const LEMON_EQ: &str = "Mango Parametric EQ";
 /// Lemon Studio's effects compiled in besides the EQ (`builtin_effects`, in this order). They have no file plugin of
 /// their own to be stored as, so a project stores them wrapped, as it stored their plugin files
 /// (`project_plugins::is_wrapped`).
-pub const LINKED_EFFECTS: [&str; 20] = [
+pub const LINKED_EFFECTS: [&str; 21] = [
     "Mango Limiter",
     "Mango Reverb",
     "Mango Delay",
@@ -1702,6 +1703,7 @@ pub const LINKED_EFFECTS: [&str; 20] = [
     "Mango 12",
     LEMON_PEAK_CONTROLLER,
     LEMON_FORMULA_CONTROLLER,
+    "Mango Master",
 ];
 /// Lemon Studio's effects compiled in that a project stores under the FL plugin they recreate, with that plugin's
 /// state (`new_slot`, `store_builtin_states`), so they are never saved wrapped.

@@ -58,6 +58,7 @@ lemon-drum-sampler = { path = "../../plugins/lemon-drum-sampler", features = ["l
 lemon-slicer = { path = "../../plugins/lemon-slicer", features = ["linked"] }
 # The retro sound effect generator (a port of sfxr), compiled in like the other small generators.
 mango-sfxr = { path = "../../plugins/mango-sfxr", features = ["linked"] }
+mango-master = { path = "../../plugins/mango-master", features = ["linked"] }
 lemon-boom = { path = "../../plugins/lemon-boom", features = ["linked"] }
 lemon-bass = { path = "../../plugins/lemon-bass", features = ["linked"] }
 lemon-acid = { path = "../../plugins/lemon-acid", features = ["linked"] }
