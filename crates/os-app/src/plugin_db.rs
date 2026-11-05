@@ -474,6 +474,18 @@ impl Formats {
     const NONE: Formats = Formats { clap: false, vst3: false, vst2: false };
 }
 
+/// The plugin format of a file the user picked anywhere (the browser's files tree): `.clap` files, `.vst3` bundles and
+/// single-file modules, and the VST 2 library extension (`os_vst2`, whose export table is read without loading). `None`
+/// for everything else.
+pub fn format_of_file(p: &Path) -> Option<Format> {
+    match p.extension().map(|e| e.to_string_lossy().to_lowercase()).as_deref() {
+        Some("clap") if os_clap::is_plugin(p) => Some(Format::Clap),
+        Some("vst3") if p.is_dir() || p.is_file() => Some(Format::Vst3),
+        Some(x) if x == os_vst2::EXTENSION && os_vst2::is_plugin(p) => Some(Format::Vst2),
+        _ => None,
+    }
+}
+
 fn walk(dir: &Path, depth: u32, formats: Formats, walked: &mut HashSet<(PathBuf, Formats)>, seen: &mut HashSet<String>, out: &mut Vec<Found>) {
     // A folder reached twice (links, nested search folders) is searched once.
     let canon = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
@@ -1312,6 +1324,25 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// A file the user picked anywhere is named by its format: `.clap` and `.vst3` files by their extension, the VST 2
+    /// library by its export table (so a `.dll` that is not a plugin stays out).
+    #[test]
+    fn format_of_file_names_a_picked_plugins_format() {
+        let d = temp("format_of_file");
+        std::fs::write(d.join("Synth.clap"), b"not really").unwrap();
+        std::fs::write(d.join("Synth.vst3"), b"not really").unwrap();
+        std::fs::write(d.join("Synth.dll"), b"not really").unwrap();
+        std::fs::write(d.join("Notes.txt"), b"notes").unwrap();
+        let of = |n: &str| format_of_file(&d.join(n));
+        if cfg!(not(target_os = "macos")) {
+            assert_eq!(of("Synth.clap"), Some(Format::Clap));
+            assert_eq!(of("Synth.vst3"), Some(Format::Vst3));
+        }
+        assert_eq!(of("Synth.dll"), None, "the export table says no");
+        assert_eq!(of("Notes.txt"), None);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// Discovery (§4): .clap files (bundles on macOS) and .vst3 bundles, recursively, not inside bundles; standard folders only for their

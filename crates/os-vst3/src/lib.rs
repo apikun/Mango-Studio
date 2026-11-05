@@ -87,6 +87,10 @@ pub fn standard_dirs() -> Vec<PathBuf> {
         if let Some(c) = std::env::var_os("COMMONPROGRAMFILES") {
             v.push(PathBuf::from(c).join("VST3"));
         }
+        // 32-bit VST3 bundles live beside the 64-bit ones, in their own Common files folder.
+        if let Some(c) = std::env::var_os("COMMONPROGRAMFILES(x86)") {
+            v.push(PathBuf::from(c).join("VST3"));
+        }
     }
     #[cfg(target_os = "macos")]
     {

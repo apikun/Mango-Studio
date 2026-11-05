@@ -707,6 +707,7 @@ impl ApplicationHandler for Shell {
         // Built-in and cached plugins at once, then a background scan (spec: ui/plugin-manager.md §4).
         splash::step(&self.splash, splash::PLUGINS, "Loading plugins");
         self.app.start_plugins();
+        self.app.master_into_default_start();
         splash::step(&self.splash, splash::LOADING, "Loading project");
         self.window = Some(window);
         el.set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(16)));

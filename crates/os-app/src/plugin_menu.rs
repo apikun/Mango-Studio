@@ -11,6 +11,7 @@
 // spec: ui/plugin-menu.md
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use crate::app::{App, State};
 use crate::playlist::{Cmd, Mark, PItem};
@@ -434,12 +435,82 @@ pub fn add_effect(app: &mut App, index: usize, slot: Option<u8>) -> Option<Strin
     }
 }
 
+/// A plugin file handed over by the browser's files tree (a `.dll`, `.vst`, `.vst3` or `.clap` file clicked or dropped
+/// there): one the scans already know is added straight away, the others are scanned now (`Plugins::host_file`) and
+/// join the lists; then a generator becomes a channel and an effect a slot on the selected mixer track. Returns the
+/// message to show.
+pub fn add_plugin_file(app: &mut App, path: &std::path::Path) -> Option<String> {
+    if let Err(e) = app.plugins.host_file(path) {
+        return Some(format!("{}: {e}", shown(path)));
+    }
+    // The plugin database keeps it like a scanned file, so the manager lists it and the next merge keeps it.
+    let entry = app.plugins.available.iter().chain(&app.plugins.effects).find(|a| db::same_path(&a.desc.path, path)).map(|a| (a.desc.format, a.desc.uid()));
+    let Some((format, uid)) = entry else { return Some(format!("{}: the scan found no plugin in it", shown(path))) };
+    if app.state.plugdb.cache.files.iter().all(|f| !db::same_path(Path::new(&f.path), path)) {
+        let (size, modified) = db::stamp(path, format);
+        let records = app.plugins.available.iter().chain(&app.plugins.effects).filter(|a| db::same_path(&a.desc.path, path)).map(|a| db::Record::of(&a.desc)).collect();
+        app.state.plugdb.cache.files.push(db::FileScan { path: path.to_string_lossy().into_owned(), format: format.as_str().into(), size, modified, status: db::Status::Ok, error: String::new(), plugins: records });
+        app.state.plugdb.refilter();
+    }
+    match app.plugins.available.iter().position(|a| a.desc.uid() == uid) {
+        // `add_generator` names only the sampler; the file's plugin is named here.
+        Some(i) => {
+            let name = app.plugins.available[i].desc.name.clone();
+            add_generator(app, i, None).or_else(|| Some(format!("Added {name}")))
+        }
+        None => app.plugins.effects.iter().position(|a| a.desc.uid() == uid).and_then(|i| add_effect(app, i, None)).or_else(|| Some(format!("{} is a kind of plugin nothing hosts yet", shown(path)))),
+    }
+}
+
+/// The file's name, as messages show it.
+fn shown(path: &std::path::Path) -> String {
+    path.file_name().map_or_else(|| path.to_string_lossy().into_owned(), |n| n.to_string_lossy().into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::App;
     use crate::osc3::LEMON_TRIO;
     use crate::playlist::Cmd;
+
+    /// A plugin file picked in the browser: one the scans already know is added as its kind (a generator becomes a
+    /// channel), and a file no plugin loads is only a message, with nothing added.
+    #[test]
+    fn a_plugin_file_from_the_browser_is_added() {
+        let dir = std::env::temp_dir().join(format!("mango_plugfile_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let known = dir.join("Known.clap");
+        let broken = dir.join("Broken.clap");
+        // A .clap file is named a plugin by its extension, so the content does not matter; it must exist.
+        std::fs::write(&known, b"not really").unwrap();
+        std::fs::write(&broken, b"not a clap").unwrap();
+
+        // Known: an entry whose path is the file (as a scan would have made it) is added as a channel.
+        let mut a = App::new(None);
+        a.state.project = crate::app::test_project();
+        let mut entry = crate::plugins::builtin().into_iter().find(|p| p.desc.name == LEMON_TRIO).expect("built in");
+        entry.desc.path = known.clone();
+        let n = a.plugins.available.len();
+        a.plugins.available.push(entry);
+        let m = add_plugin_file(&mut a, &known).expect("a status message");
+        assert_eq!(a.plugins.available.len(), n + 1, "the file was not scanned again");
+        // The channel holds the file's name (projects store the Trio as its 3x Osc), its own name the display one.
+        let ch = a.state.project.channels.last().unwrap();
+        assert_eq!(ch.plugin.as_deref(), Some(crate::osc3::FILE_NAME), "a channel holds it");
+        assert_eq!(ch.name.as_deref(), Some(LEMON_TRIO));
+        assert!(m.contains("Added"), "{m}");
+
+        // Broken: only a message; no channel, no database entry.
+        let n = a.state.project.channels.len();
+        let files = a.state.plugdb.cache.files.len();
+        let m = add_plugin_file(&mut a, &broken).expect("a message");
+        assert!(m.contains("Broken.clap"), "{m}");
+        assert_eq!(a.state.project.channels.len(), n, "nothing was added");
+        assert_eq!(a.state.plugdb.cache.files.len(), files, "the database keeps no broken file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// Insert instrument ▸ on a track header, a generator dropped on the track (issue #2): the pick adds the
     /// instrument and places a clip of a new pattern named after it on the track, at the tick given; one undo step
