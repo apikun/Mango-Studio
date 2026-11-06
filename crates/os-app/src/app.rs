@@ -1125,6 +1125,8 @@ pub struct State {
     /// Search text and whether the search box has keyboard focus (spec: ui/browser.md §5).
     pub browser_search: String,
     pub browser_search_focus: bool,
+    /// The browser's Freesound side: the query, the last search's sounds (crate::freesound).
+    pub freesound: crate::freesound::Browser,
     /// Options-menu toggles that are on (`views::browser::OPT_*`).
     pub browser_opts: std::collections::HashSet<&'static str>,
     /// Navigation history of selected row keys and the position in it.
@@ -1524,6 +1526,7 @@ impl App {
                 browser_drag: None,
                 browser_search: String::new(),
                 browser_search_focus: false,
+                freesound: Default::default(),
                 browser_opts: views::browser::DEFAULT_OPTS.iter().copied().collect(),
                 browser_hist: Vec::new(),
                 browser_hist_pos: 0,
@@ -2640,6 +2643,7 @@ impl App {
         self.export_tick();
         crate::missing::tick(self);
         crate::zipped::tick(self);
+        crate::freesound::tick(self);
         crate::audio_file::melody_tick(self);
         self.midi_tick();
         self.mixer_tick();
@@ -15400,7 +15404,7 @@ mod tests {
         frame(&mut app, &mut c, None);
         // The all tab lists the roots with content and the preset store, all closed.
         let labels: Vec<String> = rows(&app.state).into_iter().map(|r| r.label).collect();
-        assert_eq!(labels, ["Current project", "Plugin database", "Plugin presets"]);
+        assert_eq!(labels, ["Current project", "Plugin database", "Plugin presets", "Freesound"]);
         // Project tab: Current project opened with its patterns (default like the screenshot), History above them.
         let r0 = hit_rect(&app, &Action::BrowserTab(1));
         click(&mut app, &mut c, r0);
@@ -16689,7 +16693,7 @@ mod tests {
         // Esc clears the search and leaves the box.
         app.key(&Key::Named(NamedKey::Escape), false, false);
         assert!(app.state.browser_search.is_empty() && !app.state.browser_search_focus);
-        assert_eq!(rows(&app.state).len(), 3);
+        assert_eq!(rows(&app.state).len(), 4);
         // Search box on top moves the list down.
         app.browser_cmd(crate::browser::BCmd::Toggle("top"));
         frame(&mut app, &mut c, None);

@@ -559,7 +559,7 @@ every feature marked as done, in progress or not started.
 - ✅ Piano-roll vertical zoom
 - ✅ Channel rack: step sequencer, mini piano rolls, graph editor, filter groups, per-channel loops, fill tools, swing, clone / move / delete channels
 - ✅ Mixer: routing, effect slots, track editing, level meters with peak hold
-- ✅ Browser with drag and drop, sample preview, the built-in Mango Kit and Mango Pack sample folders (the Kit's sounds made from maths, the Pack's one-shots CC0 from Versilian Studios' Virtuosity Drums)
+- ✅ Browser with drag and drop, sample preview, the built-in Mango Kit and Mango Pack sample folders (the Kit's sounds made from maths, the Pack's one-shots CC0 from Versilian Studios' Virtuosity Drums), and Freesound, the online sample search of freesound.org in the All tab (a click fetches the sound's free preview MP3 into the user folder's Sounds/Freesound and plays it; a fetched one drags and drops like a sample)
 - ✅ Menus, plugin picker, settings window
 - ✅ Floating, resizable windows; scroll bars in every window; plugin windows dock or detach
 - ✅ Right-drag a scroll bar sideways to resize rows (playlist tracks, piano-roll keys)
