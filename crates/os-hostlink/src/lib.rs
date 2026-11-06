@@ -353,6 +353,9 @@ mod local {
         min_size: Mutex<Option<(u32, u32)>>,
         /// A size the host's frame asked for, not taken yet.
         wanted: Mutex<Option<(u32, u32)>>,
+        /// Files dropped on the editor (a sample from the browser), not taken yet; whether the editor takes any.
+        dropped: Mutex<Vec<String>>,
+        takes_drops: AtomicBool,
         hosted: AtomicBool,
         page: AtomicUsize,
         hint: Mutex<String>,
@@ -369,6 +372,8 @@ mod local {
                 hosted_size: Mutex::new(hosted_size),
                 min_size: Mutex::new(None),
                 wanted: Mutex::new(None),
+                dropped: Mutex::new(Vec::new()),
+                takes_drops: AtomicBool::new(false),
                 hosted: AtomicBool::new(false),
                 page: AtomicUsize::new(0),
                 hint: Mutex::new(String::new()),
@@ -386,6 +391,16 @@ mod local {
             if let Ok(mut r) = REGISTRY.lock() {
                 r.retain(|(_, w)| w.as_ptr() != Arc::as_ptr(self) && w.strong_count() > 0);
             }
+        }
+
+        /// The editor takes files dropped on it (`Link::drop_file`), through `take_dropped`.
+        pub fn accept_drops(&self) {
+            self.takes_drops.store(true, Ordering::Release);
+        }
+
+        /// The files dropped on the editor since the last call.
+        pub fn take_dropped(&self) -> Vec<String> {
+            self.dropped.lock().map(|mut d| std::mem::take(&mut *d)).unwrap_or_default()
         }
 
         /// The host said hello: the editor leaves its tab row to the host.
@@ -505,6 +520,19 @@ mod local {
             (self.peer.wake)();
         }
 
+        /// A file dropped on the editor (a sample from the browser): the editor takes it on its own thread (woken now).
+        /// False when the editor takes no files.
+        pub fn drop_file(&self, path: &str) -> bool {
+            if !self.peer.takes_drops.load(Ordering::Acquire) {
+                return false;
+            }
+            if let Ok(mut d) = self.peer.dropped.lock() {
+                d.push(path.to_string());
+            }
+            (self.peer.wake)();
+            true
+        }
+
         /// The active page as last seen.
         pub fn page_now(&self) -> usize {
             self.page
@@ -557,6 +585,10 @@ mod tests {
         assert_eq!(link.resizable(), None);
         peer.set_resizable((400, 300));
         assert_eq!(link.resizable(), Some((400, 300)));
+        // A file dropped on an editor that takes none is turned down; one that takes them gets it, woken.
+        assert!(!link.drop_file("a.wav"));
+        peer.accept_drops();
+        assert!(link.drop_file("b.wav") && peer.take_dropped() == ["b.wav"] && peer.take_dropped().is_empty());
         link.set_size(800, 500);
         assert_eq!(peer.take_size_request(), Some((800, 500)));
         assert_eq!(peer.take_size_request(), None);

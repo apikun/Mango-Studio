@@ -113,6 +113,18 @@ pub fn store_hosted(proj: &mut Project, plugins: &Plugins) {
             continue;
         }
         if !is_wrapped(&d) || plays_fl_slot(proj, key, &d) {
+            // A built-in instrument on the channel that names it stores its state there, as a native plugin does:
+            // Flex keeps its preset and macros, Slicex its loop, a project reopened plays what was saved (issue #149).
+            if is_builtin(&d)
+                && fx_of(key).is_none()
+                && proj.channels.get(key).is_some_and(|c| {
+                    c.kind == ChannelKind::Plugin
+                        && c.plugin.as_deref().is_some_and(|n| crate::plugins::current_name(n) == d.name.as_str())
+                })
+                && let Some(state) = plugins.state(key)
+            {
+                store_native(proj, key, state);
+            }
             continue;
         }
         if untouched_stand_in(proj, plugins, key, &d) {
@@ -764,6 +776,85 @@ mod tests {
         assert!(reopened.state.hosted_rows.contains(&row), "{:?}", reopened.state.message);
         assert_eq!(reopened.plugins.state(row), Some(state));
         assert_eq!(before, sound(&reopened.plugins));
+    }
+
+    /// A built-in instrument keeps what's in it across a save: Slicex its loop, Flex its preset and macros.
+    #[test]
+    fn slicex_keeps_its_loop_when_reopened() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("mango-app-slicex-{}.flp", std::process::id()));
+        let wav = dir.join(format!("mango-app-slicex-{}.wav", std::process::id()));
+        os_engine::wav::write_f32_stereo(&mut std::fs::File::create(&wav).unwrap(), 48000, &[0.5; 96000]).unwrap();
+        let mut app = App::new(None);
+        app.state.project = crate::app::test_project();
+        (app.state.file, app.state.path) = (None, None);
+        app.plugins.available = crate::plugins::builtin();
+        let row = crate::app::add_plugin_channel(&mut app.state.project, "Mango Slicex");
+        app.plugins.create(row, app.plugins.index_of("Mango Slicex").expect("built in")).unwrap();
+        app.state.hosted_rows.push(row);
+        // The state after a loop is loaded: its file named in the plugin's saved fields.
+        let blob = app.plugins.state(row).unwrap();
+        let start = blob.iter().position(|&b| b == b'{').unwrap();
+        let mut v: serde_json::Value = serde_json::from_slice(&blob[start..]).unwrap();
+        v["fields"]["sample-path"] = serde_json::Value::String(serde_json::to_string(&*wav.to_string_lossy()).unwrap());
+        let json = serde_json::to_vec(&v).unwrap();
+        // The plugin's state stream is the text's length, then the text.
+        let mut loaded = if start == 8 { (json.len() as u64).to_le_bytes().to_vec() } else { Vec::new() };
+        loaded.extend(json);
+        assert!(app.plugins.set_state(row, &loaded));
+        let state = app.plugins.state(row).unwrap();
+        app.save_to(path.clone());
+        assert!(app.state.message.as_deref().is_some_and(|m| m.starts_with("Saved")), "{:?}", app.state.message);
+        let mut reopened = App::new(None);
+        reopened.plugins.available = crate::plugins::builtin();
+        reopened.open(path.clone());
+        reopened.sync_generators();
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&wav);
+        assert!(reopened.state.hosted_rows.contains(&row), "{:?}", reopened.state.message);
+        assert_eq!(reopened.plugins.state(row), Some(state), "the loop came back");
+        assert_eq!(reopened.state.project.channels[row].plugin.as_deref(), Some("Mango Slicex"));
+    }
+
+    /// Mango Master in a mixer slot keeps its knobs through a save and a reopen, and they still reach the sound's state.
+    #[test]
+    fn mango_master_keeps_its_settings_in_a_project() {
+        use crate::plugins::fx_key;
+        let path = std::env::temp_dir().join(format!("mango-app-mango-master-{}.flp", std::process::id()));
+        let mut a = App::new(None);
+        a.state.project = crate::app::test_project();
+        (a.state.file, a.state.path) = (None, None);
+        a.plugins.effects = crate::plugins::builtin_effects();
+        let index = a.plugins.effect_index("Mango Master").expect("built in");
+        a.state.project.mixer[3].slots[1] = Some(crate::plugins::new_slot("Mango Master"));
+        a.plugins.create_effect(3, 1, index, None).unwrap();
+        let key = fx_key(3, 1);
+        assert!(a.plugins.set_param_named(key, "Gain", 7.5));
+        assert!(a.plugins.set_param_named(key, "EQ High", 2.0));
+        assert!(a.plugins.set_param_named(key, "Ceiling", -1.0));
+        a.plugins.hosted[&key].plugin.lock().unwrap().idle();
+        // Audio through it as the host runs it: the gain is heard, and nothing passes the ceiling.
+        {
+            let mut p = a.plugins.hosted[&key].plugin.lock().unwrap();
+            let wave: Vec<f32> = (0..256).map(|i| 0.1 * (i as f32 * 0.1).sin()).collect();
+            let mut loudest = 0f32;
+            for _ in 0..200 {
+                let (mut l, mut r) = (wave.clone(), wave.clone());
+                p.process_fx(48000, &mut l, &mut r);
+                loudest = l.iter().fold(loudest, |m, v| m.max(v.abs()));
+            }
+            assert!(loudest > 0.2 && loudest < 0.9, "{loudest}");
+        }
+        let state = a.plugins.state(key).unwrap();
+        assert!(String::from_utf8_lossy(&state).contains("gain"), "the knobs are in the saved state");
+        a.save_to(path.clone());
+        assert!(a.state.message.as_deref().is_some_and(|m| m.starts_with("Saved") && !m.contains("not stored")), "{:?}", a.state.message);
+        let mut b = App::new(None);
+        b.plugins.effects = crate::plugins::builtin_effects();
+        b.open(path.clone());
+        b.sync_wrapped();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(b.plugins.state(key), Some(state));
     }
 
     #[test]

@@ -154,12 +154,12 @@ pub enum Btn {
     Middle,
 }
 
-/// A drag: a parameter (its normalised value and pixels for the range), a grid point (its beat and value at the
+/// A drag: a parameter (its normalised value and pixels for the range), a grid point (its position and value at the
 /// start and the pixels moved so far) or a tension handle.
 #[derive(Clone, Debug)]
 enum Drag {
     Param { id: String, v: f32, px: f32, across: bool },
-    Point { sec: usize, slot: usize, i: usize, beat: f32, value: f32, dx: f32, dy: f32 },
+    Point { sec: usize, slot: usize, i: usize, pos: f32, value: f32, dx: f32, dy: f32 },
     Tension { sec: usize, slot: usize, i: usize, t: f32, dy: f32 },
 }
 
@@ -268,15 +268,15 @@ impl Logic {
         }
     }
 
-    /// A point's neighbours' beats (its x stays between them; the first point pins at 0).
-    fn beat_bounds(curve: &Curve, i: usize) -> (f32, f32) {
+    /// A point's neighbours' positions (its x stays between them; the first point pins at 0).
+    fn pos_bounds(curve: &Curve, i: usize) -> (f32, f32) {
         let lo = if i == 0 { 0.0 } else { curve.pts[i - 1].x };
         let hi = curve.pts.get(i + 1).map_or(1.0, |p| p.x);
         (lo, hi)
     }
 
-    /// Snaps a beat position to the grid's twenty-fourths (a free drag with Shift).
-    fn snap_beat(x: f32, free: bool) -> f32 {
+    /// Snaps a position on the grid to its twenty-fourths (a free drag with Shift).
+    fn snap_pos(x: f32, free: bool) -> f32 {
         if free {
             return x.clamp(0.0, 1.0);
         }
@@ -306,18 +306,18 @@ impl Logic {
             }
             (Target::Grid(sec), Btn::Right) => acts.push(Act::Menu(MenuReq::Section(*sec, self.shown_slot(*sec)), x, y)),
             (Target::Grid(sec), Btn::Left) => {
-                // A click on the empty grid plants a point there (on the beat's twenty-fourths).
+                // A click on the empty grid plants a point there (on the bar's twenty-fourths).
                 let sec = *sec;
                 let slot = self.shown_slot(sec);
-                let (beat, value) = view::value_at(sec, x, y);
-                let beat = Self::snap_beat(beat, m.shift);
+                let (pos, value) = view::value_at(sec, x, y);
+                let pos = Self::snap_pos(pos, m.shift);
                 let curve = self.curve_mut(sec, slot);
-                curve.pts.push(Pt::new(beat, value, 0.0, Mode::Single as u8));
+                curve.pts.push(Pt::new(pos, value, 0.0, Mode::Single as u8));
                 curve.normalize();
-                let i = curve.pts.iter().position(|p| (p.x - beat).abs() < 1e-4).unwrap_or(0);
+                let i = curve.pts.iter().position(|p| (p.x - pos).abs() < 1e-4).unwrap_or(0);
                 let (px, py) = (curve.pts[i].x, curve.pts[i].y);
                 self.view.active = Some((sec, slot, i));
-                self.drag = Some(Drag::Point { sec, slot, i, beat: px, value: py, dx: 0.0, dy: 0.0 });
+                self.drag = Some(Drag::Point { sec, slot, i, pos: px, value: py, dx: 0.0, dy: 0.0 });
                 self.view.pressed = Some(t.clone());
                 acts.push(Act::Lock);
                 acts.extend(self.grids_changed());
@@ -355,7 +355,7 @@ impl Logic {
                     if ring {
                         self.drag = Some(Drag::Tension { sec, slot, i, t: p.t, dy: 0.0 });
                     } else {
-                        self.drag = Some(Drag::Point { sec, slot, i, beat: p.x, value: p.y, dx: 0.0, dy: 0.0 });
+                        self.drag = Some(Drag::Point { sec, slot, i, pos: p.x, value: p.y, dx: 0.0, dy: 0.0 });
                     }
                     self.view.pressed = Some(t.clone());
                     acts.push(Act::Lock);
@@ -377,32 +377,32 @@ impl Logic {
                 self.vals.set(&id, v);
                 self.drag = Some(Drag::Param { id, v, px, across });
             }
-            Drag::Point { sec, slot, i, beat, value, dx: acc_x, dy: acc_y } => {
+            Drag::Point { sec, slot, i, pos, value, dx: acc_x, dy: acc_y } => {
                 let acc_x = acc_x + dx * f;
                 let acc_y = acc_y + dy * f;
-                // Shift locks the axis that moved most first (as the playlist's points); the beat lands on the
-                // twenty-fourths unless the drag holds Shift from the start.
-                let lock = ((acc_x.abs() > 3.0 || acc_y.abs() > 3.0)).then(|| acc_x.abs() >= acc_y.abs());
-                let mut x = beat + acc_x / POINT_PX;
+                // Shift locks the axis that moved most first (as the playlist's points); the point lands on the
+                // bar's twenty-fourths unless the drag holds Shift from the start.
+                let lock = (acc_x.abs() > 3.0 || acc_y.abs() > 3.0).then(|| acc_x.abs() >= acc_y.abs());
+                let mut x = pos + acc_x / POINT_PX;
                 let mut y = (value - acc_y / POINT_VPX).clamp(0.0, 1.0);
                 if m.shift {
-                    x = Self::snap_beat(x, true);
+                    x = Self::snap_pos(x, true);
                 } else {
-                    x = Self::snap_beat(x, false);
+                    x = Self::snap_pos(x, false);
                 }
                 if lock == Some(false) {
-                    x = beat;
+                    x = pos;
                 }
                 if lock == Some(true) {
                     y = value;
                 }
                 let curve = self.curve_mut(sec, slot);
                 if i < curve.pts.len() {
-                    let (lo, hi) = Self::beat_bounds(curve, i);
+                    let (lo, hi) = Self::pos_bounds(curve, i);
                     curve.pts[i].x = if i == 0 { 0.0 } else { x.clamp(lo, hi) };
                     curve.pts[i].y = y;
                 }
-                self.drag = Some(Drag::Point { sec, slot, i, beat, value, dx: acc_x, dy: acc_y });
+                self.drag = Some(Drag::Point { sec, slot, i, pos, value, dx: acc_x, dy: acc_y });
                 let t = self.view.pressed.clone();
                 self.hint = self.hint_for(t.as_ref());
                 return self.grids_changed();
@@ -707,7 +707,7 @@ mod tests {
         let seen = l.params.grid.version();
         assert!(seen > 0, "the shared grids heard the edit");
         paint(&mut l);
-        // Plant a second point, then drag IT a quarter beat across (the first point pins at 0).
+        // Plant a second point, then drag IT three quarters of the bar across (the first point pins at 0).
         let (x2, y2) = (view::GRIDS[view::TIME].x + 300.0, view::GRIDS[view::TIME].y + 40.0);
         l.down(x2, y2, Btn::Left, Mods::default(), false);
         l.up(Btn::Left);

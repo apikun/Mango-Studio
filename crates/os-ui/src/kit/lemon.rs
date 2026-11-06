@@ -197,7 +197,7 @@ pub fn led_round(c: &mut Canvas, t: &Palette, cx: f32, cy: f32, radius: f32, st:
 
 /// Selection frame: a rounded lemon outline.
 pub fn focus_frame(c: &mut Canvas, t: &Palette, r: Rect, width: f32) {
-    c.stroke_rrect(r, r_small(t), width.min(2.0), t.accent);
+    c.stroke_rrect(r, r_small(t), width.min(2.0), Color::rgb(0x8c8c8c));
 }
 
 // ---------------------------------------------------------------- knobs and faders
@@ -339,7 +339,7 @@ pub fn name_button(c: &mut Canvas, t: &Palette, r: Rect, col: Option<Color>, foc
     let face_c = if hover { face_c.mix(hi, 0.3) } else { face_c };
     let rad = r_btn(t).min(r.h / 2.0);
     if focused {
-        outlined(c, r, rad, t.brand_sel(brand::MAIN), face_c.mix(hi, 0.2));
+        outlined(c, r, rad, Color::rgb(0x8c8c8c), face_c.mix(hi, 0.2));
     } else {
         c.fill_rrect(r, rad, face_c);
     }
@@ -414,25 +414,39 @@ pub mod plug {
     pub const STRIP_LINE: Color = Color::rgb(0x090909);
 }
 
-/// Plugin knob: a full track ring, the value as an arc in `arc` over 270° (from the centre when `bipolar`), a dark disc
-/// and a light pointer. `r` = outer radius, `w` = ring width. Disabled: no arc, a faint pointer.
+/// Plugin knob, as a bar: a narrow dark slot as tall as the knob's diameter, filled from the bottom with `arc`'s gradient up
+/// to the value (from the middle outwards when `bipolar`), `r` = the knob's
+/// radius (the bar's height is twice it), `w` is kept for the callers and unused. Disabled: an empty slot.
 #[allow(clippy::too_many_arguments)]
-pub fn dial(c: &mut Canvas, cx: f32, cy: f32, r: f32, w: f32, value: f32, bipolar: bool, arc: Color, st: State) {
+pub fn dial(c: &mut Canvas, cx: f32, cy: f32, r: f32, _w: f32, value: f32, bipolar: bool, arc: Color, st: State) {
+    bar_knob(c, cx, cy, r, value, bipolar, arc, st);
+}
+
+/// The bar of `dial`: see there.
+#[allow(clippy::too_many_arguments)]
+pub fn bar_knob(c: &mut Canvas, cx: f32, cy: f32, r: f32, value: f32, bipolar: bool, arc: Color, st: State) {
     let v = value.clamp(0.0, 1.0);
-    let (start, sweep) = (0.75 * PI, 1.5 * PI);
-    let a = start + sweep * v;
-    let ring = r - w / 2.0;
-    c.arc(cx, cy, ring, start, sweep, w, plug::TRACK);
-    let a0 = if bipolar { start + sweep / 2.0 } else { start };
-    if !st.disabled && (a - a0).abs() > 0.01 {
-        let col = if st.hover || st.pressed { arc.mix(Color::rgb(0xffffff), 0.2) } else { arc };
-        c.arc(cx, cy, ring, a0.min(a), (a - a0).abs(), w, col);
+    let w = (r * 0.9).clamp(6.0, 16.0).round();
+    let slot = Rect::new((cx - w / 2.0).round(), (cy - r).round(), w, (2.0 * r).round());
+    let rad = (w / 2.0).min(6.0);
+    let lit = (st.hover || st.pressed) && !st.disabled;
+    c.fill_rrect(slot, rad, Color::rgb(0x0c0c0c));
+    c.stroke_rrect(slot.inset(0.5), rad, 1.0, if lit { Color::rgb(0x4a4a4a) } else { Color::rgb(0x2c2c2c) });
+    if st.disabled {
+        return;
     }
-    let disc = r - w - 1.5;
-    dial_disc(c, cx, cy, disc, st);
-    let pc = if st.disabled { plug::FAINT } else { Color::rgb(0xe6e6e6) };
-    let (p0, p1) = (disc * 0.25, (disc - 1.5).max(1.0));
-    c.line(cx + p0 * a.cos(), cy + p0 * a.sin(), cx + p1 * a.cos(), cy + p1 * a.sin(), (disc * 0.22).clamp(1.4, 2.2), pc);
+    let inner = slot.inset(2.0);
+    let (y0, y1) = if bipolar {
+        let (mid, y) = (inner.cy(), inner.bottom() - v * inner.h);
+        (y.min(mid), y.max(mid))
+    } else {
+        (inner.bottom() - v * inner.h, inner.bottom())
+    };
+    if y1 - y0 >= 1.0 {
+        // One flat colour, a little lighter under the pointer.
+        let col = if lit { arc.mix(Color::rgb(0xffffff), 0.18) } else { arc };
+        c.fill_rrect(Rect::new(inner.x, y0, inner.w, y1 - y0), (inner.w / 2.0).min((y1 - y0) / 2.0), col);
+    }
 }
 
 /// The dark disc of a plugin knob (lighter on hover).
@@ -464,7 +478,16 @@ pub fn toggle(c: &mut Canvas, cx: f32, cy: f32, on: bool, st: State) {
 
 /// Panel or card: outlined, radius 10.
 pub fn plug_panel(c: &mut Canvas, r: Rect) {
-    outlined(c, r, 10.0, plug::PANEL_LINE, plug::PANEL);
+    // The mixer strips' card: black edge, a grey rim, a face lit from the top and a shine along its top edge, so the
+    // panel stands out of the window like a real object.
+    let (top, low) = (Color::rgb(0x202020), Color::rgb(0x121212));
+    c.fill_rrect(r, 10.0, Color::rgb(0x000000));
+    c.fill_rrect(r.inset(1.0), 9.0, Color::rgb(0x2e2e2e));
+    let face = r.inset(2.0);
+    c.fill_rect_gradient(face, top, low, 8.0);
+    if face.w > 12.0 {
+        c.fill_rrect(Rect::new(face.x + 5.0, face.y + 1.0, face.w - 10.0, 1.0), 0.5, top.mix(Color::rgb(0xffffff), 0.12));
+    }
 }
 
 /// Greys out a panel (`plug_panel`) whose controls do nothing yet: the editor background over it, at the strength of

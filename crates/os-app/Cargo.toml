@@ -49,6 +49,8 @@ mango-slayer = { path = "../../plugins/mango-slayer", features = ["linked"] }
 mango-dashboard = { path = "../../plugins/mango-dashboard", features = ["linked"] }
 # The sampler (a recreation of FL's DirectWave), compiled in like the drum sampler.
 mango-directwave = { path = "../../plugins/mango-directwave", features = ["linked"] }
+# The sliced-loop sampler (a recreation of FL's Slicex), compiled in so it can talk to the host (the piano roll, the playlist).
+lemon-slicex = { path = "../../plugins/lemon-slicex", features = ["linked"] }
 # The pad drum sampler (a recreation of FL's FPC): sixteen pads in two banks, each one or more velocity
 # layers of samples, each on its own key.
 lemon-drum-sampler = { path = "../../plugins/lemon-drum-sampler", features = ["linked"] }
@@ -56,6 +58,7 @@ lemon-drum-sampler = { path = "../../plugins/lemon-drum-sampler", features = ["l
 lemon-slicer = { path = "../../plugins/lemon-slicer", features = ["linked"] }
 # The retro sound effect generator (a port of sfxr), compiled in like the other small generators.
 mango-sfxr = { path = "../../plugins/mango-sfxr", features = ["linked"] }
+mango-master = { path = "../../plugins/mango-master", features = ["linked"] }
 lemon-boom = { path = "../../plugins/lemon-boom", features = ["linked"] }
 lemon-bass = { path = "../../plugins/lemon-bass", features = ["linked"] }
 lemon-acid = { path = "../../plugins/lemon-acid", features = ["linked"] }
@@ -82,6 +85,8 @@ lemon-phaser = { path = "../../plugins/lemon-phaser", features = ["linked"] }
 lemon-crusher = { path = "../../plugins/lemon-crusher", features = ["linked"] }
 lemon-vocoder = { path = "../../plugins/lemon-vocoder", features = ["linked"] }
 lemon-twelve = { path = "../../plugins/lemon-twelve", features = ["linked"] }
+lemon-peak-controller = { path = "../../plugins/lemon-peak-controller", features = ["linked"] }
+lemon-formula-controller = { path = "../../plugins/lemon-formula-controller", features = ["linked"] }
 winit = "0.30"
 softbuffer = "0.4"
 cpal = "0.18"
@@ -127,7 +132,7 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphic
 [target.'cfg(target_os = "linux")'.dependencies]
 # Shared mode plays through the sound server (PulseAudio, or PipeWire's pipewire-pulse) as other programs do; the
 # PulseAudio host speaks the protocol in Rust, so no system library is linked. Exclusive mode opens ALSA directly.
-cpal = { version = "0.18", features = ["pulseaudio"] }
+cpal = { version = "0.18", features = ["pulseaudio", "jack"] }
 # The cards the sound server gave up on while Lemon Studio had them through ALSA (`device::sound_server`): the
 # protocol crate cpal's PulseAudio host is built on.
 pulseaudio = "0.3"

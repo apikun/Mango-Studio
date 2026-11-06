@@ -11,7 +11,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-/// One envelope point: `x` across the beat (0..1), `y` the value (0..1), `t` the segment's tension (-1..1) and `m`
+/// One envelope point: `x` across the bar (0..1), `y` the value (0..1), `t` the segment's tension (-1..1) and `m`
 /// the segment's shape (`Mode`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pt {
@@ -314,7 +314,7 @@ impl Curve {
         Curve { pts: vec![Pt::new(0.0, y, 0.0, Mode::Single as u8)] }
     }
 
-    /// The envelope's value at `x` (0..1 across the beat); an empty curve is `None`.
+    /// The envelope's value at `x` (0..1 across the bar); an empty curve is `None`.
     pub fn value_at(&self, x: f64) -> Option<f32> {
         let pts = &self.pts;
         let first = pts.first()?;

@@ -801,6 +801,7 @@ dependencies = [
  "coreaudio-rs",
  "dasp_sample",
  "futures",
+ "jack",
  "jni 0.22.4",
  "js-sys",
  "libc",
@@ -1755,6 +1756,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "jack"
+version = "0.13.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7811b07bcac5dafabf814ab52c4b0ca9b7948aa1e279f572f03aa6544d47d27"
+dependencies = [
+ "bitflags 2.13.2",
+ "jack-sys",
+ "lazy_static",
+ "libc",
+ "log",
+]
+
+[[package]]
+name = "jack-sys"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6013b7619b95a22b576dfb43296faa4ecbe40abbdb97dfd22ead520775fc86ab"
+dependencies = [
+ "bitflags 1.3.2",
+ "lazy_static",
+ "libc",
+ "libloading 0.7.4",
+ "log",
+ "pkg-config",
+]
+
+[[package]]
 name = "java-locator"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2046,6 +2074,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lemon-formula-controller"
+version = "0.6.1"
+dependencies = [
+ "lemon-small-fx",
+ "nih_plug",
+ "os-engine",
+ "os-plugkit",
+]
+
+[[package]]
 name = "lemon-keys"
 version = "0.6.1"
 dependencies = [
@@ -2100,6 +2138,16 @@ dependencies = [
  "serde_json",
  "tiny-skia",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "lemon-peak-controller"
+version = "0.6.1"
+dependencies = [
+ "lemon-small-fx",
+ "nih_plug",
+ "os-engine",
+ "os-plugkit",
 ]
 
 [[package]]
@@ -2161,6 +2209,24 @@ dependencies = [
  "os-dsp",
  "os-engine",
  "os-hostlink",
+ "os-plugkit",
+ "os-theme",
+ "os-ui",
+ "rfd",
+ "serde_json",
+ "tiny-skia",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "lemon-slicex"
+version = "0.6.1"
+dependencies = [
+ "nih_plug",
+ "os-dsp",
+ "os-engine",
+ "os-hostlink",
+ "os-paths",
  "os-plugkit",
  "os-theme",
  "os-ui",
@@ -2427,6 +2493,18 @@ dependencies = [
  "lemon-small-gen",
  "nih_plug",
  "os-plugkit",
+]
+
+[[package]]
+name = "mango-master"
+version = "0.6.1"
+dependencies = [
+ "nih_plug",
+ "os-plugkit",
+ "os-theme",
+ "os-ui",
+ "tiny-skia",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3209,16 +3287,19 @@ dependencies = [
  "lemon-fast-distortion",
  "lemon-filter",
  "lemon-flanger",
+ "lemon-formula-controller",
  "lemon-keys",
  "lemon-kick",
  "lemon-limiter",
  "lemon-mini",
  "lemon-parametric-eq-2",
+ "lemon-peak-controller",
  "lemon-phaser",
  "lemon-pluck",
  "lemon-reverb",
  "lemon-sampler",
  "lemon-slicer",
+ "lemon-slicex",
  "lemon-small-fx",
  "lemon-soft-clipper",
  "lemon-stereo-enhancer",
@@ -3233,6 +3314,7 @@ dependencies = [
  "mango-dashboard",
  "mango-directwave",
  "mango-flex",
+ "mango-master",
  "mango-monk",
  "mango-sfxr",
  "mango-slayer",
@@ -3283,9 +3365,12 @@ name = "os-clap"
 version = "0.6.1"
 dependencies = [
  "clap-sys 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lemon-formula-controller",
  "lemon-limiter",
  "lemon-parametric-eq-2",
+ "lemon-peak-controller",
  "lemon-sampler",
+ "lemon-small-fx",
  "libloading 0.8.9",
  "os-engine",
  "os-host",

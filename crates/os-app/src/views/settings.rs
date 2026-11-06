@@ -371,6 +371,8 @@ pub const MODE_SHARED: &str = "Shared (other programs play too)";
 pub const MODE_EXCLUSIVE: &str = "Exclusive (Mango Studio alone, smaller buffers)";
 #[cfg(target_os = "linux")]
 pub const MODE_EXCLUSIVE: &str = "Exclusive (ALSA directly, past the sound server)";
+/// Linux: as a client of the JACK server (`audio_cfg::AudioCfg::jack`).
+pub const MODE_JACK: &str = "JACK (the JACK server's rate and buffer length)";
 const MODE_ASIO: &str = "Mode: for Windows devices (an ASIO driver plays on its own terms)";
 /// With an ASIO driver: its own settings window, where its buffer length is set.
 pub const SHOW_ASIO_PANEL: &str = "Show ASIO panel";
@@ -676,7 +678,7 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
                     // Windows devices play shared or exclusive (greyed under an ASIO driver, `MODE_ASIO`); so do Linux
                     // ones, through the sound server or ALSA.
                     if cfg!(windows) || cfg!(target_os = "linux") {
-                        let mode = combo(if st.audio.exclusive { "Exclusive" } else { "Shared" }, 120.0, MODE);
+                        let mode = combo(if st.audio.jack() { "JACK" } else if st.audio.exclusive { "Exclusive" } else { "Shared" }, 120.0, MODE);
                         let device = st.audio.device.as_deref().unwrap_or("the default device");
                         let alone = exclusive.then(|| {
                             let line = if cfg!(windows) {
@@ -686,7 +688,11 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
                             };
                             Text(line, true)
                         });
-                        std::iter::once(mode).chain(alone).collect()
+                        // JACK: its server sets the rate and buffer length; the ports connect to the system's own.
+                        let jack = st.audio.jack().then(|| {
+                            Text("Lemon Studio plays as a JACK client at the server's rate and buffer length (set them in the server, e.g. qjackctl); its ports connect to the system playback and capture ports. With no JACK server running it plays as in shared mode.".into(), true)
+                        });
+                        std::iter::once(mode).chain(alone).chain(jack).collect()
                     } else {
                         Vec::new()
                     },
@@ -717,10 +723,35 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
                 .into_iter()
                 .flatten()
                 .collect()),
-                g("CPU", vec![
-                    Check2("Multithreaded generator processing", true, "Smart disable", true),
-                    Check2("Multithreaded mixer processing", true, "Align tick lengths", false),
-                ]),
+                g("CPU", {
+                    // Linux adds the deep sleep check (`crate::prefs::CPU_DEEP_SLEEP`, `crate::cpu_dma_latency`): while
+                    // it is on the kernel's PM QoS keeps the CPUs out of their C-states, which the audio callback at
+                    // small buffers needs. The line under it says where the constraint stands: held, or what refused it
+                    // (the device's permissions).
+                    #[cfg(target_os = "linux")]
+                    let deep_sleep = {
+                        let mut rows = vec![Check(crate::prefs::CPU_DEEP_SLEEP.label, false)];
+                        if crate::prefs::check(&crate::prefs::CPU_DEEP_SLEEP) {
+                            let note = if crate::cpu_dma_latency::is_enabled() {
+                                "Holding /dev/cpu_dma_latency at 0 µs: the CPUs keep out of their deep sleep states (C-states)."
+                            } else {
+                                "The device refused (it is the root's on most systems: sudo to test, or a udev rule — the README's Permissions)."
+                            };
+                            rows.push(Text(note.to_string(), true));
+                        }
+                        rows
+                    };
+                    #[cfg(not(target_os = "linux"))]
+                    let deep_sleep: Vec<Row> = Vec::new();
+                    [
+                        vec![Check2("Multithreaded generator processing", true, "Smart disable", true)],
+                        vec![Check2("Multithreaded mixer processing", true, "Align tick lengths", false)],
+                        deep_sleep,
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect()
+                }),
                 g("Mixer", vec![
                     combo("24-point sinc", 122.0, "Resampling quality"),
                     Value(crate::prefs::number_text(&crate::prefs::BROWSER_PREVIEW_TRACK), "Browser preview track"),
@@ -798,6 +829,7 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
                 Check2("Force refreshes", true, "Transparent menus", true),
                 Check("Thick lines", false),
                 Check("High visibility", false),
+                Check("Baby mode", false),
                 combo("Off", 146.0, "Colorful waveforms"),
             ]),
             gf("Language", false, vec![

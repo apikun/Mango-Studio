@@ -119,6 +119,10 @@ pub struct Shared {
     pub menu: Mutex<Option<crate::context_menu::Popup>>,
     /// Raised with everything above and when the audio thread leaves work for the UI thread.
     pub attention: Arc<os_host::Attention>,
+    /// The crash guard the instance is called under, for its editor's run loop callbacks (Linux): a crash in one stops
+    /// the instance like a crash in any other call.
+    #[cfg(target_os = "linux")]
+    pub guard: Arc<os_host::guard::Module>,
 }
 
 /// Most plug-in edits kept until the app takes them.
@@ -379,7 +383,8 @@ impl IComponentHandler for Handler {
 pub struct Frame {
     shared: Arc<Shared>,
     /// What the editor registered with the run loop (Linux): its handler or timer object and the run loop's token. Shared
-    /// with the UI thread's work for a registration made on another thread (`os_host::runloop::on_ui`).
+    /// with the UI thread's work for a registration made on another thread (`os_host::runloop::on_ui`) and with the
+    /// callbacks, which remove all of it after a crash.
     run: Arc<Mutex<Vec<(usize, u64)>>>,
 }
 
@@ -387,7 +392,8 @@ pub struct Frame {
 /// loop only ever calls it on the UI thread, the thread such registrations are made on as a rule.
 #[cfg(target_os = "linux")]
 struct Handed<T>(T);
-// SAFETY: the object is a COM pointer to the plugin's handler; it is moved to the UI thread once and only called there.
+// SAFETY: the object is a COM pointer to the plugin's handler (with the instance's shared state for its guard); it is
+// moved to the UI thread once and only used there.
 #[cfg(target_os = "linux")]
 unsafe impl<T> Send for Handed<T> {}
 
@@ -425,19 +431,34 @@ impl Frame {
     }
 }
 
+/// Runs `f`, a run loop callback into the editor, under the instance's guard (spec: plugins/plugin-formats.md, "Crash
+/// containment"). Once the instance crashed (in `f` or anywhere else) the editor's run loop registrations `run` are
+/// removed and the UI is told, which reports the stop and closes the editor.
+#[cfg(target_os = "linux")]
+fn guarded(shared: &Shared, run: &Mutex<Vec<(usize, u64)>>, f: impl FnOnce()) {
+    if os_host::guard::call(&shared.guard, f).is_err() {
+        let gone = run.lock().map(|mut r| std::mem::take(&mut *r)).unwrap_or_default();
+        for (_, token) in gone {
+            os_host::runloop::remove(token);
+        }
+        shared.attention.raise();
+    }
+}
+
 /// Linux: plug-in editors have no message loop of their own; they hand the host their X11 connection's descriptor and
-/// their timers (spec §6), and get the callbacks on the UI thread (`os_host::runloop`).
+/// their timers (spec §6), and get the callbacks on the UI thread (`os_host::runloop`), under the instance's guard.
 #[cfg(target_os = "linux")]
 impl IRunLoop for Frame {
     unsafe fn register_event_handler(&self, h: SharedVstPtr<dyn IEventHandler>, fd: FileDescriptor) -> tresult {
         let Some(handler) = h.upgrade() else { return kInvalidArgument };
         let key = { h }.as_ptr() as usize;
         // The UI thread registers it, also when the editor asks from another thread (one joining its window off the UI
-        // thread: `Plugin::begin_editor`).
-        let (run, handler) = (self.run.clone(), Handed(handler));
+        // thread: `Plugin::begin_editor`); its callbacks run under the instance's guard.
+        let (run, handed) = (self.run.clone(), Handed((self.shared.clone(), handler)));
         os_host::runloop::on_ui(move || {
-            let handler = handler;
-            let token = os_host::runloop::add_fd(fd, os_host::runloop::READ, move |fd, _| unsafe { handler.0.on_fd_is_set(fd) });
+            let (guard, handler) = { handed }.0;
+            let rl = run.clone();
+            let token = os_host::runloop::add_fd(fd, os_host::runloop::READ, move |fd, _| guarded(&guard, &rl, || unsafe { handler.on_fd_is_set(fd) }));
             if let Ok(mut r) = run.lock() {
                 r.push((key, token));
             }
@@ -453,10 +474,11 @@ impl IRunLoop for Frame {
     unsafe fn register_timer(&self, t: SharedVstPtr<dyn ITimerHandler>, ms: TimerInterval) -> tresult {
         let Some(timer) = t.upgrade() else { return kInvalidArgument };
         let key = { t }.as_ptr() as usize;
-        let (run, timer) = (self.run.clone(), Handed(timer));
+        let (run, handed) = (self.run.clone(), Handed((self.shared.clone(), timer)));
         os_host::runloop::on_ui(move || {
-            let timer = timer;
-            let token = os_host::runloop::add_timer(std::time::Duration::from_millis(ms), move || unsafe { timer.0.on_timer() });
+            let (guard, timer) = { handed }.0;
+            let rl = run.clone();
+            let token = os_host::runloop::add_timer(std::time::Duration::from_millis(ms), move || guarded(&guard, &rl, || unsafe { timer.on_timer() }));
             if let Ok(mut r) = run.lock() {
                 r.push((key, token));
             }
@@ -745,5 +767,57 @@ impl IParameterChanges for ParamChanges {
             unsafe { *index = i as i32 };
         }
         qs[i].static_ptr()
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering::Relaxed;
+    use std::sync::atomic::{AtomicBool, AtomicU32};
+
+    /// An editor's timer object that reads a bad address while `fault` is set, as a crashing editor does.
+    #[VST3(implements(ITimerHandler))]
+    struct FaultyTimer {
+        fault: Arc<AtomicBool>,
+        ticks: Arc<AtomicU32>,
+    }
+
+    impl ITimerHandler for FaultyTimer {
+        unsafe fn on_timer(&self) {
+            if self.fault.load(Relaxed) {
+                // SAFETY: deliberately not: the read faults and the host's guard catches it.
+                unsafe { std::ptr::read_volatile(8 as *const usize) };
+            }
+            self.ticks.fetch_add(1, Relaxed);
+        }
+    }
+
+    /// A crash in an editor's run loop callback stops the instance like a crash in any other call: the editor's
+    /// registrations are removed and it is never called again (spec: plugins/plugin-formats.md, "Crash containment").
+    #[test]
+    fn a_crash_in_an_editor_timer_stops_the_instance() {
+        if !os_host::guard::contained() {
+            return;
+        }
+        let shared = Arc::new(Shared::default());
+        let frame = Frame::create(shared.clone());
+        let (fault, ticks) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicU32::new(0)));
+        let timer = Com::new(FaultyTimer::allocate(fault.clone(), ticks.clone()));
+        let tick = || {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            os_host::runloop::dispatch();
+        };
+        assert_eq!(unsafe { frame.get().register_timer(timer.shared(), 1) }, kResultOk);
+        tick();
+        assert!(ticks.load(Relaxed) >= 1, "the timer runs");
+        fault.store(true, Relaxed);
+        tick();
+        fault.store(false, Relaxed);
+        assert_eq!(shared.guard.crashed(), Some(0xC000_0005));
+        assert!(!os_host::runloop::active(), "its timer is removed");
+        let before = ticks.load(Relaxed);
+        tick();
+        assert_eq!(ticks.load(Relaxed), before, "never called again");
     }
 }

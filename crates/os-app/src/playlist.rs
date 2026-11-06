@@ -31,7 +31,7 @@ pub const ROW_MIN: f32 = 16.0;
 pub const ROW_MAX: f32 = 280.0;
 pub const ROW_STEP: f32 = 6.0;
 /// Title strip of a clip incl. its top border (spec: ui/playlist.md §2).
-pub const TITLE_H: f32 = 15.0;
+pub const TITLE_H: f32 = 12.0;
 /// Marker lane under the ruler, when the arrangement has time markers (§1).
 pub const MARKER_H: f32 = 17.0;
 /// Edge grab zone for resizing (OS choice, §3).
@@ -4882,7 +4882,10 @@ pub fn run(app: &mut App, cmd: Cmd) -> Option<String> {
         }
         Cmd::ClipRandomColor(i) => {
             let Some(src) = clips(s).get(i).map(|c| c.source) else { return None };
-            let seed = (clips(s).len() as u32).wrapping_mul(2654435761).wrapping_add(i as u32 * 40503);
+            // A fresh hue each press, from the clock like the rack's colour picker: seeding from the clip count and
+            // index gave the same clip the same colour every time the entry ran (issue #139).
+            let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64);
+            let seed = nanos ^ (i as u64).wrapping_mul(0x9e37_79b9);
             let rgb = hsl_rgb((seed % 360) as f32, 0.45, 0.45);
             match src {
                 ClipSource::Pattern(n) => {

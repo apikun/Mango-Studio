@@ -78,8 +78,8 @@ clicking it does nothing. The full, item-by-item roadmap lives on the
   its default and minimum to maximum), remove an initial value read from a file
 - Not yet in the parameter menu: Edit events, and Init song with this position on a plugin parameter
 - VST2 shells (one file offering several plugins); a VST2 plugin's state is saved in the layout FL Studio's projects use
-- On Windows, a plugin that crashes is stopped (its slot passes the sound through) instead of closing
-  Lemon Studio
+- A plugin that crashes is stopped (its slot passes the sound through) instead of closing Lemon Studio. On macOS
+  and Linux this is new, and on macOS a crash in a plugin's editor still closes Lemon Studio
 - Not yet: 32-bit plugins, and Intel-only plugins on Apple silicon (they need a bridge)
 
 ## 🚧 Plugin delay compensation
@@ -241,6 +241,18 @@ and Touch controller. Kept with the program's settings, not the project. Which w
   pi, where the original's is a hair off: the flanger still matches FL Studio 2026's exports sample for sample in the
   tests (36 cases), the phaser in 11 of 35 and the rest at least 86 dB below the test signal; the phaser's LFO starts
   as after 512 idle frames, one of the two starts (512 or 1024) FL's exports make
+- Peak Controller: a project's Fruity Peak Controller slots open as Lemon Peak Controller (VST3 and CLAP, Pith editor)
+  and save back unchanged; their controller links (kept byte for byte, formulas included) drive mixer volumes, pans,
+  sends and plugin parameters one tick late, as in the original, within the fader's resolution of FL Studio 2026's
+  exports (93 cases). The link's smoothing is approximated; links can't be made or edited in the app yet, and the
+  links of rack controllers (Envelope and Keyboard Controllers, Control Surface) are kept but not played
+- Formula Controller: a project's Fruity Formula Controller slots open as Lemon Formula Controller (VST3 and CLAP,
+  Pith editor with a formula field and its compile status) and save back with their knobs, formula and comments; the
+  formula is worked out once per tick and its controller links drive their targets, matching FL Studio 2026's
+  exports within the fader's resolution (158 cases: every function, the original's precedence and rounding rules). A
+  formula that doesn't compile leaves its targets alone, as in the original. Rand and SeededRand use our own
+  generators, Time counts from the program's start, Date is the UTC day and the mouse reads 0; the comments are kept
+  but not shown
 - The Stereo Shaper's difference output plays in the mixer (added to the track it names, from the first tick, without
   delay compensation); Lemon Stereo Shaper as a plugin keeps the setting but has no output for it
 - Lemon Parametric EQ plays FL's Parametric EQ 2 in every quality mode, in a project's mixer slots and as a plugin:
@@ -359,7 +371,9 @@ and Touch controller. Kept with the program's settings, not the project. Which w
   period); a device that refuses exclusive mode plays in shared mode, and the page says why
 - ASIO® on Windows, output only: the installed drivers are in Settings > Audio's Output device list; the master plays
   to the driver's first two outputs, and Show ASIO panel opens the driver's own settings
-- ALSA (and PipeWire / PulseAudio through it) on Linux
+- On Linux: the sound server (PulseAudio, or PipeWire through pipewire-pulse), ALSA directly, or JACK (Settings > Audio
+  ▸ Mode ▸ JACK: a JACK client at the server's rate and buffer length, its ports connected to the system's; with no
+  JACK server running it plays as in shared mode)
 - Core Audio on macOS
 - Output device, sample rate and buffer length in Settings > Audio
 - Auto close (Settings > Audio): the output closes while another program is in front, and a playing song pauses

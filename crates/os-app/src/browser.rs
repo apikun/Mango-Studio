@@ -435,6 +435,13 @@ impl App {
     pub(crate) fn browser_drop(&mut self, item: Item, started: bool) {
         self.state.browser_drag = None;
         self.invalidate();
+        // A plugin file in the files tree: a click or a drop anywhere hosts it and adds it (a generator as a channel,
+        // an effect on the selected mixer track). The scan runs in the scanner child, so a broken file is only a message.
+        if let Item::PlugFile(path) = &item {
+            self.state.message = crate::plugin_menu::add_plugin_file(self, std::path::Path::new(path));
+            self.invalidate();
+            return;
+        }
         if !started {
             return;
         }
@@ -444,7 +451,7 @@ impl App {
             return;
         }
         // Plugin windows float above the main window: a sample released over one goes into that plugin.
-        #[cfg(any(windows, target_os = "macos"))]
+        #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
         if let Item::Sample(path) = &item {
             if self.sample_to_plugin_window(path) {
                 return;
@@ -543,8 +550,9 @@ impl App {
                     self.state.message = msg;
                 }
             }
-            // A Freesound sound not fetched yet is only a message: nothing to drop.
-            Item::None | Item::File(_) | Item::History(_) | Item::Preset(_) | Item::FreesoundSearch | Item::Freesound(_) => {}
+            // A plugin file was handled before this match (a click or a drop adds it wherever it lands); a Freesound
+            // sound not fetched yet is only a message: nothing to drop.
+            Item::None | Item::File(_) | Item::History(_) | Item::Preset(_) | Item::PlugFile(_) | Item::FreesoundSearch | Item::Freesound(_) => {}
         }
     }
 
@@ -631,6 +639,7 @@ impl App {
             RowCmd::Preview => self.preview_sample(&sample?),
             RowCmd::Send => return send_sample(s, &sample?, &row.label),
             RowCmd::NewChannel => self.sample_to_channel(sample?, None),
+            RowCmd::PlugFile => return crate::plugin_menu::add_plugin_file(self, &row.path?),
             RowCmd::OpenFolder => open_folder(&row.path?),
             RowCmd::ShowInFolder => crate::theme_library::show_in_folder(&row.path?),
             // File ▸ Browser extra search folders, the root's Browser name selected for typing.
@@ -924,6 +933,9 @@ pub enum RowCmd {
     /// A dropped folder root: its Browser name typed in File ▸ Browser extra search folders; out of the browser.
     Rename,
     Remove,
+    /// A plugin file in the files tree: hosted and added (a generator as a channel, an effect on the selected mixer
+    /// track).
+    PlugFile,
 }
 
 /// The row menu's way to the system's file manager: a folder, a file.
@@ -985,6 +997,7 @@ pub fn row_menu(s: &crate::app::State, row: &view::Row) -> Vec<PItem> {
         }
         Item::Generator(index) => items.push(PItem::new("Add to channel rack", Cmd::Plugin(crate::plugin_menu::PlugCmd::Generator { index, after: None }))),
         Item::Effect(index) => items.push(PItem::new("Add to selected mixer track", Cmd::Plugin(crate::plugin_menu::PlugCmd::Effect { index, slot: None }))),
+        Item::PlugFile(_) => items.push(r("Add to the project", RowCmd::PlugFile)),
         Item::History(_) => items.push(r("Go to this step", RowCmd::Activate)),
         // Into the selected channel's plugin (spec: plugins/presets.md "Browser").
         Item::Preset(ref p) => {

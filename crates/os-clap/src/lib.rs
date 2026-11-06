@@ -253,7 +253,7 @@ impl os_host::Library for Library {
         // A plugin compiled into this program gets a guard of its own per instance (`module_of`).
         let guard = os_host::guard::module_of(self.entry.cast());
         let name = self.plugins.iter().find(|d| d.id == id).map_or(id, |d| d.name.as_str());
-        let plugin = os_host::guard::call(&guard, || Plugin::new(&self, id)).map_err(|c| os_host::guard::stopped_text(name, c))??;
+        let plugin = os_host::guard::call(&guard, || Plugin::with_guard(&self, id, guard.clone())).map_err(|c| os_host::guard::stopped_text(name, c))??;
         Ok(os_host::share(plugin, guard))
     }
 }
@@ -288,6 +288,10 @@ struct HostData {
     /// What the plugin registered with the UI run loop (Linux): timer id or descriptor, whether a timer, token.
     #[cfg(all(unix, not(target_os = "macos")))]
     run: Mutex<Vec<(u32, bool, u64)>>,
+    /// The crash guard the instance is called under, for the run loop's callbacks into it (Linux): a crash in one
+    /// stops the instance like a crash in any other call.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    guard: Arc<os_host::guard::Module>,
 }
 
 static HOST_NAME: &CStr = c"Mango Studio";
@@ -325,6 +329,9 @@ unsafe extern "C" fn host_get_extension(_host: *const clap_host, id: *const c_ch
 /// connection) with the host (`timer-support`, `posix-fd-support`) and get the callbacks on the UI thread through
 /// `os_host::runloop`. Not offered on macOS: editors there run on the main thread's run loop, which the app's event
 /// loop (winit's) runs.
+///
+/// Every callback runs under the instance's crash guard (spec: plugins/plugin-formats.md, "Crash containment"). After
+/// a crash its registrations are removed and its attention raised, so the UI reports the stop and closes the editor.
 #[cfg(all(unix, not(target_os = "macos")))]
 mod run_loop {
     use super::*;
@@ -372,7 +379,8 @@ mod run_loop {
             return false;
         }
         let id = NEXT_TIMER.fetch_add(1, Ordering::Relaxed);
-        let token = runloop::add_timer(std::time::Duration::from_millis(u64::from(period_ms)), move || unsafe { on_timer(plugin, id) });
+        let dp = d as *const HostData;
+        let token = runloop::add_timer(std::time::Duration::from_millis(u64::from(period_ms)), move || unsafe { guarded(dp, || on_timer(plugin, id)) });
         if let Ok(mut r) = d.run.lock() {
             r.push((id, true, token));
         }
@@ -389,7 +397,8 @@ mod run_loop {
         let Some((plugin, ext)) = (unsafe { plugin_ext::<clap_plugin_posix_fd_support>(d, CLAP_EXT_POSIX_FD_SUPPORT) }) else { return false };
         let Some(on_fd) = (unsafe { (*ext).on_fd }) else { return false };
         // The run loop's flags are CLAP's.
-        let token = runloop::add_fd(fd, flags, move |fd, got| unsafe { on_fd(plugin, fd, got) });
+        let dp = d as *const HostData;
+        let token = runloop::add_fd(fd, flags, move |fd, got| unsafe { guarded(dp, || on_fd(plugin, fd, got)) });
         if let Ok(mut r) = d.run.lock() {
             r.push((fd as u32, false, token));
         }
@@ -417,6 +426,20 @@ mod run_loop {
             !hit
         });
         before != r.len()
+    }
+
+    /// Runs `f`, a run loop callback into the plugin of host data `dp`, under the instance's guard. Once it crashed (in
+    /// `f` or anywhere else) the plugin's registrations are removed and the UI is told.
+    ///
+    /// # Safety
+    /// `dp` is alive: a destroyed instance's registrations are removed first (`clear`), and a crashed instance's host
+    /// data is never freed.
+    unsafe fn guarded(dp: *const HostData, f: impl FnOnce()) {
+        let d = unsafe { &*dp };
+        if os_host::guard::call(&d.guard, f).is_err() {
+            clear(d);
+            d.attention.raise();
+        }
     }
 
     /// Removes whatever the plugin left registered (after it was destroyed: its callbacks must never run again).
@@ -683,6 +706,8 @@ pub struct Plugin {
     pvals: Vec<clap_event_param_value>,
     /// Changes the plugin reported (its editor): gesture begin / end and values, plain.
     param_out: Vec<OutEv>,
+    /// The controller outputs the plugin sent last, per MIDI channel: a pitch bend's bits and the CC's finer bits.
+    controls: [Option<(u16, Option<u8>)>; 16],
     _lib: Arc<Library>,
 }
 
@@ -693,7 +718,14 @@ enum OutEv {
     Value(u32, f64),
     End(u32),
     NoteEnd(i16, i32),
+    /// A controller output as MIDI (channel = output): a pitch bend's 14 bits, or the 7 bits below them as CC 63.
+    Bend(u8, u16),
+    Fine(u8, u8),
 }
+
+/// The CC number that carries a controller output's 7 bits below its pitch bend (spec: plugins/lemon-peak-controller.md
+/// "Links").
+pub const CONTROL_FINE_CC: u8 = 63;
 
 /// Most plugin -> host parameter events kept until the app takes them.
 const MAX_OUT: usize = 4096;
@@ -721,6 +753,18 @@ unsafe extern "C" fn push_out(l: *const clap_output_events, e: *const clap_event
             if v.len() < MAX_OUT + MAX_ENDS {
                 let n = &*(e as *const clap_event_note);
                 v.push(OutEv::NoteEnd(n.key, n.note_id));
+            }
+            return true;
+        }
+        // Controller outputs (taken right after the call, as voice ends).
+        if (*e).type_ == CLAP_EVENT_MIDI {
+            let d = (*(e as *const clap_event_midi)).data;
+            if v.len() < MAX_OUT + MAX_ENDS {
+                match d[0] & 0xF0 {
+                    0xE0 => v.push(OutEv::Bend(d[0] & 0x0F, u16::from(d[1] & 0x7F) | u16::from(d[2] & 0x7F) << 7)),
+                    0xB0 if d[1] == CONTROL_FINE_CC => v.push(OutEv::Fine(d[0] & 0x0F, d[2] & 0x7F)),
+                    _ => {}
+                }
             }
             return true;
         }
@@ -773,6 +817,14 @@ fn debug() -> bool {
 impl Plugin {
     /// Creates and initialises plugin `id` from `lib` (UI thread).
     pub fn new(lib: &Arc<Library>, id: &str) -> Result<Plugin, String> {
+        Self::with_guard(lib, id, os_host::guard::module_of(lib.entry.cast()))
+    }
+
+    /// [`Plugin::new`] for an instance called under `guard` ([`Library::create`]): the run loop's callbacks into it
+    /// run under the same guard (Linux).
+    fn with_guard(lib: &Arc<Library>, id: &str, guard: Arc<os_host::guard::Module>) -> Result<Plugin, String> {
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        drop(guard);
         let desc = lib.plugins.iter().find(|d| d.id == id).cloned().ok_or_else(|| format!("{}: no plugin {id}", lib.path.display()))?;
         let host_data = Box::new(HostData {
             attention: Arc::default(),
@@ -789,6 +841,8 @@ impl Plugin {
             plugin: std::sync::atomic::AtomicPtr::new(ptr::null_mut()),
             #[cfg(all(unix, not(target_os = "macos")))]
             run: Mutex::new(Vec::new()),
+            #[cfg(all(unix, not(target_os = "macos")))]
+            guard,
         });
         let host = Box::new(clap_host {
             clap_version: CLAP_VERSION,
@@ -899,6 +953,7 @@ impl Plugin {
                 processed: false,
                 pvals: Vec::with_capacity(params::MAX_AUTO + 64),
                 param_out: Vec::new(),
+                controls: [None; 16],
                 _lib: lib.clone(),
             })
         }
@@ -1053,6 +1108,16 @@ impl Plugin {
                     if id >= 0 {
                         self.level_voices.retain(|v| v.id != id);
                         self.named.retain(|v| v.1 != id);
+                    }
+                }
+                OutEv::Bend(ch, bits) => {
+                    if let Some(c) = self.controls.get_mut(usize::from(ch)) {
+                        *c = Some((bits, None));
+                    }
+                }
+                OutEv::Fine(ch, bits) => {
+                    if let Some(Some(c)) = self.controls.get_mut(usize::from(ch)) {
+                        c.1 = Some(bits);
                     }
                 }
                 e => {
@@ -1829,7 +1894,7 @@ impl os_host::Plugin for Plugin {
                 OutEv::Begin(id) => Some(os_host::ParamEvent::Begin(id)),
                 OutEv::Value(id, v) => Some(os_host::ParamEvent::Value(id, self.normalize(id, v))),
                 OutEv::End(id) => Some(os_host::ParamEvent::End(id)),
-                OutEv::NoteEnd(..) => None,
+                OutEv::NoteEnd(..) | OutEv::Bend(..) | OutEv::Fine(..) => None,
             })
             .collect()
     }
@@ -2036,6 +2101,20 @@ impl os_engine::HostedEffect for Plugin {
     fn transport_fx(&mut self, info: &os_engine::TransportInfo) {
         self.song = Some(*info);
     }
+
+    fn control_fx(&self, k: usize) -> Option<f32> {
+        let (bend, fine) = (*self.controls.get(k)?)?;
+        Some(control_value(bend, fine))
+    }
+}
+
+/// A controller output from its MIDI: the pitch bend's 14 bits over 0..16383, or with the CC's 7 bits below them the 21
+/// bits over 0..2^21 - 1.
+fn control_value(bend: u16, fine: Option<u8>) -> f32 {
+    match fine {
+        Some(f) => ((f64::from(bend) * 128.0 + f64::from(f)) / f64::from((1u32 << 21) - 1)) as f32,
+        None => (f64::from(bend) / 16383.0) as f32,
+    }
 }
 
 impl Plugin {
@@ -2131,9 +2210,43 @@ impl Drop for Plugin {
 
 #[cfg(test)]
 mod mono_mock;
+#[cfg(all(test, unix, not(target_os = "macos")))]
+mod timer_mock;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A crash in a run loop callback (an editor's timer, Linux) stops the instance like a crash in any other call: its
+    /// registrations are removed and it is never called again (spec: plugins/plugin-formats.md, "Crash containment").
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn a_crash_in_a_timer_stops_the_instance() {
+        use crate::timer_mock::{ENTRY, FAULT, ID, TICKS};
+        use os_host::Library as _;
+        use std::sync::atomic::Ordering::Relaxed;
+        if !os_host::guard::contained() {
+            return;
+        }
+        let entry = &ENTRY as *const _ as *const std::ffi::c_void;
+        let lib = unsafe { Library::from_entry(entry, Path::new("Timer Test.clap")) }.expect("mock");
+        let shared = lib.create(ID.to_str().unwrap()).expect("created");
+        let stopped = || os_host::Plugin::stopped(&*shared.lock().unwrap());
+        let tick = || {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            os_host::runloop::dispatch();
+        };
+        tick();
+        assert!(TICKS.load(Relaxed) >= 1, "the timer runs");
+        assert_eq!(stopped(), None);
+        FAULT.store(true, Relaxed);
+        tick();
+        FAULT.store(false, Relaxed);
+        assert_eq!(stopped(), Some(0xC000_0005));
+        assert!(!os_host::runloop::active(), "its timer is removed");
+        let before = TICKS.load(Relaxed);
+        tick();
+        assert_eq!(TICKS.load(Relaxed), before, "never called again");
+    }
     use os_engine::Instrument;
 
     /// A plugin whose main ports are mono (DPF's Kars has a mono output) gets one channel each way: its output is
@@ -2252,6 +2365,106 @@ mod tests {
         p.take_note_ends(0);
         p.channel_levels(os_engine::ChannelLevels { mod_x: 0.5, ..Default::default() });
         assert!(p.mod_resend.is_empty());
+    }
+
+    /// Controller outputs arrive as MIDI: a pitch bend per output channel, the CC 63 after it adding 7 finer bits; they
+    /// are taken right after the call and never reach the parameter events (spec: plugins/lemon-peak-controller.md
+    /// "Links").
+    #[test]
+    fn controller_outputs_from_midi() {
+        use os_engine::HostedEffect as _;
+        let entry = &lemon_parametric_eq_2::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void;
+        let lib = unsafe { Library::from_entry(entry, Path::new("Lemon Parametric EQ.clap")) }.expect("linked EQ");
+        let mut p = Plugin::new(&lib, &lib.plugins[0].id).unwrap();
+        assert_eq!(p.control_fx(1), None);
+        p.param_out.push(OutEv::Value(3, 0.5));
+        p.param_out.push(OutEv::Bend(1, 8192));
+        p.param_out.push(OutEv::Bend(2, 16383));
+        p.param_out.push(OutEv::Fine(2, 127));
+        p.take_note_ends(0);
+        assert_eq!(p.control_fx(1), Some((8192.0 / 16383.0) as f32));
+        assert_eq!(p.control_fx(2), Some(1.0));
+        assert_eq!(p.control_fx(0), None);
+        assert_eq!(p.param_out.len(), 1, "only the parameter event is kept");
+        // A new bend drops the old fine bits.
+        p.param_out.push(OutEv::Bend(2, 0));
+        p.take_note_ends(0);
+        assert_eq!(p.control_fx(2), Some(0.0));
+        assert_eq!(control_value(4096, Some(64)), ((4096.0 * 128.0 + 64.0) / 2097151.0) as f32);
+    }
+
+    /// Lemon Peak Controller hosted as the engine hosts a mixer slot (a call per tick, the song's transport): after each
+    /// tick its outputs are what the engine's own Fruity Peak Controller gives for the same sound, to the 21 bits they
+    /// travel in.
+    #[test]
+    fn hosted_peak_controller_matches_the_engines() {
+        use os_engine::effects::peak_ctrl::{Core, Settings};
+        use os_engine::HostedEffect as _;
+        let entry = &lemon_peak_controller::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void;
+        let lib = unsafe { Library::from_entry(entry, Path::new("Lemon Peak Controller.clap")) }.expect("linked peak controller");
+        let mut p = Plugin::new(&lib, &lib.plugins[0].id).unwrap();
+        assert!(os_host::Plugin::activate(&mut p, 44100));
+        let s = Settings { lfo_amount: 128, lfo_base: 16384, speed: 13000, ..Settings::default() };
+        let state = lemon_small_fx::params::plugin_state_from_fl(lemon_small_fx::peak_controller::SPEC, &s.to_state());
+        assert!(os_host::Plugin::load_state(&mut p, &state));
+        let mut own = Core::new(s);
+        let (tempo, spt) = (130.0, 44100.0 * 60.0 / (130.0 * 96.0));
+        let mut worst = 0.0f64;
+        for j in 0..400u64 {
+            let (a, b) = ((j as f64 * spt).round() as u64, ((j + 1) as f64 * spt).round() as u64);
+            let n = (b - a) as usize;
+            // Bursts: a loud tick every 50, quiet between.
+            let level = if j % 50 < 3 { 0.8 } else { 0.05 };
+            let mut l: Vec<f32> = (0..n).map(|i| level * ((i as f32) * 0.3).sin()).collect();
+            let mut r = l.clone();
+            let peak = l.iter().fold(0f32, |m, x| m.max(x.abs()));
+            p.transport_fx(&os_engine::TransportInfo { playing: true, tempo, frame: a, beats: j as f64 / 96.0, bar_start: 0.0, bar: 0, numerator: 4, denominator: 4, looping: None });
+            p.process_fx(44100, &mut l, &mut r);
+            own.advance(f64::from(peak), 1.0);
+            for k in 0..3 {
+                let got = f64::from(p.control_fx(k).expect("an output"));
+                worst = worst.max((got - own.outputs()[k]).abs());
+            }
+        }
+        assert!(worst < 1e-6, "{worst}");
+    }
+
+    /// Lemon Formula Controller hosted as the engine hosts a mixer slot (a call per tick, the song's transport): after
+    /// each tick its output is what the engine's own Fruity Formula Controller gives for the next tick's start, to the
+    /// 21 bits it travels in; a formula that does not compile sends nothing.
+    #[test]
+    fn hosted_formula_controller_matches_the_engines() {
+        use os_engine::effects::formula_ctrl::{Core, Settings};
+        use os_engine::HostedEffect as _;
+        let entry = &lemon_formula_controller::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void;
+        let lib = unsafe { Library::from_entry(entry, Path::new("Lemon Formula Controller.clap")) }.expect("linked formula controller");
+        let spec = lemon_small_fx::formula_controller::SPEC;
+        let mut p = Plugin::new(&lib, &lib.plugins[0].id).unwrap();
+        assert!(os_host::Plugin::activate(&mut p, 44100));
+        let s = Settings { knobs: [16384, 49152, 0], formula: "a+Sin(SongTime*Pi/2)*b*0.5+Frac(SongTime)*0.1".into(), ..Settings::default() };
+        assert!(os_host::Plugin::load_state(&mut p, &lemon_small_fx::params::plugin_state_from_fl(spec, &s.to_state())));
+        let mut own = Core::new(s);
+        let (tempo, spt) = (130.0, 44100.0 * 60.0 / (130.0 * 96.0));
+        let mut worst = 0.0f64;
+        for j in 0..400u64 {
+            let (a, b) = ((j as f64 * spt).round() as u64, ((j + 1) as f64 * spt).round() as u64);
+            let (mut l, mut r) = (vec![0.1f32; (b - a) as usize], vec![0.1f32; (b - a) as usize]);
+            p.transport_fx(&os_engine::TransportInfo { playing: true, tempo, frame: a, beats: j as f64 / 96.0, bar_start: 0.0, bar: 0, numerator: 4, denominator: 4, looping: None });
+            p.process_fx(44100, &mut l, &mut r);
+            own.advance((j + 1) as f64 / 96.0, tempo);
+            let got = f64::from(p.control_fx(0).expect("an output"));
+            worst = worst.max((got - own.output().unwrap()).abs());
+            assert_eq!(l[0], 0.1, "the sound passes through");
+        }
+        assert!(worst < 1e-6, "{worst}");
+        let bad = Settings { formula: "a*".into(), ..Settings::default() };
+        let mut p = Plugin::new(&lib, &lib.plugins[0].id).unwrap();
+        assert!(os_host::Plugin::activate(&mut p, 44100));
+        assert!(os_host::Plugin::load_state(&mut p, &lemon_small_fx::params::plugin_state_from_fl(spec, &bad.to_state())));
+        let (mut l, mut r) = (vec![0.0f32; 512], vec![0.0f32; 512]);
+        p.transport_fx(&os_engine::TransportInfo { playing: true, tempo, frame: 0, beats: 0.0, bar_start: 0.0, bar: 0, numerator: 4, denominator: 4, looping: None });
+        p.process_fx(44100, &mut l, &mut r);
+        assert_eq!(p.control_fx(0), None);
     }
 
     /// The UI locks an instance only when it has work (spec: audio/implementing.md "Playing live"): host edits waiting

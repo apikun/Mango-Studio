@@ -61,8 +61,10 @@ pub struct Beat {
     write: usize,
     /// The read head's distance behind the write head, in frames.
     d: f64,
-    /// Where in the beat the envelopes are (0..1).
+    /// Where in the bar the envelopes are (0..1 across the bar).
     phase: f64,
+    /// The bar's length in beats (quarter notes), from the host's time signature: the envelopes cycle once per bar.
+    bar_beats: f64,
     /// The transport: playing, and the beats the next block should start at (jumps reposition the envelopes).
     playing: bool,
     next_beats: Option<f64>,
@@ -90,6 +92,7 @@ impl Beat {
             write: 0,
             d: MIN_D,
             phase: 0.0,
+            bar_beats: 4.0,
             playing: false,
             next_beats: None,
             gain: 1.0,
@@ -107,6 +110,14 @@ impl Beat {
     pub fn set_tempo(&mut self, bpm: f64) {
         if bpm > 0.0 {
             self.bpm = bpm;
+        }
+    }
+
+    /// The bar's length in beats (quarter notes), from the host's time signature: the envelopes cycle once per bar
+    /// (issue #113, as Gross Beat's grid does). The host's word wins; a host that says nothing keeps 4/4.
+    pub fn set_bar(&mut self, beats: f64) {
+        if beats > 0.0 {
+            self.bar_beats = beats.clamp(0.5, 16.0);
         }
     }
 
@@ -152,6 +163,8 @@ impl Beat {
         let frames = l.len().min(r.len());
         let Some(ts) = transport else { return self.process_free(l, r, frames) };
         let bps = if self.bpm > 0.0 { self.bpm / 60.0 / f64::from(self.rate) } else { 0.0 };
+        // The phase runs 0..1 across one bar, so its step per frame is the beat's divided by the bar's beats.
+        let step = if self.bar_beats > 0.0 { bps / self.bar_beats } else { 0.0 };
         if ts.playing {
             // A start or a jump puts the read head back at the present (the envelopes follow the host's beats).
             let jumped = !self.playing || self.next_beats.is_none_or(|n| (n - ts.beats).abs() > 1e-3);
@@ -160,29 +173,30 @@ impl Beat {
             }
             self.playing = true;
             self.next_beats = Some(ts.beats + frames as f64 * bps);
-            self.run(l, r, frames, ts.beats.rem_euclid(1.0), bps);
+            self.run(l, r, frames, ts.beats.rem_euclid(self.bar_beats) / self.bar_beats, step);
         } else {
             self.playing = false;
             self.next_beats = None;
-            self.run(l, r, frames, self.phase, bps);
+            self.run(l, r, frames, self.phase, step);
         }
     }
 
     /// Without a transport word the envelopes keep running on their own (the tail after a stop).
     fn process_free(&mut self, l: &mut [f32], r: &mut [f32], frames: usize) {
         let bps = if self.bpm > 0.0 { self.bpm / 60.0 / f64::from(self.rate) } else { 0.0 };
-        self.run(l, r, frames, self.phase, bps);
+        let step = if self.bar_beats > 0.0 { bps / self.bar_beats } else { 0.0 };
+        self.run(l, r, frames, self.phase, step);
     }
 
-    fn run(&mut self, l: &mut [f32], r: &mut [f32], frames: usize, mut phase: f64, bps: f64) {
+    fn run(&mut self, l: &mut [f32], r: &mut [f32], frames: usize, mut phase: f64, step: f64) {
         let mask = HISTORY - 1;
         let (tm, vm) = (self.settings.time_mix.clamp(0.0, 1.0), self.settings.vol_mix.clamp(0.0, 1.0));
         let time_on = !self.grids.time[self.settings.time_slot.min(3)].pts.is_empty() && tm > 0.0;
         let vol_on = !self.grids.volume[self.settings.vol_slot.min(3)].pts.is_empty() && vm > 0.0;
         for k in 0..frames {
             // The envelopes at this frame.
-            if bps > 0.0 {
-                phase += bps;
+            if step > 0.0 {
+                phase += step;
                 phase = phase.rem_euclid(1.0);
             }
             let rate = if time_on { self.rate_at(phase) } else { 1.0 };
@@ -234,7 +248,8 @@ pub fn constant_time(rate: f32) -> crate::grid::Curve {
     crate::grid::Curve::constant(GridState::y_of_rate(rate))
 }
 
-/// A gate grid of `steps` equal on-off steps per beat (1 = an eighth-note gate at steps 2).
+/// A gate grid of `steps` equal on-off steps across the grid, which is one bar (8 = the classic eighth-note
+/// trance gate in 4/4, 16 the same at sixteenths).
 pub fn gate(steps: usize) -> crate::grid::Curve {
     let hold = Mode::Hold as u8;
     let mut pts = Vec::new();
@@ -315,14 +330,14 @@ mod tests {
     }
 
     /// A backwards rate walks the read head back through what just played: after half a beat at the sound's own
-    /// speed, the reverse half of the grid plays it descending.
+    /// speed, the reverse part of the grid (0.125 of the bar, half a beat in 4/4) plays it descending.
     #[test]
     fn backwards_rates_play_the_past_in_reverse() {
         let mut b = beat();
         let mut g = GridState::default();
         let rev = GridState::y_of_rate(-1.0);
         g.time[0] = Curve {
-            pts: vec![Pt::new(0.0, 0.5, 0.0, Mode::Single as u8), Pt::new(0.5, rev, 0.0, Mode::Hold as u8), Pt::new(1.0, rev, 0.0, Mode::Hold as u8)],
+            pts: vec![Pt::new(0.0, 0.5, 0.0, Mode::Single as u8), Pt::new(0.125, rev, 0.0, Mode::Hold as u8), Pt::new(1.0, rev, 0.0, Mode::Hold as u8)],
         };
         b.set_grids(g);
         let n = 24000; // a beat and a quarter at 120 bpm and 48 kHz
@@ -347,11 +362,53 @@ mod tests {
         b.process(&mut l, &mut r, Some(TransportStep { playing: true, beats: 0.0 }));
         // The whole block sits in the open half: nothing was gated yet.
         assert!(l.iter().all(|v| *v > 0.99));
-        // From beat 0.5 on the gate is closed: start a block there.
+        // From the bar's middle on the gate is closed: start a block there (beat 2 of the 4-beat bar).
         let mut l = vec![1.0; n];
         let mut r = vec![1.0; n];
-        b.process(&mut l, &mut r, Some(TransportStep { playing: true, beats: 0.5 }));
+        b.process(&mut l, &mut r, Some(TransportStep { playing: true, beats: 2.0 }));
         assert!(*l.last().unwrap() < 0.01, "closed by the end: {}", l.last().unwrap());
+    }
+
+    /// The envelopes cycle once per bar, not once per beat (issue #113): a gate that closes at the bar's middle
+    /// stays open through the bar's first half and closes only in its second.
+    #[test]
+    fn the_envelopes_cycle_once_per_bar() {
+        let mut b = beat();
+        let mut g = GridState::default();
+        g.volume[0] = Curve { pts: vec![Pt::new(0.0, 1.0, 0.0, Mode::Hold as u8), Pt::new(0.5, 0.0, 0.0, Mode::Hold as u8)] };
+        b.set_grids(g);
+        let n = 512;
+        // A beat and an eighth in: a per-beat cycle would have closed the gate half a beat ago.
+        let mut l = vec![1.0; n];
+        let mut r = vec![1.0; n];
+        b.process(&mut l, &mut r, Some(TransportStep { playing: true, beats: 1.125 }));
+        assert!(*l.last().unwrap() > 0.99, "still open in the bar's first half: {}", l.last().unwrap());
+        // Past the bar's middle the gate is closed.
+        let mut l = vec![1.0; n];
+        let mut r = vec![1.0; n];
+        b.process(&mut l, &mut r, Some(TransportStep { playing: true, beats: 2.25 }));
+        assert!(*l.last().unwrap() < 0.01, "closed in the bar's second half: {}", l.last().unwrap());
+    }
+
+    /// The host's time signature sets the bar: in 3/4 the same half-bar gate closes at beat 1.5, not 2.
+    #[test]
+    fn the_time_signature_sets_the_bar() {
+        let mut b = beat();
+        b.set_bar(3.0);
+        let mut g = GridState::default();
+        g.volume[0] = Curve { pts: vec![Pt::new(0.0, 1.0, 0.0, Mode::Hold as u8), Pt::new(0.5, 0.0, 0.0, Mode::Hold as u8)] };
+        b.set_grids(g);
+        let n = 512;
+        // Beat 1.25 of a 3-beat bar: still in the open half.
+        let mut l = vec![1.0; n];
+        let mut r = vec![1.0; n];
+        b.process(&mut l, &mut r, Some(TransportStep { playing: true, beats: 1.25 }));
+        assert!(*l.last().unwrap() > 0.99, "open at beat 1.25 of 3: {}", l.last().unwrap());
+        // Beat 1.75: past the bar's middle, the gate closes.
+        let mut l = vec![1.0; n];
+        let mut r = vec![1.0; n];
+        b.process(&mut l, &mut r, Some(TransportStep { playing: true, beats: 1.75 }));
+        assert!(*l.last().unwrap() < 0.01, "closed at beat 1.75 of 3: {}", l.last().unwrap());
     }
 
     /// A jump puts the read head back at the present: the first frames after the jump read what just played, not
@@ -451,13 +508,13 @@ mod tests {
         assert_eq!(r, ir);
     }
 
-    /// A gate of two equal steps makes the eighth-note pattern the classic trance gate rides on.
+    /// A gate of eight equal on-off steps makes the eighth-note pattern the classic trance gate rides on.
     #[test]
     fn gate_steps_alternate() {
-        let g = gate(2);
-        assert_eq!(g.pts.len(), 4);
-        assert!((g.value_at(0.1).unwrap() - 1.0).abs() < 1e-6, "open on the first half of the step");
-        assert_eq!(g.value_at(0.3), Some(0.0), "closed on the second half");
+        let g = gate(8);
+        assert_eq!(g.pts.len(), 16);
+        assert!((g.value_at(0.14).unwrap() - 1.0).abs() < 1e-6, "open on the first half of a step");
+        assert_eq!(g.value_at(0.34), Some(0.0), "closed on the second half");
     }
 }
 

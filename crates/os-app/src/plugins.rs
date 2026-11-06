@@ -364,6 +364,7 @@ pub fn builtin() -> Vec<Available> {
     static DRUMSAMPLER: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static SLICER: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static SFXR: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static SLICEX: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static WAVETABLE: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static SOUNDFONT: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     let mut v = linked(&LIB, &lemon_sampler::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, LEMON_SAMPLER);
@@ -401,6 +402,8 @@ pub fn builtin() -> Vec<Available> {
     v.extend(linked(&FLEX, &mango_flex::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, MANGO_FLEX));
     // The sampler (a recreation of FL's DirectWave): a program of zones, each one sample and where it plays.
     v.extend(linked(&DIRECTWAVE, &mango_directwave::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango DirectWave"));
+    // The sliced-loop sampler (a recreation of FL's Slicex): articulators, two decks, a sample editor.
+    v.extend(linked(&SLICEX, &lemon_slicex::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Slicex"));
     // The pad drum sampler (a recreation of FL's FPC): sixteen pads in two banks, each one or more velocity
     // layers of samples, each on its own key.
     v.extend(linked(&DRUMSAMPLER, &lemon_drum_sampler::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Drum Sampler"));
@@ -438,6 +441,9 @@ pub fn builtin_effects() -> Vec<Available> {
         &lemon_crusher::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
         &lemon_vocoder::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
         &lemon_twelve::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
+        &lemon_peak_controller::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
+        &lemon_formula_controller::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
+        &mango_master::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
     ];
     let names = FILE_MAPPED.into_iter().chain(LINKED_EFFECTS);
     LIBS.iter().zip(entries).zip(names).flat_map(|((lib, entry), name)| linked(lib, entry, name)).collect()
@@ -590,6 +596,42 @@ impl Plugins {
     fn native_ready(&mut self, dll: &std::path::Path) -> bool {
         let (Some(checks), Ok(program)) = (&mut self.native_checks, std::env::current_exe()) else { return true };
         checks.ready(&program, dll)
+    }
+
+    /// A plugin file the user picked anywhere (the browser's files tree): one the scans already know joins its list at
+    /// once; the others are scanned now, in the scanner child, so a broken file never takes the program down, and the
+    /// plugins it names join the instrument or effect lists (a shell file joins every plugin it offers). The plugin
+    /// plays from the file on first use, the way a scanned one does. `Err` is what to tell the user.
+    pub fn host_file(&mut self, path: &Path) -> Result<(), String> {
+        let Some(format) = crate::plugin_db::format_of_file(path) else {
+            return Err("is not a plugin file this program hosts (.clap, .vst3, .vst)".into());
+        };
+        if self.available.iter().chain(&self.effects).any(|a| crate::plugin_db::same_path(&a.desc.path, path)) {
+            return Ok(());
+        }
+        if format == os_host::Format::Vst2 {
+            if let Some(why) = os_vst2::unsupported(path) {
+                return Err(why);
+            }
+        }
+        // Tests scan in this process (a test program is no scanner).
+        let scanned = if cfg!(test) { crate::plugin_scan::scan_here(path, format) } else { crate::plugin_scan::scan_in_child(path, format) };
+        if scanned.status != crate::plugin_db::Status::Ok {
+            return Err(if scanned.error.is_empty() { "the scan could not read it".into() } else { scanned.error });
+        }
+        let descs: Vec<Descriptor> = scanned.plugins.iter().map(|r| r.descriptor(format, path)).collect();
+        if descs.is_empty() {
+            return Err("the scan found no plugin in it".into());
+        }
+        let lib: Arc<dyn Library> = Arc::new(LazyLibrary { path: path.to_path_buf(), format, plugins: descs.clone(), real: OnceLock::new() });
+        for d in descs {
+            match d.kind {
+                os_host::Kind::Instrument => self.available.push(Available { lib: lib.clone(), desc: d }),
+                os_host::Kind::Effect => self.effects.push(Available { lib: lib.clone(), desc: d }),
+                os_host::Kind::Other => {}
+            }
+        }
+        Ok(())
     }
 
     /// The built-in plugins plus every plugin file in the standard folders, scanned in this process at once (tests).
@@ -956,7 +998,27 @@ impl Plugins {
     /// so only Lemon Sampler rows load it (through their state). Returns whether the plugin got the file.
     #[cfg(target_os = "macos")]
     pub fn drop_file(&mut self, row: usize, _x: i32, _y: i32, path: &str, sampler: bool) -> bool {
-        sampler && self.load_sample(row, path)
+        self.drop_on_link(row, path) || sampler && self.load_sample(row, path)
+    }
+
+    /// The hosted row whose plugin window is at screen point (x, y).
+    #[cfg(target_os = "linux")]
+    pub fn row_at_screen(&self, x: i32, y: i32) -> Option<usize> {
+        self.hosted.iter().find(|(_, h)| h.window.as_ref().and_then(|f| f.screen_rect()).is_some_and(|[l, t, r, b]| x >= l && x < r && y >= t && y < b)).map(|(&r, _)| r)
+    }
+
+    /// Hands file `path` to row `row`'s plugin through the host link, when that plugin takes dropped files (Mango Slicex
+    /// does). False when it does not.
+    #[cfg(all(not(windows), plugin_windows))]
+    pub fn drop_on_link(&self, row: usize, path: &str) -> bool {
+        self.hosted.get(&row).and_then(|h| h.link.as_ref()).is_some_and(|l| l.drop_file(path))
+    }
+
+    /// Drops file `path` on row `row`'s plugin window: a plugin that takes files through the host link gets it, a Lemon
+    /// Sampler row loads it through its state. Returns whether the plugin got the file.
+    #[cfg(target_os = "linux")]
+    pub fn drop_file(&mut self, row: usize, _x: i32, _y: i32, path: &str, sampler: bool) -> bool {
+        self.drop_on_link(row, path) || sampler && self.load_sample(row, path)
     }
 
     /// Closes every window and drops every instance (a new or opened project).
@@ -1656,7 +1718,7 @@ pub const LEMON_EQ: &str = "Mango Parametric EQ";
 /// Lemon Studio's effects compiled in besides the EQ (`builtin_effects`, in this order). They have no file plugin of
 /// their own to be stored as, so a project stores them wrapped, as it stored their plugin files
 /// (`project_plugins::is_wrapped`).
-pub const LINKED_EFFECTS: [&str; 18] = [
+pub const LINKED_EFFECTS: [&str; 21] = [
     "Mango Limiter",
     "Mango Reverb",
     "Mango Delay",
@@ -1675,10 +1737,19 @@ pub const LINKED_EFFECTS: [&str; 18] = [
     "Mango Crusher",
     MANGO_VOCODER,
     "Mango 12",
+    LEMON_PEAK_CONTROLLER,
+    LEMON_FORMULA_CONTROLLER,
+    "Mango Master",
 ];
 /// Lemon Studio's effects compiled in that a project stores under the FL plugin they recreate, with that plugin's
 /// state (`new_slot`, `store_builtin_states`), so they are never saved wrapped.
 pub const FILE_MAPPED: [&str; 3] = [LEMON_EQ, PULP_FILTER, PRESS];
+/// Name of Lemon Peak Controller, Lemon Studio's peak follower and LFO controller: its outputs drive the project's links
+/// (spec: plugins/lemon-peak-controller.md).
+pub const LEMON_PEAK_CONTROLLER: &str = "Mango Peak Controller";
+/// Name of Lemon Formula Controller, Lemon Studio's formula controller: its output drives the project's links (spec:
+/// plugins/lemon-formula-controller.md).
+pub const LEMON_FORMULA_CONTROLLER: &str = "Mango Formula Controller";
 /// Name of Tesla, Lemon Studio's audio editor and recorder (spec: plugins/tesla/README.md).
 pub const TESLA: &str = "Tesla";
 /// Name of Pulp Filter, Lemon Studio's pattern-controlled multi-filter (spec: plugins/lemon-pulp-filter.md).
@@ -1738,7 +1809,7 @@ pub fn current_name(name: &str) -> &str {
 /// (`App::sync_effects`, `App::store_builtin_states`; spec: plugins/lemon-small-effects.md "Opened projects' slots").
 /// Not Lemon Stereo Shaper: the difference output is the mixer slot's alone (spec: plugins/lemon-stereo-shaper.md §5),
 /// so the engine's own Stereo Shaper keeps playing those slots.
-pub const FL_RECREATIONS: [(&str, &str); 13] = [
+pub const FL_RECREATIONS: [(&str, &str); 15] = [
     ("Fruity Limiter", "Mango Limiter"),
     ("Fruity Reeverb 2", "Mango Reverb"),
     ("Fruity Delay 3", "Mango Delay"),
@@ -1752,6 +1823,8 @@ pub const FL_RECREATIONS: [(&str, &str); 13] = [
     ("Fruity Flanger", "Mango Flanger"),
     ("Fruity Phaser", "Mango Phaser"),
     (VOCODEX_FILE_NAME, MANGO_VOCODER),
+    ("Fruity Peak Controller", LEMON_PEAK_CONTROLLER),
+    ("Fruity Formula Controller", LEMON_FORMULA_CONTROLLER),
 ];
 
 /// The Lemon effect of `FL_RECREATIONS` that plays slots stored as `file` (any case: files may spell the id
@@ -1777,6 +1850,8 @@ pub fn recreation_state_from_fl(lemon: &str, fl: &[u8]) -> Option<Vec<u8>> {
         "Mango Flanger" => small(lemon_small_fx::flanger::SPEC, fl),
         "Mango Phaser" => small(lemon_small_fx::phaser::SPEC, fl),
         MANGO_VOCODER => small(lemon_small_fx::vocoder::SPEC, fl),
+        LEMON_PEAK_CONTROLLER => small(lemon_small_fx::peak_controller::SPEC, fl),
+        LEMON_FORMULA_CONTROLLER => small(lemon_small_fx::formula_controller::SPEC, fl),
         _ => return None,
     })
 }
@@ -1799,6 +1874,8 @@ pub fn fl_from_recreation_state(lemon: &str, blob: &[u8]) -> Option<Vec<u8>> {
         "Mango Flanger" => small(lemon_small_fx::flanger::SPEC, blob),
         "Mango Phaser" => small(lemon_small_fx::phaser::SPEC, blob),
         MANGO_VOCODER => small(lemon_small_fx::vocoder::SPEC, blob),
+        LEMON_PEAK_CONTROLLER => small(lemon_small_fx::peak_controller::SPEC, blob),
+        LEMON_FORMULA_CONTROLLER => small(lemon_small_fx::formula_controller::SPEC, blob),
         _ => None,
     }
 }

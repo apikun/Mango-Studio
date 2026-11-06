@@ -95,6 +95,9 @@ pub enum Item {
     Generator(usize),
     /// An effect (index into `Plugins::effects`).
     Effect(usize),
+    /// A plugin file in the files tree (a `.dll`, `.vst`, `.vst3` or `.clap`): clicked or dropped, it is hosted and
+    /// added (a generator as a channel, an effect on the selected mixer track).
+    PlugFile(String),
     /// A non-audio file in a dropped folder (not draggable, spec §6).
     File(String),
     /// A parameter of a hosted plugin: hosted key, parameter index (spec: plugins/plugin-parameters.md §6).
@@ -344,6 +347,8 @@ pub fn file_icon(name: &str) -> Icon {
         "txt" | "url" | "pdf" | "nfo" | "rtf" | "htm" | "html" | "md" => Icon::FileText,
         "fxp" | "fxb" | "fst" | "vstpreset" | "nmsv" | "spf" | "h2p" | "clap-preset" | "ospreset" => Icon::FilePreset,
         "zip" | "rar" | "7z" => Icon::FileZip,
+        // Plugin files: clicked or dropped, they are hosted and added (spec §6, "Plugin files").
+        "vst3" | "vst" | "clap" | "dll" => Icon::Plug,
         _ => Icon::FileBlank,
     }
 }
@@ -363,7 +368,11 @@ fn disk_rows(s: &State, dir: &Path, key: &str, depth: u8, out: &mut Vec<Row>) {
             let icon = file_icon(&e.name);
             let p = e.path.to_string_lossy().into_owned();
             let stem = || e.name.rsplit_once('.').map_or(e.name.as_str(), |(a, _)| a).to_string();
-            let (label, item) = if icon == Icon::FileAudio {
+            // A plugin file of this platform is a row of its own: clicked or dropped, it is hosted and added. A `.dll`
+            // that is not a plugin (an installer, a runtime library beside one) stays a plain file.
+            let (label, item) = if crate::plugin_db::format_of_file(&e.path).is_some() {
+                (stem(), Item::PlugFile(p))
+            } else if icon == Icon::FileAudio {
                 (stem(), Item::Sample(p))
             } else if crate::presets::is_preset_file(&e.path) {
                 (stem(), Item::Preset(p))

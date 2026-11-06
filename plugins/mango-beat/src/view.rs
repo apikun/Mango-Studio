@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This file is part of Lemon Studio: https://github.com/ItsAlphaNeon/Lemon-Studio
 
-//! Mango Beat editor: painting and hit regions (platform independent). Two beat grids — TIME over VOLUME — drawn
+//! Mango Beat editor: painting and hit regions (platform independent). Two envelope grids — TIME over VOLUME — drawn
 //! like the playlist draws automation (a filled curve over ruled quarters, points and tension handles), with the
 //! sections' slot buttons and mix dials in the rail at the left, the hint well and the wordmark along the foot.
 //!
@@ -135,7 +135,7 @@ impl Ui<'_> {
     }
 }
 
-/// The x on a grid for a beat position (0..1).
+/// The x on a grid for a position along it (0..1).
 pub fn gx(sec_grid: usize, x: f32) -> f32 {
     let g = &GRIDS[sec_grid];
     g.x + g.w * x.clamp(0.0, 1.0)
@@ -147,7 +147,7 @@ pub fn gy(sec_grid: usize, y: f32) -> f32 {
     g.bottom() - g.h * y.clamp(0.0, 1.0)
 }
 
-/// The beat position and envelope value at a point on a grid.
+/// The position and envelope value at a point on a grid.
 pub fn value_at(sec_grid: usize, x: f32, y: f32) -> (f32, f32) {
     let g = &GRIDS[sec_grid];
     (((x - g.x) / g.w).clamp(0.0, 1.0), ((g.bottom() - y) / g.h).clamp(0.0, 1.0))
@@ -251,11 +251,12 @@ fn heading(ui: &mut Ui, x0: f32, x1: f32, y: f32, s: &str) {
     }
 }
 
-/// One grid well: the ruled beat (quarters, and the twenty-fourths fainter), the value guides and their labels.
+/// One grid well: the ruled bar (its quarters — the beats in 4/4 — and its twenty-fourths fainter), the value
+/// guides and their labels.
 fn grid_well(ui: &mut Ui, sec: usize, g: &Rect) {
     lemon::plug_well(ui.c, g.outset(1.0), 6.0);
     ui.c.push_clip(g.inset(0.5));
-    // The beat's twenty-fourths, quarters ruled.
+    // The bar's twenty-fourths, quarters ruled.
     for k in 1..24 {
         if k % 6 == 0 {
             continue;
@@ -404,16 +405,16 @@ fn params_of(id: &str) -> Option<usize> {
     crate::params::DEFS.iter().position(|d| d.id == id)
 }
 
-/// A point's hint: its place in the beat and its value on its section's scale.
+/// A point's hint: its place in the bar and its value on its section's scale.
 pub fn point_hint(sec: usize, slot: usize, i: usize, grids: &GridState) -> String {
     let curve = if sec == TIME { &grids.time[slot.min(3)] } else { &grids.volume[slot.min(3)] };
     let Some(p) = curve.pts.get(i) else { return "Point".into() };
     let at = if p.x <= 0.0 {
         "the start".into()
     } else if (24.0 * p.x).fract() < 1e-3 {
-        format!("beat {}/24", (24.0 * p.x).round() as i32)
+        format!("{}/24 of the bar", (24.0 * p.x).round() as i32)
     } else {
-        format!("beat {:.3}", p.x)
+        format!("{:.3} of the bar", p.x)
     };
     let name = if sec == TIME { "Time" } else { "Volume" };
     let value = if sec == TIME { rate_text(GridState::rate_of_y(p.y)) } else { db_text(p.y) };
