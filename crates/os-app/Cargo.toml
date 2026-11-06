@@ -92,6 +92,9 @@ jpeg-decoder = { version = "0.3", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
+# The browser's Freesound search and preview downloads (crate::freesound): small synchronous HTTP client over TLS,
+# rustls (pure Rust, no system library — the Android and Windows builds need no more than the program already carries).
+ureq = "2"
 # Export encoders (`export::encode`): FLAC (pure Rust), MP3 (LAME, built from source) and Ogg Vorbis (libvorbis, built
 # from source).
 flacenc = "0.5"

@@ -35,8 +35,10 @@ pub const INFO_H: f32 = 84.0;
 /// (label, icon, category colour index). Only the roots with content: FL's other disk-folder roots (Recent files,
 /// Channel presets, Packs...) are left out until Lemon Studio has content for them (owner decision); dropped folders
 /// follow these. Plugin presets: the preset store, user and factory (spec: plugins/presets.md "Browser").
-const ROOTS: &[(&str, Icon, u8)] = &[("Current project", Icon::Page, 0), ("Plugin database", Icon::Speaker, 1), (PLUGIN_PRESETS, Icon::FilePreset, 1)];
+const ROOTS: &[(&str, Icon, u8)] = &[("Current project", Icon::Page, 0), ("Plugin database", Icon::Speaker, 1), (PLUGIN_PRESETS, Icon::FilePreset, 1), (FREESOUND, Icon::Wave, 1)];
 pub const PLUGIN_PRESETS: &str = "Plugin presets";
+/// The All tab's Freesound root (crate::freesound): the online sample search.
+pub const FREESOUND: &str = "Freesound";
 
 /// Tree key of the All tab's Plugin presets root; a plugin's node is `<this>/<plugin folder name>`.
 pub fn presets_key() -> String {
@@ -103,6 +105,11 @@ pub enum Item {
     /// A plugin preset file (any `presets::IMPORT_EXTS` type) or factory preset path: dropped, it loads (spec:
     /// plugins/presets.md "Drag and drop").
     Preset(String),
+    /// The Freesound root's search row (crate::freesound): clicked, the browser's search field types the query.
+    FreesoundSearch,
+    /// A sound the last Freesound search found (index into `State::freesound.results`, crate::freesound): clicked,
+    /// its preview is fetched and played; a fetched one is a `Sample` of its file instead.
+    Freesound(usize),
 }
 
 /// The browser drag in flight (spec §3): the item and its label following the cursor, and the modifiers at the move
@@ -248,6 +255,7 @@ fn tree(s: &State) -> Vec<Row> {
         match r {
             0 => project_rows(s, &key, cat, &mut out),
             1 => plugin_rows(s, &key, cat, &mut out),
+            3 => freesound_rows(s, &key, cat, &mut out),
             _ => preset_rows(s, &key, cat, &mut out),
         }
     }
@@ -464,6 +472,26 @@ fn plugin_node(s: &State, out: &mut Vec<Row>, parent: &str, label: String, icon:
         for (index, e) in s.params.visible(key) {
             out.push(Row { key: format!("{k}/{index}"), depth: 3, label: e.name.clone(), icon: Icon::Slide, cat, open: None, bright: false, item: Item::Param(key, index), path: None });
         }
+    }
+}
+
+/// The Freesound root's rows (crate::freesound): the search row, then what the last search found. The search row's
+/// pick types the query in the browser's search field; a sound's click fetches its preview and plays it (a sound
+/// fetched before is a sample of its own file, dragged and dropped like one).
+fn freesound_rows(s: &State, parent: &str, cat: u8, out: &mut Vec<Row>) {
+    let fs = &s.freesound;
+    let label = if fs.query.is_empty() { "Search freesound.org…".into() } else { format!("Search: {}", fs.query) };
+    out.push(Row { key: format!("{parent}/Search"), depth: 1, label, icon: Icon::Search, cat, open: None, bright: fs.typing, item: Item::FreesoundSearch, path: None });
+    if let Some(e) = &fs.error {
+        leaf(out, parent, format!("({e})"), Icon::FileBlank, cat, false, Item::None);
+    }
+    if fs.searching.is_some() {
+        leaf(out, parent, "Searching…".into(), Icon::FileBlank, cat, false, Item::None);
+    }
+    for (i, snd) in fs.results.iter().enumerate() {
+        let file = crate::freesound::file_of(snd);
+        let item = if file.exists() { Item::Sample(file.to_string_lossy().into_owned()) } else { Item::Freesound(i) };
+        leaf(out, parent, crate::freesound::sound_label(snd), Icon::Wave, cat, item != Item::Freesound(i), item);
     }
 }
 
@@ -870,7 +898,10 @@ pub fn menu_at(s: &State) -> (f32, f32) {
 /// The search field (spec §5): typed text, a caret while focused; click focuses.
 fn search_box(ui: &mut Ui, s: &State, r: Rect) {
     let t = ui.t;
-    ui.hit(r, Action::BrowserSearch, "Search the browser (Enter = find next, Esc = clear)");
+    // While the Freesound search row has the typing, the field edits the query (Enter searches freesound.org).
+    let freesound = s.freesound.typing;
+    let hint = if freesound { "Search freesound.org (Enter = search, Esc = leave)" } else { "Search the browser (Enter = find next, Esc = clear)" };
+    ui.hit(r, Action::BrowserSearch, hint);
     ui.c.fill_rrect(r, 3.0, t.sunken);
     if s.browser_search_focus {
         ui.c.stroke_rrect(r, 3.0, 1.0, t.browser_search);
@@ -878,7 +909,8 @@ fn search_box(ui: &mut Ui, s: &State, r: Rect) {
     let f = os_ui::Font::new(14);
     let text_w = r.w - 26.0;
     // Show the end of a long query.
-    let mut shown: &str = &s.browser_search;
+    let query = if freesound { &s.freesound.query } else { &s.browser_search };
+    let mut shown: &str = query;
     while ui.c.text_width(f, shown) > text_w && !shown.is_empty() {
         let cut = shown.char_indices().nth(1).map_or(shown.len(), |(i, _)| i);
         shown = &shown[cut..];

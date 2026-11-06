@@ -99,6 +99,12 @@ impl App {
                         s.rack.select_only(c);
                     }
                     Item::History(e) => s.message = crate::history::go_to(s, e),
+                    // The Freesound search row gives the browser's search field to the query (crate::freesound).
+                    Item::FreesoundSearch => {
+                        s.freesound.typing = true;
+                        s.browser_search_focus = true;
+                    }
+                    Item::Freesound(i) => crate::freesound::preview(self, i),
                     _ => {}
                 }
                 if double {
@@ -110,7 +116,7 @@ impl App {
                 }
                 let s = &mut self.state;
                 s.browser_scroll = s.browser_scroll.min(view::max_scroll(s));
-                if !matches!(row.item, Item::None | Item::File(_) | Item::History(_)) {
+                if !matches!(row.item, Item::None | Item::File(_) | Item::History(_) | Item::FreesoundSearch | Item::Freesound(_)) {
                     self.drag = Some(Drag::Browser { item: row.item, label: row.label, m0: self.mouse, started: false });
                 }
             }
@@ -286,6 +292,28 @@ impl App {
         }
         let s = &mut self.state;
         if focus {
+            // While the Freesound search row has the typing, the field edits the query (Enter searches, Esc leaves).
+            if s.freesound.typing {
+                match key {
+                    Key::Named(NamedKey::Escape) => {
+                        s.freesound.typing = false;
+                        s.browser_search_focus = false;
+                    }
+                    Key::Named(NamedKey::Enter) => {
+                        s.freesound.typing = false;
+                        s.browser_search_focus = false;
+                        crate::freesound::start_search(self);
+                    }
+                    Key::Named(NamedKey::Backspace) => {
+                        s.freesound.query.pop();
+                    }
+                    Key::Named(NamedKey::Space) => s.freesound.query.push(' '),
+                    Key::Character(c) if !ctrl && !alt => s.freesound.query.push_str(c),
+                    _ => return false,
+                }
+                self.invalidate();
+                return true;
+            }
             match key {
                 Key::Named(NamedKey::Escape) => {
                     s.browser_search.clear();
@@ -515,7 +543,8 @@ impl App {
                     self.state.message = msg;
                 }
             }
-            Item::None | Item::File(_) | Item::History(_) | Item::Preset(_) => {}
+            // A Freesound sound not fetched yet is only a message: nothing to drop.
+            Item::None | Item::File(_) | Item::History(_) | Item::Preset(_) | Item::FreesoundSearch | Item::Freesound(_) => {}
         }
     }
 
@@ -582,6 +611,8 @@ impl App {
                     s.rack.select_only(c);
                 }
                 Item::History(e) => return crate::history::go_to(s, e),
+                // What a click on a Freesound row does (crate::freesound): the menu's Preview is the same.
+                Item::Freesound(i) => crate::freesound::preview(self, i),
                 _ => {}
             },
             RowCmd::Pattern(pc) => {
@@ -961,7 +992,8 @@ pub fn row_menu(s: &crate::app::State, row: &view::Row) -> Vec<PItem> {
             let it = PItem::new("Load into selected channel", Cmd::Preset(crate::presets::PCmd::Load(key, p.into())));
             items.push(if s.hosted_rows.contains(&key) { it } else { it.off() });
         }
-        Item::None | Item::File(_) | Item::Param(..) => {}
+        Item::Freesound(_) => items.push(r("Preview", RowCmd::Activate)),
+        Item::None | Item::File(_) | Item::Param(..) | Item::FreesoundSearch => {}
     }
     // The plugin browser's variants and star.
     if s.browser_tab == view::PLUGIN_TAB {
@@ -1217,11 +1249,11 @@ mod tests {
         app.state.browser_folders.push(dir.clone());
         app.state.browser_open.insert(view::disk_key(&dir));
         let keys: Vec<String> = view::rows(&app.state).into_iter().map(|r| r.key).collect();
-        assert_eq!(keys.len(), 8, "the three closed roots, the dropped folder and its four rows");
+        assert_eq!(keys.len(), 9, "the four closed roots, the dropped folder and its four rows");
         // From no selection Down takes the first row: the closed Current project root, nothing heard.
         assert_eq!(move_sel(&mut app.state, 1), None);
         assert_eq!(app.state.browser_sel.as_deref(), Some(keys[0].as_str()));
-        for k in &keys[1..4] {
+        for k in &keys[1..5] {
             assert_eq!(move_sel(&mut app.state, 1), None, "roots and the folder row are silent");
             assert_eq!(app.state.browser_sel.as_deref(), Some(k.as_str()));
         }
@@ -1239,23 +1271,23 @@ mod tests {
         assert_eq!(move_sel(&mut app.state, -1).as_deref(), Some(snare.as_str()));
         assert_eq!(move_sel(&mut app.state, -1).as_deref(), Some(kick.as_str()));
         assert_eq!(move_sel(&mut app.state, -1), None, "the folder row again");
-        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[3].as_str()));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[4].as_str()));
         // Right on the opened folder steps into its first row, the kick, heard.
         assert_eq!(into_sel(&mut app.state).as_deref(), Some(kick.as_str()));
-        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[4].as_str()));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[5].as_str()));
         // Right on a sample replays it, the selection staying where it is.
         assert_eq!(into_sel(&mut app.state).as_deref(), Some(kick.as_str()));
-        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[4].as_str()));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[5].as_str()));
         // Left from the sample back to its parent folder...
         out_sel(&mut app.state);
-        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[3].as_str()));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[4].as_str()));
         // ...and Left on the opened folder closes it.
         out_sel(&mut app.state);
-        assert!(!app.state.browser_open.contains(&keys[3]));
+        assert!(!app.state.browser_open.contains(&keys[4]));
         // Right on the closed folder opens it where the selection stands, nothing heard yet.
         assert_eq!(into_sel(&mut app.state), None);
-        assert!(app.state.browser_open.contains(&keys[3]));
-        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[3].as_str()));
+        assert!(app.state.browser_open.contains(&keys[4]));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[4].as_str()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
