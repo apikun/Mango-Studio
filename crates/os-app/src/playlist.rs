@@ -341,6 +341,8 @@ pub enum Cmd {
     ClipRename(usize),
     ClipRandomColor(usize),
     ClipPreview(usize),
+    /// The audio clip's menu's Convert to MIDI (issue #64): the clip's sample's pitches become a new pattern's notes.
+    ClipToMidi(usize),
     /// A picker item's menu (§10a) on an audio or automation clip source: the command and the source's channel index.
     Pick(PickCmd, u16),
     PointDelete(u16, usize),
@@ -749,6 +751,10 @@ pub struct PlaylistState {
     pub waves: RefCell<HashMap<String, Option<Rc<Wave>>>>,
     /// Tones of the same samples for colourful waveforms, analysed when first needed (`tones`).
     pub tones: RefCell<HashMap<String, Option<Rc<os_dsp::tone::Tones>>>>,
+    /// A pattern's sorted distinct note keys for its clips' previews, by pattern number with a stamp of its notes
+    /// (`note_pitches`): a zoom repaints every frame, and collecting and sorting every visible clip's pitches every
+    /// frame showed (issue #137).
+    pub pitches: RefCell<HashMap<u16, (u64, Rc<Vec<u16>>)>>,
     /// A project is loading and its files decode off the UI thread: waveforms wait (spec: ui/project-loading.md).
     pub wave_wait: bool,
 }
@@ -789,9 +795,22 @@ impl Default for PlaylistState {
             last_pick: None,
             waves: RefCell::new(HashMap::new()),
             tones: RefCell::new(HashMap::new()),
+            pitches: RefCell::new(HashMap::new()),
             wave_wait: false,
         }
     }
+}
+
+/// FNV-1a over a pattern's notes' position, length and key: any edit moves the stamp and `note_pitches` rebuilds.
+fn note_stamp(p: &os_model::Pattern) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for n in &p.notes {
+        for v in [u64::from(n.position), u64::from(n.length), u64::from(n.key)] {
+            h ^= v;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    h
 }
 
 impl PlaylistState {
@@ -800,6 +819,25 @@ impl PlaylistState {
     pub fn reset(&mut self) {
         let (tool, snap, pick_rows) = (self.tool, self.snap, self.pick_rows);
         *self = PlaylistState { tool, snap, pick_rows, ..PlaylistState::default() };
+    }
+
+    /// A pattern's sorted distinct note keys, for its clips' previews (issue #137): a zoom repaints every frame, and
+    /// collecting and sorting every visible clip's pitches every frame showed. Cached by pattern number with a stamp
+    /// of its notes, so an edit rebuilds just that pattern's list.
+    pub fn note_pitches(&self, n: u16, p: &os_model::Pattern) -> Rc<Vec<u16>> {
+        let stamp = note_stamp(p);
+        let mut cache = self.pitches.borrow_mut();
+        if let Some((st, v)) = cache.get(&n)
+            && *st == stamp
+        {
+            return v.clone();
+        }
+        let mut v: Vec<u16> = p.notes.iter().map(|note| note.key).collect();
+        v.sort_unstable();
+        v.dedup();
+        let v = Rc::new(v);
+        cache.insert(n, (stamp, v.clone()));
+        v
     }
 
     /// The shown picker list's item pitch.
@@ -2697,6 +2735,8 @@ pub fn clip_menu(s: &State, i: usize, x: f32, y: f32) -> Popup {
         if s.project.channel(ch).is_some_and(|chan| chan.kind.is_sampler()) {
             let is_rev = s.project.channel(ch).is_some_and(|chan| chan.sound.fx.flags & os_model::SampleFx::REVERSE != 0);
             items.push(PItem::new("Reverse (Shift+R)", Cmd::ToggleReverse).mark(Mark::Check(is_rev)));
+            // The sampler's pitches as a pattern's notes (issue #64).
+            items.push(PItem::new("Convert to MIDI", Cmd::ClipToMidi(i)));
         }
     }
     items.push(PItem::new("Select all similar clips", Cmd::ClipSelectSimilar(i)));
@@ -4475,6 +4515,11 @@ pub fn run(app: &mut App, cmd: Cmd) -> Option<String> {
             }
             return None;
         }
+        Cmd::ClipToMidi(i) => {
+            let m = crate::pitch_job::clip_to_midi(app, i);
+            app.invalidate();
+            return Some(m);
+        }
         Cmd::Pick(c, ch) => {
             let m = pick(app, c, ch);
             app.invalidate();
@@ -4652,7 +4697,7 @@ pub fn run(app: &mut App, cmd: Cmd) -> Option<String> {
             snapshot(s);
             (!delete_space(s)).then(|| "Delete space: make a time selection first (right-drag the ruler)".into())
         }
-        Cmd::Consolidate | Cmd::ExportTracks | Cmd::QuantizeStarts | Cmd::PointValue(..) | Cmd::ClipPreview(_) | Cmd::TypeIn(_) | Cmd::Reset(_) | Cmd::Remote(_) | Cmd::MidiExt(_) => None,
+        Cmd::Consolidate | Cmd::ExportTracks | Cmd::QuantizeStarts | Cmd::PointValue(..) | Cmd::ClipPreview(_) | Cmd::ClipToMidi(_) | Cmd::TypeIn(_) | Cmd::Reset(_) | Cmd::Remote(_) | Cmd::MidiExt(_) => None,
         Cmd::StretchMode => {
             s.playlist.stretch = !s.playlist.stretch;
             Some(if s.playlist.stretch { "Stretch mode on: resizing an audio clip stretches it".into() } else { "Stretch mode off".into() })

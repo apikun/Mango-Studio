@@ -835,8 +835,14 @@ impl Frame {
                     }
                     2 => self.state.borrow_mut().middle_down(x, y, &screen),
                     3 => self.state.borrow_mut().right_down(x, y, &screen),
-                    4 => self.state.borrow_mut().wheel(x, y, 1.0),
-                    5 => self.state.borrow_mut().wheel(x, y, -1.0),
+                    4 => {
+                        let ctrl = u16::from(e.state) & u16::from(KeyButMask::CONTROL) != 0;
+                        self.state.borrow_mut().wheel(x, y, 1.0, ctrl)
+                    }
+                    5 => {
+                        let ctrl = u16::from(e.state) & u16::from(KeyButMask::CONTROL) != 0;
+                        self.state.borrow_mut().wheel(x, y, -1.0, ctrl)
+                    }
                     _ => Reply::None,
                 };
                 self.reply(r, (e.root_x, e.root_y));

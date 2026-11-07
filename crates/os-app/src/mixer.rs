@@ -1851,7 +1851,9 @@ impl App {
         }
         #[cfg(not(plugin_windows))]
         {
-            self.state.message = Some(crate::app::off_text(crate::app::PLUGIN_WINDOWS));
+            // Android: no plugin editor windows open, so the slot's docked window takes their place (issue #117);
+            // another tap on the slot's name closes it again.
+            self.toggle_fx_window(track, slot);
         }
         #[cfg(plugin_windows)]
         {
@@ -1865,6 +1867,21 @@ impl App {
                 None => {}
             }
         }
+    }
+
+    /// The docked plugin window showing a mixer slot's settings instead of a channel: selects the slot's track (the
+    /// mixer's slot actions work off it) and toggles the window (issue #117). Where plugin editor windows open, this
+    /// stays unused.
+    #[cfg_attr(plugin_windows, allow(dead_code))]
+    pub(crate) fn toggle_fx_window(&mut self, track: u16, slot: u8) {
+        if self.state.plugin_fx == Some((track, slot)) && self.state.shown(crate::app::Win::Plugin) {
+            self.state.hide(crate::app::Win::Plugin);
+        } else {
+            select(&mut self.state, track, false);
+            self.state.plugin_fx = Some((track, slot));
+            self.state.raise(crate::app::Win::Plugin);
+        }
+        self.invalidate();
     }
 
     /// Auto select linked modules: opening or focusing plugin window `key` (a channel row or an `fx_key`) selects its

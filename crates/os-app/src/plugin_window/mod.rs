@@ -1111,8 +1111,9 @@ impl State {
         }
     }
 
-    /// The wheel turned `notches` (up positive) over (x, y).
-    fn wheel(&mut self, x: f32, y: f32, notches: f32) -> Reply {
+    /// The wheel turned `notches` (up positive) over (x, y); Ctrl (Cmd on macOS) takes a tenth
+    /// of a step, the fine adjustment (issue #152).
+    fn wheel(&mut self, x: f32, y: f32, notches: f32, ctrl: bool) -> Reply {
         let part = part_at(self, x, y);
         if part.is_none() {
             if let Some(r) = self.misc_wheel(x, y, notches) {
@@ -1127,7 +1128,7 @@ impl State {
         }
         if let Some(Part::Knob(i)) = part {
             let k = KNOBS[usize::from(i)];
-            let v = self.knob_value(k) + notches / 64.0;
+            let v = self.knob_value(k) + notches / 64.0 * if ctrl { 0.1 } else { 1.0 };
             self.set_knob(k, v);
             return Reply::Repaint;
         }
@@ -1485,10 +1486,10 @@ mod tests {
         st.left_up(rx, y);
         assert!(st.box_text(Knob::Range).contains("1 semitones"));
         // A narrower range pulls the pitch in.
-        st.wheel(rx, y, 1.0);
+        st.wheel(rx, y, 1.0, false);
         assert_eq!(st.info.range, 2);
         st.info.pitch_cents = 200;
-        st.wheel(rx, y, -1.0);
+        st.wheel(rx, y, -1.0, false);
         assert_eq!((st.info.range, st.info.pitch_cents), (1, 100));
         st.middle_down(rx, y, &screen);
         assert_eq!(st.info.range, 2);
@@ -1498,13 +1499,13 @@ mod tests {
         st.motion(tx, y - 30.0, false);
         st.left_up(tx, y - 30.0);
         assert_eq!((st.info.track, st.info.target.as_str()), (3, "Insert 3"));
-        st.wheel(tx, y, 100.0);
+        st.wheel(tx, y, 100.0, false);
         assert_eq!(st.info.track, 4, "one per notch");
         st.left_down(tx, y, false, &screen);
         st.motion(tx, y - 10_000.0, false);
         st.left_up(tx, y);
         assert_eq!(st.info.track, 20, "the highest insert");
-        st.wheel(tx, y, 1.0);
+        st.wheel(tx, y, 1.0, false);
         assert_eq!(st.events.last(), Some(&FrameEvent::Track(20)), "no event at the limit");
         st.motion(tx, y, false);
         assert!(st.box_text(Knob::Track).starts_with("Target mixer track: Insert 20"));

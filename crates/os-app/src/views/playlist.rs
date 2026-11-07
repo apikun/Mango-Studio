@@ -1034,9 +1034,8 @@ fn pattern_notes(ui: &mut Ui, s: &State, g: &PGeom, c: &Clip, n: u16, body: Body
     }
     let br = body.r;
     let (w0, wl) = pl::window(s, c);
-    let mut pitches: Vec<u16> = p.notes.iter().map(|note| note.key).collect();
-    pitches.sort_unstable();
-    pitches.dedup();
+    // The pitches come cached (`PlaylistState::note_pitches`, issue #137): a zoom repaints every frame.
+    let pitches = s.playlist.note_pitches(n, p);
     let pitch_count = pitches.len() as f32;
     let h = (((br.h - 4.0).max(1.0) / pitch_count * 0.6).clamp(2.0, 3.5)).min(br.h.max(1.0));
     let usable = (br.h - 4.0 - h).max(0.0);
@@ -1492,15 +1491,15 @@ pub fn paint_overlays(ui: &mut Ui, s: &State) {
         // At the Pop-ups scaling (spec: ui/ui-scaling.md §1).
         ui.scaled(super::popup_scale(ui.c.scale), |ui, k| {
             let (w, h) = ui.c.size();
-            let (_, rows) = popup_list(ui, &p.items, p.x / k, p.y / k, (w, h), p.sub, 0, p.scroll[0]);
+            let (_, rows) = popup_list(ui, &p.items, p.x / k, p.y / k, (w, h), p.sub, 0, p.scroll[0], None);
             if let Some(i) = p.sub {
                 if let (Some(item), Some(rr)) = (p.items.get(i), rows.get(i)) {
                     let open = s.playlist.popup_sub2.filter(|&(a, _)| a == i).map(|(_, b)| b);
-                    let (_, rows2) = popup_list(ui, &item.children, rr.right(), rr.y - 2.0, (w, h), open, 1, p.scroll[1]);
+                    let (_, rows2) = popup_list(ui, &item.children, rr.right(), rr.y - 2.0, (w, h), open, 1, p.scroll[1], Some(rr.x));
                     // A submenu of the submenu, to the right of its row.
                     if let Some(j) = open {
                         if let (Some(inner), Some(r2)) = (item.children.get(j), rows2.get(j)) {
-                            popup_list(ui, &inner.children, r2.right(), r2.y - 2.0, (w, h), None, 2, 0);
+                            popup_list(ui, &inner.children, r2.right(), r2.y - 2.0, (w, h), None, 2, 0, Some(r2.x));
                         }
                     }
                 }
@@ -1555,9 +1554,10 @@ fn any_enabled(items: &[pl::PItem]) -> bool {
 
 /// Draw a popup list at (x, y) kept on screen; returns its rect and each item's row rect. Columns wider than the
 /// screen: the ones that fit from column `scroll` on, and a scroll bar under them (spec: ui/menus.md "Menus wider than
-/// the window").
+/// the window"). A submenu (`parent_left`, the parent row's left edge) that would not fit to the right of its anchor
+/// opens to the left of its parent menu instead of clamped back on top of it (issue #138).
 #[allow(clippy::too_many_arguments)]
-fn popup_list(ui: &mut Ui, items: &[pl::PItem], x: f32, y: f32, screen: (f32, f32), open: Option<usize>, depth: u8, scroll: usize) -> (Rect, Vec<Rect>) {
+fn popup_list(ui: &mut Ui, items: &[pl::PItem], x: f32, y: f32, screen: (f32, f32), open: Option<usize>, depth: u8, scroll: usize, parent_left: Option<f32>) -> (Rect, Vec<Rect>) {
     let t = ui.t;
     let font = Font::new(14);
     let mut lw: f32 = 80.0;
@@ -1583,7 +1583,15 @@ fn popup_list(ui: &mut Ui, items: &[pl::PItem], x: f32, y: f32, screen: (f32, f3
     let shown = if bar_h > 0.0 { ((room / cw) as usize).clamp(1, cols) } else { cols };
     let first = scroll.min(cols - shown);
     let (w, h) = (cw * shown as f32, body_h + 2.0 * m.border + bar_h);
-    let x = x.min(screen.0 - w - 2.0).max(0.0);
+    let x = if x + w + 2.0 > screen.0 {
+        // Not room to the right of the anchor: a submenu goes to the left of its parent menu (issue #138), else the
+        // old clamp keeps it on screen.
+        parent_left
+            .and_then(|l| (l - w - 2.0 >= 0.0).then_some(l - w - 2.0))
+            .unwrap_or_else(|| (screen.0 - w - 2.0).max(0.0))
+    } else {
+        x.max(0.0)
+    };
     let y = y.min(screen.1 - h - 2.0).max(0.0);
     let r = Rect::new(x, y, w, h);
     let sub = depth > 0;

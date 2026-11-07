@@ -32,14 +32,23 @@ pub fn bounds(s: &State) -> Rect {
 pub fn paint(ui: &mut Ui, s: &State, _f: &FrameInfo) {
     let t = ui.t;
     let win = rect(s);
-    let Some(ch) = s.project.channels.get(s.plugin_channel) else { return };
     ui.c.fill_rect(win, t.window_border);
     ui.c.fill_rect(win.inset(1.0), t.window_body);
     ui.hit(win, Action::Swallow, "");
     ui.c.fill_rect(Rect::new(win.x + 1.0, win.y + 1.0, win.w - 2.0, 1.0), t.window_title_hi);
     let bar = Rect::span(win.x + 1.0, win.right() - 1.0, win.y + 1.0, win.y + 29.0);
     ui.hit(bar, Action::WinDrag(Win::Plugin), "Drag to move");
-    let name = ch.name.clone().unwrap_or_else(|| format!("Channel {}", ch.index + 1));
+    let fx = s.plugin_fx;
+    let name = fx.map_or_else(
+        || {
+            s.project
+                .channels
+                .get(s.plugin_channel)
+                .map(|ch| ch.name.clone().unwrap_or_else(|| format!("Channel {}", ch.index + 1)))
+                .unwrap_or_else(|| "Channel".into())
+        },
+        |(track, slot)| fx_name(s, track, slot),
+    );
     icons::draw(ui.c, Icon::Plug, Rect::new(win.x + 9.0, win.y + 7.0, 15.0, 15.0), t.glyph);
     ui.c.text_clip(Font::new(17), win.x + 30.0, win.y + 5.0, win.w - 60.0, t.text, &name);
     let close = Rect::new(win.right() - 22.0, win.y + 6.0, 16.0, 16.0);
@@ -49,6 +58,11 @@ pub fn paint(ui: &mut Ui, s: &State, _f: &FrameInfo) {
     let body = Rect::span(win.x + 5.0, win.right() - 6.0, win.y + 30.0, win.bottom() - 6.0);
     ui.c.fill_rect(body.outset(1.0), t.rack_inset_border);
     ui.c.fill_rect(body, t.rack_inset);
+    // A mixer slot's window (Android, issue #117): the effect's settings instead of a channel's.
+    if let Some((track, slot)) = fx {
+        return paint_fx(ui, s, body, track, slot);
+    }
+    let Some(ch) = s.project.channels.get(s.plugin_channel) else { return };
     let kind = match ch.kind {
         ChannelKind::Sampler => "Sampler".to_string(),
         ChannelKind::Plugin => crate::project_plugins::plugin_title(ch).unwrap_or_else(|| "Plugin".into()),
@@ -133,4 +147,42 @@ fn paint_clip(ui: &mut Ui, s: &State, body: Rect, kind: String) {
     for (i, (k, caption)) in knobs.into_iter().enumerate() {
         knob(ui, s, KnobId::AutoLfo(row, k), body.x + 110.0 + 60.0 * i as f32, ly + 50.0, caption);
     }
+}
+
+/// The docked effect window's title: the plugin's name with its mixer target after it, "(Insert N)" / "(Master)"
+/// like a floating frame's (spec: ui/mixer.md §7).
+fn fx_name(s: &State, track: u16, slot: u8) -> String {
+    let m = s.project.mixer.iter().find(|m| m.index == track);
+    let name = s
+        .mixer
+        .slot_names
+        .get(&(track, slot))
+        .cloned()
+        .or_else(|| m.and_then(|m| m.slots.get(usize::from(slot)).and_then(|p| p.as_ref()).map(crate::project_plugins::slot_title)))
+        .unwrap_or_else(|| "Effect".into());
+    format!("{name} ({})", if track == 0 { "Master".to_string() } else { format!("Insert {track}") })
+}
+
+/// The docked effect window's body (Android, issue #117): the effect's target, its enable switch and its menu
+/// (presets, replace, remove). The controls are the mixer slot's own actions, so they work wherever the mixer's do.
+fn paint_fx(ui: &mut Ui, s: &State, body: Rect, track: u16, slot: u8) {
+    let t = ui.t;
+    let on = s.project.mixer.iter().find(|m| m.index == track).is_some_and(|m| m.slot_on[usize::from(slot)]);
+    let lines = [("Target", if track == 0 { "Master".to_string() } else { format!("Insert {track}") }), ("State", if on { "On".into() } else { "Bypassed".into() })];
+    let f = Font::new(15);
+    for (i, (k, v)) in lines.iter().enumerate() {
+        let ly = body.y + 10.0 + 22.0 * i as f32;
+        ui.c.text(f, body.x + 12.0, ly, t.text_dim, k);
+        ui.c.text_clip(f, body.x + 100.0, ly, body.w - 120.0, t.text, v);
+    }
+    // The enable switch: the slot's LED and the mixer's own action.
+    let sw = Rect::new(body.x + 12.0, body.y + 74.0, 110.0, 20.0);
+    ui.hit(sw, crate::app::Action::Mix(crate::mixer::MHit::SlotLed(slot)), "Enable or bypass the effect");
+    led(ui, sw.x + 6.0, sw.cy(), on);
+    ui.c.text(Font::new(13), sw.x + 18.0, sw.y + 3.0, t.text, if on { "On" } else { "Bypassed" });
+    // The slot's menu (presets, replace, remove): the mixer slot's arrow action.
+    let menu = Rect::new(body.x + 12.0, body.y + 110.0, 110.0, 24.0);
+    let hov = ui.hit(menu, crate::app::Action::Mix(crate::mixer::MHit::SlotArrow(slot)), "The effect's menu");
+    ui.c.fill_rrect(menu, 4.0, if hov { t.button_hi } else { t.button });
+    ui.c.text_center(Font::new(13), menu, if hov { t.tx(0xffffff) } else { t.text }, "Menu");
 }

@@ -26,6 +26,8 @@ pub mod fast_distortion;
 pub mod filter;
 pub mod flanger;
 pub mod formula_controller;
+pub mod oneknob;
+pub mod otter;
 pub mod params;
 pub mod peak_controller;
 pub mod phaser;
@@ -469,7 +471,7 @@ mod tests {
             let mut lines = text.lines();
             assert_eq!(lines.next(), Some("OSPRESET 1"));
             let head = lines.next().unwrap();
-            assert!(head.starts_with(&format!("plugin={}	", spec.name)), "{head}");
+            assert!(head.starts_with(&format!("plugin={}\t", spec.name)), "{head}");
             let mut v: Vec<Option<i32>> = vec![None; spec.settings.len()];
             for l in lines.filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
                 let (name, steps) = l.split_once(" = ").unwrap();

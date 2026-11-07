@@ -783,7 +783,8 @@ unsafe extern "system" fn frame_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
             WM_MOUSEWHEEL => {
                 let (x, y) = client_point(hwnd, lp, w.scale, true);
                 let notches = ((wp >> 16) & 0xffff) as u16 as i16 as f32 / 120.0;
-                let r = w.state.borrow_mut().wheel(x, y, notches);
+                let ctrl = GetKeyState(VK_CONTROL as i32) < 0;
+                let r = w.state.borrow_mut().wheel(x, y, notches, ctrl);
                 reply(hwnd, w, r);
                 0
             }
