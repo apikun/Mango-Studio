@@ -19,6 +19,8 @@ accepted = [
     "LGPL-3.0",
     "GPL-3.0",
     "GPL-3.0-or-later",
+    # webpki-roots' root certificates data (CDLA-Permissive-2.0): a permissive licence, the GPL takes it.
+    "CDLA-Permissive-2.0",
 ]
 
 # vst3-sys says "GPLv3", which is no SPDX licence; its license.md grants version 3 or later.
