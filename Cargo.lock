@@ -2126,6 +2126,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "lemon-module-drum"
+version = "0.6.1"
+dependencies = [
+ "lemon-small-gen",
+ "nih_plug",
+ "os-plugkit",
+]
+
+[[package]]
+name = "lemon-oneknob"
+version = "0.6.1"
+dependencies = [
+ "lemon-small-fx",
+ "nih_plug",
+ "os-plugkit",
+]
+
+[[package]]
+name = "lemon-otter"
+version = "0.6.1"
+dependencies = [
+ "lemon-small-fx",
+ "nih_plug",
+ "os-plugkit",
+]
+
+[[package]]
 name = "lemon-parametric-eq-2"
 version = "0.6.1"
 dependencies = [
@@ -3292,6 +3319,9 @@ dependencies = [
  "lemon-kick",
  "lemon-limiter",
  "lemon-mini",
+ "lemon-module-drum",
+ "lemon-oneknob",
+ "lemon-otter",
  "lemon-parametric-eq-2",
  "lemon-peak-controller",
  "lemon-phaser",

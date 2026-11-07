@@ -1076,6 +1076,11 @@ pub struct State {
     pub rack_roll_view: bool,
     /// Channel shown in the plugin window, and where that window is.
     pub plugin_channel: usize,
+    /// The mixer slot the plugin window shows instead of a channel: where plugin editor windows do not open
+    /// (Android, issue #117), the slot's docked window takes their place.
+    pub plugin_fx: Option<(u16, u8)>,
+    /// The audio-to-MIDI conversion running (issue #64): the clip's sample is being analysed on its thread.
+    pub pitch_job: Option<crate::pitch_job::Job>,
     /// The plugin window was moved by hand: it reopens there instead of next to the rack (spec: ui/channel-rack.md
     /// "Left click").
     pub plugin_moved: bool,
@@ -1491,6 +1496,8 @@ impl App {
                 rack: Default::default(),
                 rack_roll_view: false,
                 plugin_channel: 0,
+                plugin_fx: None,
+                pitch_job: None,
                 plugin_moved: false,
                 plugin_pos: (560.0, 260.0),
                 selected_channel: 0,
@@ -4378,6 +4385,13 @@ impl App {
         }
         self.follow_device();
         self.record_tick();
+        // Audio to MIDI (issue #64): a finished conversion becomes the clip's new pattern.
+        if let Some(job) = self.state.pitch_job.as_mut() {
+            if let Some(done) = job.tick() {
+                self.state.pitch_job = None;
+                self.pitch_done(done);
+            }
+        }
         // CPU panel (spec: ui/main-window.md §13) and the Plugin performance monitor: a reading at the panel's refresh
         // rate.
         let now = std::time::Instant::now();
@@ -7751,7 +7765,9 @@ impl App {
             if id == crate::knobs::KnobId::MasterPitch {
                 v = (v * 24.0).round() / 24.0; // wheel steps from the nearest semitone
             }
-            let v = v + dy.signum() * id.notch() * if dy == 0.0 { 0.0 } else { 1.0 };
+            // Ctrl turns the notch into a tenth of one, the fine adjustment (issue #152).
+            let fine = if ctrl { 0.1 } else { 1.0 };
+            let v = v + dy.signum() * id.notch() * fine * if dy == 0.0 { 0.0 } else { 1.0 };
             if v.clamp(0.0, 1.0) != self.state.knob(id) {
                 crate::history::knob(&mut self.state, id, true);
             }
@@ -7761,13 +7777,14 @@ impl App {
             self.hint = Cow::Owned(self.state.knob_text(id));
             return None;
         }
-        // The wheel over a mixer fader moves it, not the mixer's scroll (spec: ui/mixer.md §4).
+        // The wheel over a mixer fader moves it, not the mixer's scroll (spec: ui/mixer.md §4); Ctrl
+        // takes a tenth of a notch, the fine adjustment (issue #152).
         if let Some(Action::Fader(t)) = area
             && dy != 0.0
         {
             let s = &mut self.state;
             let v0 = crate::mixer::track(s, t).map(|m| m.volume.unwrap_or(0.8))?;
-            let v = (v0 + f64::from(dy.signum()) * views::mixer::FADER_NOTCH).clamp(0.0, 1.0);
+            let v = (v0 + f64::from(dy.signum()) * views::mixer::FADER_NOTCH * if ctrl { 0.1 } else { 1.0 }).clamp(0.0, 1.0);
             if v != v0 {
                 crate::history::fader(s, t, true);
                 if let Some(m) = crate::mixer::track_mut(s, t) {
@@ -9283,7 +9300,15 @@ impl App {
     }
 
     /// Name button click (spec: ui/channel-rack.md §13): opens the channel's plugin window, or closes it when open.
+    /// Where plugin editor windows do not open (Android), the docked channel window is the instrument's window
+    /// (issue #117).
     fn toggle_channel_window(&mut self, i: usize) {
+        #[cfg(not(plugin_windows))]
+        if self.state.shown(Win::Plugin) && self.state.plugin_channel == i {
+            self.state.hide(Win::Plugin);
+            return;
+        }
+        #[cfg(plugin_windows)]
         if self.state.hosted_rows.contains(&i) {
             if !self.plugins.close_if_open(i) {
                 self.state.pending_open = Some(i);
@@ -9302,7 +9327,9 @@ impl App {
     /// Open rack row `i`'s window (not hosted: Lemon Sampler's for a sampler or audio clip, else the channel window).
     pub(crate) fn open_channel_window(&mut self, i: usize) {
         let s = &mut self.state;
-        if s.project.channels.get(i).is_some_and(|c| c.kind.is_sampler()) {
+        s.plugin_fx = None;
+        // Android has no plugin editor windows: every channel's window is the docked one (issue #117).
+        if cfg!(plugin_windows) && s.project.channels.get(i).is_some_and(|c| c.kind.is_sampler()) {
             // Not hosted yet (just added): Lemon Sampler starts on the next tick and its window opens then.
             s.pending_open = Some(i);
             self.sampler_failed.retain(|&r| r != i);
@@ -12818,6 +12845,169 @@ mod tests {
         assert_eq!(vol(&app), 0.0, "stops at the bottom");
     }
 
+    /// Ctrl+wheel takes a tenth of a step on the mixer fader and on a knob, the fine adjustment
+    /// (issue #152); the plain wheel keeps its full notch.
+    #[test]
+    fn ctrl_wheel_takes_a_tenth_step() {
+        let Ok(mut c) = Canvas::new(1920, 1080, 1.0) else { return };
+        let mut app = App::new(None);
+        app.state.project = test_project();
+        app.state.z = vec![Win::Mixer];
+        frame(&mut app, &mut c, None);
+        let vol = |app: &App| crate::mixer::track(&app.state, 1).unwrap().volume.unwrap();
+        let r = hit_rect(&app, &Action::Fader(1));
+        app.mouse_move(r.cx(), r.cy());
+        app.wheel(0.0, 1.0, false, true);
+        assert!((vol(&app) - (0.8 + views::mixer::FADER_NOTCH * 0.1)).abs() < 1e-6, "a tenth of a notch on the fader");
+        crate::history::undo(&mut app.state);
+        assert_eq!(vol(&app), 0.8);
+        // The first insert's pan knob.
+        let id = crate::knobs::KnobId::MixPan(1);
+        let r = hit_rect(&app, &Action::Knob(id));
+        app.mouse_move(r.cx(), r.cy());
+        let v0 = app.state.knob(id);
+        app.wheel(0.0, 1.0, false, true);
+        assert!((app.state.knob(id) - (v0 + id.notch() * 0.1)).abs() < 1e-6, "a tenth of a notch on the knob");
+        app.wheel(0.0, 1.0, false, false);
+        assert!((app.state.knob(id) - (v0 + id.notch() * 1.1)).abs() < 1e-6, "the plain wheel keeps its notch");
+    }
+
+    /// The docked effect window (issue #117): `toggle_fx_window` shows a mixer slot's settings in the plugin
+    /// window with the slot's track selected, another call closes it, and the window paints the slot's switch,
+    /// which works through the mixer's own action.
+    #[test]
+    fn docked_fx_window_shows_a_mixer_slot() {
+        let Ok(mut c) = Canvas::new(1920, 1080, 1.0) else { return };
+        let mut app = App::new(None);
+        app.state.project = test_project();
+        app.toggle_fx_window(1, 0);
+        assert!(app.state.shown(Win::Plugin) && app.state.plugin_fx == Some((1, 0)));
+        assert_eq!(app.state.selected_mixer, 1, "the slot's track is selected");
+        frame(&mut app, &mut c, None);
+        let led = hit_rect(&app, &Action::Mix(crate::mixer::MHit::SlotLed(0)));
+        let menu = hit_rect(&app, &Action::Mix(crate::mixer::MHit::SlotArrow(0)));
+        assert!(led.w > 0.0 && menu.w > 0.0, "the switch and the menu painted");
+        let was = crate::mixer::track(&app.state, 1).unwrap().slot_on[0];
+        click(&mut app, &mut c, led);
+        assert_eq!(crate::mixer::track(&app.state, 1).unwrap().slot_on[0], !was, "the switch bypasses the slot");
+        // Another toggle closes the window; a channel window takes the slot's place again.
+        app.toggle_fx_window(1, 0);
+        assert!(!app.state.shown(Win::Plugin));
+        app.toggle_fx_window(1, 0);
+        assert!(app.state.shown(Win::Plugin));
+        app.open_channel_window(2);
+        assert_eq!(app.state.plugin_fx, None, "the channel window cleared the slot");
+        assert!(app.state.shown(Win::Plugin));
+    }
+
+    /// The pattern clips' pitch cache (issue #137): a pattern's sorted distinct keys come back shared while its
+    /// notes stand, an edit rebuilds them, and another pattern's entry is untouched.
+    #[test]
+    fn pattern_pitch_cache_tracks_edits() {
+        use std::rc::Rc;
+        let mut app = App::new(None);
+        app.state.project = test_project();
+        app.state.project.patterns.push(os_model::Pattern { number: 2, ..Default::default() });
+        let key = |app: &App| app.state.playlist.note_pitches(2, app.state.project.pattern(2).unwrap());
+        let first = key(&app);
+        assert!(first.is_empty(), "an empty pattern previews nothing");
+        let p = &mut app.state.project.patterns[1];
+        p.notes = [60u16, 60, 72, 65].iter().map(|&k| os_model::Note { key: k, ..os_model::Note::step(0, 0) }).collect();
+        let second = key(&app);
+        assert_eq!(&*second, &[60, 65, 72], "sorted distinct keys");
+        assert!(!Rc::ptr_eq(&first, &second), "an edit rebuilt the list");
+        let again = key(&app);
+        assert!(Rc::ptr_eq(&second, &again), "no rebuild while the notes stand");
+    }
+
+    /// Audio to MIDI (issue #64): a conversion's notes land in a new named pattern on the clip's channel, at the
+    /// project's tempo, and the pattern is selected; an empty detection adds nothing.
+    #[test]
+    fn audio_to_midi_builds_a_pattern() {
+        let mut app = App::new(None);
+        app.state.project = test_project();
+        let ch = app.state.project.channels[0].index;
+        let done = crate::pitch_job::Done {
+            name: "Take 1.wav".into(),
+            ch,
+            notes: vec![
+                crate::pitch_job::NoteOut { start: 0.0, end: 0.5, key: 69 },
+                crate::pitch_job::NoteOut { start: 0.5, end: 1.0, key: 60 },
+            ],
+        };
+        app.pitch_done(Some(done));
+        let n = app.state.pattern;
+        let p = app.state.project.pattern(n).unwrap();
+        assert_eq!(p.name.as_deref(), Some("Take 1 MIDI"));
+        assert_eq!(p.notes.len(), 2);
+        assert!(p.notes[0].position < p.notes[1].position, "sorted");
+        assert_eq!(p.notes[0].key, 69);
+        assert_eq!(p.notes[1].key, 60);
+        assert_eq!(p.notes[0].channel, ch, "the clip's channel");
+        let tempo = app.state.project.tick_tempo(130.0);
+        assert_eq!(p.notes[0].length, (0.5 * tempo / 60.0 * 96.0).round() as u32);
+        // An empty detection says so and adds no pattern.
+        let before = app.state.project.patterns.len();
+        app.pitch_done(Some(crate::pitch_job::Done { name: "Silence".into(), ch, notes: vec![] }));
+        assert_eq!(app.state.project.patterns.len(), before);
+        assert_eq!(app.state.message, Some("No pitches found in Silence".into()));
+    }
+
+    /// A 16-bit mono PCM WAV file of `hz` for `secs`, for the conversion tests.
+    fn write_sine_wav(path: &std::path::Path, hz: f64, secs: f64) {
+        use std::io::Write;
+        let rate = 44100u32;
+        let n = (rate as f64 * secs) as usize;
+        let mut b = Vec::with_capacity(44 + n * 2);
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&((36 + n * 2) as u32).to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&rate.to_le_bytes());
+        b.extend_from_slice(&rate.to_le_bytes());
+        b.extend_from_slice(&2u16.to_le_bytes());
+        b.extend_from_slice(&16u16.to_le_bytes());
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&(n as u32 * 2).to_le_bytes());
+        for i in 0..n {
+            let s = (0.5 * (std::f64::consts::TAU * hz * i as f64 / rate as f64).sin()) as f32;
+            let v = (s * 32767.0) as i16;
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        std::fs::write(path, b).unwrap();
+        let _ = Write::flush(&mut std::io::sink());
+    }
+
+    /// The whole path (issue #64): a WAV of a pure A4 converts through the job's thread into the pattern's note,
+    /// from the audio clip's own menu entry.
+    #[test]
+    fn a_sample_converts_through_the_job() {
+        let path = std::env::temp_dir().join(format!("os_pitch_{}.wav", std::process::id()));
+        write_sine_wav(&path, 440.0, 1.0);
+        let Ok(mut c) = Canvas::new(1920, 1080, 1.0) else { return };
+        let mut app = App::new(None);
+        app.state.project = test_project();
+        let clip = crate::playlist::add_audio_clip(&mut app.state, &path.to_string_lossy(), 0, 0).expect("the clip");
+        let m = crate::pitch_job::clip_to_midi(&mut app, clip);
+        assert!(m.contains("Converting"), "{m}");
+        for _ in 0..300 {
+            app.tick();
+            if app.state.pitch_job.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(app.state.pitch_job.is_none(), "the job finished");
+        let n = app.state.pattern;
+        let p = app.state.project.pattern(n).expect("the new pattern");
+        assert_eq!(p.name.as_deref().map(|x| x.ends_with(" MIDI")), Some(true));
+        assert_eq!(p.notes.len(), 1, "one steady note: {:?}", p.notes);
+        assert_eq!(p.notes[0].key, 69, "A4");
+        let _ = std::fs::remove_file(&path);
+    }
+
     /// Every knob and fader the main window draws (toolbar, mixer, its equaliser and sends, channel rack) goes back to
     /// its default with a middle click and with Reset, the first entry of its right-click menu (spec: ui/knobs.md,
     /// ui/mixer.md §6.3, ui/channel-rack.md §19).
@@ -14504,6 +14694,29 @@ mod tests {
         assert_eq!(sub(&app), Some((Some(0), [0, 2])));
     }
 
+    /// A submenu that would not fit to the right of its parent opens to the left of it instead of clamped
+    /// back on top of the parent menu (issue #138); with room it stays to the right.
+    #[test]
+    fn submenu_near_the_right_edge_opens_left() {
+        use crate::playlist::{Cmd, PItem, Popup};
+        let Ok(mut c) = Canvas::new(1920, 1080, 1.0) else { return };
+        let mut app = App::new(None);
+        let menu = || Popup { x: 300.0, y: 200.0, items: vec![PItem::sub("Big", vec![PItem::new("Sub", Cmd::Nothing)])], sub: Some(0), scroll: [0; 2] };
+        // Room to the right: the submenu sits to the right of the parent row.
+        app.state.playlist.popup = Some(menu());
+        frame(&mut app, &mut c, None);
+        let row = hit_rect(&app, &Action::PlPopup(0));
+        let sub = hit_rect(&app, &Action::PlPopupSub(0));
+        assert!(sub.x >= row.right() - 1.0, "to the right with room: {} vs {}", sub.x, row.right());
+        // Anchored past the right edge (the parent itself is clamped on screen): flipped to the left of the parent.
+        app.state.playlist.popup = Some(Popup { x: 1850.0, ..menu() });
+        frame(&mut app, &mut c, None);
+        let row = hit_rect(&app, &Action::PlPopup(0));
+        let sub = hit_rect(&app, &Action::PlPopupSub(0));
+        assert!(sub.right() <= row.x + 1.0, "left of the parent: {} vs {}", sub.right(), row.x);
+        assert!(sub.x >= 0.0, "still on screen");
+    }
+
     /// Clicks on the drawn picker: a category's row opens its list, a plugin's arrow there its variants.
     #[test]
     fn picker_clicks_open_a_category_and_variants() {
@@ -15440,8 +15653,18 @@ mod tests {
         let r0 = hit_rect(&app, &Action::BrowserTab(2));
         click(&mut app, &mut c, r0);
         let si = rows(&app.state).iter().position(|r| r.item == Item::Generator(0)).expect("sampler row");
+        // The families grew (issue #116's plugins among them): the row can sit below the fold, so scroll it in.
+        let src = 'src: {
+            for _ in 0..24 {
+                if let Some(h) = app.hits.iter().rev().find(|h| h.action == Action::BrowserRow(si)) {
+                    break 'src h.rect;
+                }
+                app.state.browser_scroll = (app.state.browser_scroll + 200.0).min(crate::views::browser::max_scroll(&app.state));
+                frame(&mut app, &mut c, None);
+            }
+            panic!("the sampler row never came into view");
+        };
         let ch0 = app.state.project.channels.len();
-        let src = hit_rect(&app, &Action::BrowserRow(si));
         app.mouse_move(src.cx(), src.cy());
         app.mouse_down();
         app.mouse_move(grid.x + 200.0, grid.y + 60.0);

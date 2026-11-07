@@ -353,6 +353,7 @@ pub fn builtin() -> Vec<Available> {
     static DX: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static AUTOGUN: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static DRUMS: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static MODDRUM: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static KEYS: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static MONK: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static SURFACE: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
@@ -381,6 +382,8 @@ pub fn builtin() -> Vec<Available> {
     v.extend(linked(&DX, &lemon_dx::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango DX"));
     v.extend(linked(&AUTOGUN, &lemon_autogun::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Autogun"));
     v.extend(linked(&DRUMS, &lemon_drums::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Drums"));
+    // The all-in-one drum machine (issue #93): five synthesized drums at once, the 808 / 909 kits over them.
+    v.extend(linked(&MODDRUM, &lemon_module_drum::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango ModuleDrum"));
     v.extend(linked(&KEYS, &lemon_keys::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Keys"));
     // The electric guitar (a recreation of FL's Slayer): strings a pickup reads, an amp behind them.
     v.extend(linked(&SLAYER, &mango_slayer::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Slayer"));
@@ -428,6 +431,8 @@ pub fn builtin_effects() -> Vec<Available> {
         &lemon_delay::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
         &lemon_soft_clipper::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
         &lemon_fast_distortion::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
+        &lemon_oneknob::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
+        &lemon_otter::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
         &lemon_balance::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
         &lemon_stereo_enhancer::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
         &lemon_transient_processor::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void,
@@ -1718,12 +1723,14 @@ pub const LEMON_EQ: &str = "Mango Parametric EQ";
 /// Lemon Studio's effects compiled in besides the EQ (`builtin_effects`, in this order). They have no file plugin of
 /// their own to be stored as, so a project stores them wrapped, as it stored their plugin files
 /// (`project_plugins::is_wrapped`).
-pub const LINKED_EFFECTS: [&str; 21] = [
+pub const LINKED_EFFECTS: [&str; 23] = [
     "Mango Limiter",
     "Mango Reverb",
     "Mango Delay",
     "Mango Soft Clipper",
     "Mango Fast Distortion",
+    "Mango Oneknob",
+    "Mango OTTER",
     "Mango Balance",
     "Mango Stereo Enhancer",
     "Mango Transient Processor",

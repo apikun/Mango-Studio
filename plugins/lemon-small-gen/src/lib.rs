@@ -25,6 +25,7 @@ pub mod flex;
 pub mod boobass;
 pub mod fruit_kick;
 pub mod lemon_boom;
+pub mod module_drum;
 pub mod autogun;
 pub mod drums;
 pub mod dx;

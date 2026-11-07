@@ -70,6 +70,7 @@ mod osc3;
 mod citrus;
 mod monitor;
 mod palette;
+mod pitch_job;
 mod params;
 mod piano;
 mod piano_snap;

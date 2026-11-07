@@ -1047,8 +1047,9 @@ fn sep_knob(ui: &mut Ui, s: &State, n: u16, x: f32, y: f32, r: f32, halo: f32) {
 }
 
 /// Fader: track, gain marks, handle (green on the selected strip, with the track lit below it). In the Mango skin the
-/// track is a rounded trough and the level below the handle a rounded bar, as the logo's equalizer bars: bright on the
-/// selected strip, softer on the others. `ys` maps a value to the handle's y; `marks` draws the gain marks.
+/// track is a rounded trough: a dim level bar runs down it from the cap, and the cap is the wide light handle with its
+/// centre line, as FL's fader is (issue #151), brighter on the selected strip. `ys` maps a value to the handle's y;
+/// `marks` draws the gain marks.
 #[allow(clippy::too_many_arguments)]
 fn fader(ui: &mut Ui, s: &State, n: u16, f: &FrameInfo, mx: f32, y0: f32, track_y1: f32, ys: &dyn Fn(f32) -> f32, marks: bool) {
     let t = ui.t;
@@ -1069,15 +1070,18 @@ fn fader(ui: &mut Ui, s: &State, n: u16, f: &FrameInfo, mx: f32, y0: f32, track_
     let hy = ys(v).min(track_y1 - 5.0).max(y0 + 5.0);
     let hov = ui.hit(Rect::new(mx - 9.0, y0 - 5.0, 18.0, track_y1 - y0 + 10.0), Action::Fader(n), mx::level_text("Volume", f64::from(v)));
     if lemon {
-        // The bar is the fader: its rounded top, as the logo's bars end, is where it is held; no separate cap.
-        let r = 6.0;
-        let bar = Rect::new(mx - r, hy - r, 2.0 * r, (track_y1 - 1.0 - (hy - r)).max(2.0 * r));
+        // FL's fader (issue #151): a dim level bar runs down the trough from the cap, and the cap is the wide light
+        // handle with its centre line, brighter on the selected strip and under the pointer.
         let main = t.brand_sel(os_theme::design::lemon::MAIN);
-        // Flat mango: full on the selected strip and while held; softer on the others, a little brighter under the pointer.
         let held = f.fader_drag == Some(n);
         let col = if selected || held { main } else { main.mix(ui.t.s(0x141618), 0.35) };
         let lift = if held { 0.07 } else if hov { 0.12 } else { 0.0 };
-        ui.c.fill_rrect(bar, r, col.shade(lift));
+        let level = Rect::new(mx - 4.0, hy, 8.0, (track_y1 - 1.0 - hy).max(0.0));
+        ui.c.fill_rrect(level, 4.0, col.mix(ui.t.s(0x141618), 0.5));
+        let cap = Rect::new(mx - 10.0, hy - 6.0, 20.0, 12.0);
+        let cap_c = if selected || held { ui.t.s(0xdde5ea) } else { ui.t.s(0x9aa6ad) };
+        ui.c.fill_rrect(cap, 6.0, cap_c.shade(lift));
+        ui.c.fill_rect(Rect::new(cap.x + 3.0, hy - 0.75, cap.w - 6.0, 1.5), ui.t.s(0x2a3034));
     } else {
         if selected {
             ui.c.fill_rect(Rect::new(mx - 1.0, hy, 2.0, track_y1 - hy), ui.t.a(0x8ec63a));

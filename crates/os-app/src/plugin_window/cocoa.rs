@@ -902,7 +902,9 @@ impl Frame {
         self.wheel.set(total - notches);
         if notches != 0.0 {
             let (x, y) = self.local(e);
-            let r = self.state.borrow_mut().wheel(x, y, notches);
+            // Ctrl or Cmd takes the fine step, as the drag does.
+            let ctrl = e.modifierFlags().intersects(NSEventModifierFlags::Control | NSEventModifierFlags::Command);
+            let r = self.state.borrow_mut().wheel(x, y, notches, ctrl);
             self.reply(r);
         }
     }
