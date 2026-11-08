@@ -414,15 +414,31 @@ pub mod plug {
     pub const STRIP_LINE: Color = Color::rgb(0x090909);
 }
 
-/// Plugin knob, as a bar: a narrow dark slot as tall as the knob's diameter, filled from the bottom with `arc`'s gradient up
-/// to the value (from the middle outwards when `bipolar`), `r` = the knob's
-/// radius (the bar's height is twice it), `w` is kept for the callers and unused. Disabled: an empty slot.
+/// Plugin knob: a full track ring, the value as an arc in `arc` over 270° (from the centre when `bipolar`), a dark disc
+/// and a light pointer. `r` = outer radius, `w` = ring width. Disabled: no arc, a faint pointer.
 #[allow(clippy::too_many_arguments)]
-pub fn dial(c: &mut Canvas, cx: f32, cy: f32, r: f32, _w: f32, value: f32, bipolar: bool, arc: Color, st: State) {
-    bar_knob(c, cx, cy, r, value, bipolar, arc, st);
+pub fn dial(c: &mut Canvas, cx: f32, cy: f32, r: f32, w: f32, value: f32, bipolar: bool, arc: Color, st: State) {
+    let v = value.clamp(0.0, 1.0);
+    let (start, sweep) = (0.75 * PI, 1.5 * PI);
+    let a = start + sweep * v;
+    let ring = r - w / 2.0;
+    c.arc(cx, cy, ring, start, sweep, w, plug::TRACK);
+    let a0 = if bipolar { start + sweep / 2.0 } else { start };
+    if !st.disabled && (a - a0).abs() > 0.01 {
+        let col = if st.hover || st.pressed { arc.mix(Color::rgb(0xffffff), 0.2) } else { arc };
+        c.arc(cx, cy, ring, a0.min(a), (a - a0).abs(), w, col);
+    }
+    let disc = r - w - 1.5;
+    dial_disc(c, cx, cy, disc, st);
+    let pc = if st.disabled { plug::FAINT } else { Color::rgb(0xe6e6e6) };
+    let (p0, p1) = (disc * 0.25, (disc - 1.5).max(1.0));
+    c.line(cx + p0 * a.cos(), cy + p0 * a.sin(), cx + p1 * a.cos(), cy + p1 * a.sin(), (disc * 0.22).clamp(1.4, 2.2), pc);
 }
 
-/// The bar of `dial`: see there.
+/// The plugin knob as a bar (the round [`dial`] is what the editors use): a narrow dark slot as tall as the knob's
+/// diameter, filled from the bottom with `arc`'s gradient up to the value (from the middle outwards when `bipolar`), a
+/// thin light line at the value's edge. `r` = the knob's radius (the bar's height is twice it), `w` is kept for the
+/// callers and unused. Disabled: an empty slot.
 #[allow(clippy::too_many_arguments)]
 pub fn bar_knob(c: &mut Canvas, cx: f32, cy: f32, r: f32, value: f32, bipolar: bool, arc: Color, st: State) {
     let v = value.clamp(0.0, 1.0);
