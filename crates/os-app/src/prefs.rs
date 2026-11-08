@@ -85,7 +85,7 @@ pub struct Slider {
     pub unit: &'static str,
 }
 
-/// General ▸ Display: the UI's scale. Auto = the monitor's, smaller on monitors over 1080 px tall (`crate::gui_scale`);
+/// General ▸ Display: the UI's scale. Auto = the monitor's, smaller only on screens under 1000 px tall (`crate::gui_scale`);
 /// System = the monitor's (the operating system's); a percentage replaces it.
 /// Read by `crate::gui_scale` at every event and paint, so it applies at once (FL needs a restart). Spec:
 /// ui/ui-scaling.md §1.

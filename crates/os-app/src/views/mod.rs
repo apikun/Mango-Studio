@@ -194,7 +194,7 @@ pub fn palette_rect(s: &State) -> Option<Rect> {
     (s.bar.editing && !s.toolbar.hidden).then(|| scale_rect(toolbar::palette(s, s.screen.0 / k).rect, k))
 }
 /// Width of the docked browser incl. the splitter (§4): the default, and the least its splitter drags it to.
-pub const BROWSER_W: f32 = 209.0;
+pub const BROWSER_W: f32 = 370.0;
 
 /// Width of the docked browser incl. the splitter, as dragged (`State::browser_w`), at most half the window (spec:
 /// ui/browser.md §9).

@@ -42,6 +42,10 @@ const INK_DIM: Color = Color::rgb(0x39425a);
 const WELL: Color = Color::rgb(0x273041);
 const GRID: Color = Color::rgb(0x36425a);
 const WAVE_INK: Color = Color::rgb(0xa5b8da);
+/// Deck B's wave, behind deck A's.
+const WAVE_INK_B: Color = Color::rgb(0xf0a040);
+/// Levels a column of the spectrum picture has, from the top (the highest frequencies) down.
+pub const SPEC_ROWS: usize = 44;
 const LIGHT: Color = Color::rgb(0xe3e7ef);
 const SOFT: Color = Color::rgb(0xaab4c8);
 const KEY_WHITE: Color = Color::rgb(0xe6e9ef);
@@ -188,6 +192,10 @@ pub struct Look<'a> {
     pub rate: u32,
     /// The waveform's low and high per column of `WAVE` (empty = no sample).
     pub peaks: &'a [(f32, f32)],
+    /// The spectrum picture (`spectrum::spectrogram`, `SPEC_ROWS` rows per column; empty unless it is switched on) and
+    /// deck B's columns (empty unless the decks' waves are switched on).
+    pub spec: &'a [u8],
+    pub peaks_b: &'a [(f32, f32)],
     /// The dump is offered (hosted by Lemon Studio, a loop with slices), and the plugin is hosted at all.
     pub can_dump: bool,
     pub hosted: bool,
@@ -897,8 +905,12 @@ const fn menu_cell(i: usize) -> Rect {
 const fn edit_cell(i: usize) -> Rect {
     Rect::new(404.0 + 22.5 * i as f32, TB_Y, 21.0, TB_H)
 }
-const fn switch_cell(i: usize) -> Rect {
-    Rect::new(630.0 + 17.0 * i as f32, 380.0, 16.0, 16.0)
+/// The info strip's switches, left to right, as indices into `SWITCHES`: Scrub, Deck display, Wave / spectrum, Auto-scroll
+/// and, last (as it was alone before), Click-free editing.
+const SWITCH_ORDER: [usize; 5] = [0, 1, 2, 4, 3];
+
+const fn switch_cell(slot: usize) -> Rect {
+    Rect::new(562.0 + 17.0 * slot as f32, 380.0, 16.0, 16.0)
 }
 
 /// Draws a glyph in `r`.
@@ -1099,11 +1111,11 @@ fn toolbar(ui: &mut Ui, look: &Look) {
         glyph(ui, r, g, Color::rgb(0xf2f4f8));
         ui.hit(r, t);
     }
-    // The menus; the ones that do something already are lit up, the rest wait for the sample editor.
+    // The nine menus of the sample editor.
     for (i, g) in MENU_GLYPHS.iter().enumerate() {
         icon_button(ui, menu_cell(i), Target::Ext(Ctl::Menu(i as u8)), *g, true, true, false);
     }
-    // The sample edit functions: auto-slice and dump score work, the others are not built yet.
+    // The sample edit functions (`EDITS`); the script button, whose menu runs a script over all regions, is lit.
     for (i, g) in EDIT_GLYPHS.iter().enumerate() {
         // Bright as the original's whether or not a loop is loaded; with none, a press says to load one.
         let enabled = true;
@@ -1154,15 +1166,19 @@ fn info(ui: &mut Ui, look: &Look) {
     ui.c.text_clip(LABEL, 250.0, 383.0, 226.0, LIGHT, &name);
     ui.c.text(cap, BEATS_BOX.x, 372.0, dim, "LENGTH / SEL");
     value_text(ui, BEATS_BOX, Target::Beats, &if has { format!("{:.2}", look.state.beats()) } else { String::new() }, has);
-    // Click-free editing: a join of two pieces of audio gets a short fade.
-    let r = switch_cell(0);
-    let t = Target::Ext(Ctl::Info(3));
-    let on = look.ext.click_free;
-    if ui.hover(r, &t) {
-        ui.c.fill_circle(r.cx(), r.cy(), 9.0, Color::rgb(0x434d66));
+    // The switches: scrub, the decks' waves, the spectrum, auto-scroll and click-free editing (a join of two pieces of audio
+    // gets a short fade).
+    let x = look.ext;
+    let states = [x.scrub, x.deck_view, x.spectrum, x.click_free, x.auto_scroll];
+    for (slot, &i) in SWITCH_ORDER.iter().enumerate() {
+        let r = switch_cell(slot);
+        let t = Target::Ext(Ctl::Info(i as u8));
+        if ui.hover(r, &t) {
+            ui.c.fill_circle(r.cx(), r.cy(), 9.0, Color::rgb(0x434d66));
+        }
+        glyph(ui, r, SWITCH_GLYPHS[i], if states[i] { Color::rgb(0xe3e7ef) } else { Color::rgb(0x707a92) });
+        ui.hit(r, t);
     }
-    glyph(ui, r, Gl::ClickFree, if on { Color::rgb(0xe3e7ef) } else { Color::rgb(0x707a92) });
-    ui.hit(r, t);
 }
 
 /// The loop in its well: the waveform, the slices' lines (the chosen slice lit), their numbers along the top.
@@ -1191,10 +1207,31 @@ fn well(ui: &mut Ui, look: &Look, hint: &str) {
         }
         let mid = WAVE.cy();
         let half = WAVE.h / 2.0 - 2.0;
-        for (i, &(lo, hi)) in look.peaks.iter().enumerate() {
-            let x = WAVE.x + i as f32;
-            let (y0, y1) = ((mid - hi.clamp(-1.0, 1.0) * half).floor(), (mid - lo.clamp(-1.0, 1.0) * half).ceil());
-            ui.c.fill_rect(Rect::new(x, y0, 1.0, (y1 - y0).max(1.0)), WAVE_INK);
+        let wave = |ui: &mut Ui, peaks: &[(f32, f32)], ink: Color| {
+            for (i, &(lo, hi)) in peaks.iter().enumerate() {
+                let x = WAVE.x + i as f32;
+                let (y0, y1) = ((mid - hi.clamp(-1.0, 1.0) * half).floor(), (mid - lo.clamp(-1.0, 1.0) * half).ceil());
+                ui.c.fill_rect(Rect::new(x, y0, 1.0, (y1 - y0).max(1.0)), ink);
+            }
+        };
+        if look.ext.spectrum && !look.spec.is_empty() {
+            // The spectrum: a column of levels for each column of the wave, the highest frequencies on top.
+            let rh = WAVE.h / SPEC_ROWS as f32;
+            for (c, col) in look.spec.chunks(SPEC_ROWS).enumerate() {
+                for (r, &v) in col.iter().enumerate() {
+                    if v < 6 {
+                        continue;
+                    }
+                    let (cr, cg, cb) = crate::spectrum::colour(v);
+                    let rgb = (u32::from(cr) << 16) | (u32::from(cg) << 8) | u32::from(cb);
+                    ui.c.fill_rect(Rect::new(WAVE.x + c as f32, WAVE.y + rh * r as f32, 1.0, rh.ceil()), Color::rgb(rgb));
+                }
+            }
+        } else {
+            if look.ext.deck_view {
+                wave(ui, look.peaks_b, WAVE_INK_B.with_alpha(150));
+            }
+            wave(ui, look.peaks, WAVE_INK);
         }
         // The selection: a lighter band with its edges.
         if let Some((a, b)) = ui.st.range.filter(|(a, b)| a != b) {

@@ -252,9 +252,11 @@ impl Tap {
 #[derive(Default)]
 struct TrackPeaks {
     now: Vec<[f32; 2]>,
-    ticks: std::collections::VecDeque<(u64, Vec<[f32; 2]>)>,
+    now_bands: Vec<[f32; 3]>,
+    ticks: std::collections::VecDeque<(u64, Vec<[f32; 2]>, Vec<[f32; 3]>)>,
     /// Emptied vectors to use again, so rendering does not allocate once it runs.
     spare: Vec<Vec<[f32; 2]>>,
+    spare_bands: Vec<Vec<[f32; 3]>>,
 }
 
 /// Ticks of peaks `TrackPeaks` keeps waiting (some seconds of the fastest ticks); older ones are read at once.
@@ -266,7 +268,10 @@ impl TrackPeaks {
         let mut v = self.spare.pop().unwrap_or_default();
         v.clear();
         e.take_track_peaks(&mut v);
-        self.ticks.push_back((frame, v));
+        let mut b = self.spare_bands.pop().unwrap_or_default();
+        b.clear();
+        e.take_track_bands(&mut b);
+        self.ticks.push_back((frame, v, b));
         while self.ticks.len() > PEAK_TICKS {
             self.release();
         }
@@ -274,19 +279,23 @@ impl TrackPeaks {
 
     /// Moves the oldest waiting tick's peaks to `now`.
     fn release(&mut self) {
-        let Some((_, v)) = self.ticks.pop_front() else { return };
+        let Some((_, v, b)) = self.ticks.pop_front() else { return };
         merge(&mut self.now, &v);
+        merge_bands(&mut self.now_bands, &b);
         self.spare.push(v);
+        self.spare_bands.push(b);
     }
 
     /// The peaks heard up to output frame `heard` (`None`: all of them, nothing is playing) since the last call.
-    fn take(&mut self, heard: Option<u64>) -> Vec<[f32; 2]> {
-        while self.ticks.front().is_some_and(|(f, _)| heard.is_none_or(|h| *f <= h)) {
+    fn take(&mut self, heard: Option<u64>) -> (Vec<[f32; 2]>, Vec<[f32; 3]>) {
+        while self.ticks.front().is_some_and(|(f, _, _)| heard.is_none_or(|h| *f <= h)) {
             self.release();
         }
         let out = self.now.clone();
+        let out_b = self.now_bands.clone();
         self.now.iter_mut().for_each(|p| *p = [0.0; 2]);
-        out
+        self.now_bands.iter_mut().for_each(|b| *b = [0.0; 3]);
+        (out, out_b)
     }
 }
 
@@ -295,8 +304,20 @@ fn merge(into: &mut Vec<[f32; 2]>, from: &[[f32; 2]]) {
     if into.len() < from.len() {
         into.resize(from.len(), [0.0; 2]);
     }
-    for (o, p) in into.iter_mut().zip(from) {
-        (o[0], o[1]) = (o[0].max(p[0]), o[1].max(p[1]));
+    for (a, b) in into.iter_mut().zip(from) {
+        a[0] = a[0].max(b[0]);
+        a[1] = a[1].max(b[1]);
+    }
+}
+
+fn merge_bands(into: &mut Vec<[f32; 3]>, from: &[[f32; 3]]) {
+    if into.len() < from.len() {
+        into.resize(from.len(), [0.0; 3]);
+    }
+    for (a, b) in into.iter_mut().zip(from) {
+        a[0] += b[0];
+        a[1] += b[1];
+        a[2] += b[2];
     }
 }
 
@@ -527,6 +548,12 @@ impl Transport {
 
     /// Peak per mixer track (L, R) heard since the last call (the mixer meters' feed); resets them.
     pub fn take_track_peaks(&self) -> Vec<[f32; 2]> {
+        let heard = self.paced().map(|p| p.played(Instant::now()));
+        self.shared.tracks.lock().map(|mut t| t.take(heard).0).unwrap_or_default()
+    }
+
+    /// Peak and three-band tones per mixer track heard since the last call.
+    pub fn take_track_peaks_and_bands(&self) -> (Vec<[f32; 2]>, Vec<[f32; 3]>) {
         let heard = self.paced().map(|p| p.played(Instant::now()));
         self.shared.tracks.lock().map(|mut t| t.take(heard)).unwrap_or_default()
     }
@@ -1103,6 +1130,7 @@ impl Feeder {
             }
             if let Ok(mut t) = self.shared.tracks.lock() {
                 e.take_track_peaks(&mut t.now);
+                e.take_track_bands(&mut t.now_bands);
             }
         }
         // So does the tempo shown.
@@ -2748,14 +2776,18 @@ mod tests {
     #[test]
     fn track_peaks_wait_to_be_heard() {
         let mut t = TrackPeaks::default();
-        t.ticks.push_back((0, vec![[0.5, 0.25]]));
-        t.ticks.push_back((1000, vec![[0.75, 0.0], [0.1, 0.1]]));
-        assert_eq!(t.take(Some(500)), vec![[0.5, 0.25]], "only the tick heard");
-        assert_eq!(t.take(Some(900)), vec![[0.0, 0.0]], "nothing new heard");
-        assert_eq!(t.take(Some(1000)), vec![[0.75, 0.0], [0.1, 0.1]]);
-        t.ticks.push_back((2000, vec![[0.3, 0.3]]));
+        t.ticks.push_back((0, vec![[0.5, 0.25]], vec![[1.0, 2.0, 3.0]]));
+        t.ticks.push_back((1000, vec![[0.75, 0.0], [0.1, 0.1]], vec![[0.5, 0.5, 0.5], [4.0, 0.0, 0.0]]));
+        let (peaks, bands) = t.take(Some(500));
+        assert_eq!(peaks, vec![[0.5, 0.25]], "only the tick heard");
+        assert_eq!(bands, vec![[1.0, 2.0, 3.0]], "its three bands with it");
+        assert_eq!(t.take(Some(900)).0, vec![[0.0, 0.0]], "nothing new heard");
+        let (peaks, bands) = t.take(Some(1000));
+        assert_eq!(peaks, vec![[0.75, 0.0], [0.1, 0.1]]);
+        assert_eq!(bands, vec![[0.5, 0.5, 0.5], [4.0, 0.0, 0.0]]);
+        t.ticks.push_back((2000, vec![[0.3, 0.3]], vec![]));
         merge(&mut t.now, &[[0.0, 0.9]]);
-        assert_eq!(t.take(None), vec![[0.3, 0.9], [0.0, 0.0]], "stopped: everything, live notes' too");
+        assert_eq!(t.take(None).0, vec![[0.3, 0.9], [0.0, 0.0]], "stopped: everything, live notes' too");
         assert_eq!(t.spare.len(), 3, "their vectors are used again");
     }
 

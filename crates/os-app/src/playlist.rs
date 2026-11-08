@@ -874,8 +874,18 @@ impl PlaylistState {
                 .collect();
             Rc::new(Wave::new(s.rate, s.frames(), per, peaks))
         });
-        self.waves.borrow_mut().insert(path.to_string(), w.clone());
+        // A sample can be requested while an asynchronous import is still writing it. Do not
+        // cache a failed read: the next paint should retry once the file is ready.
+        if w.is_some() {
+            self.waves.borrow_mut().insert(path.to_string(), w.clone());
+        }
         w
+    }
+
+    /// Forget a sample's cached waveform after an asynchronous import replaces its placeholder file.
+    pub fn forget_wave(&mut self, path: &str) {
+        self.waves.get_mut().remove(path);
+        self.tones.get_mut().remove(path);
     }
 
     /// The tones of a sample path, block by block (spec: ui/settings-choices.md "Display: Colorful waveforms
@@ -2325,11 +2335,40 @@ pub fn add_layer_channel(s: &mut State) -> usize {
 /// Add an audio clip channel for a sample file and place it at `tick` on `track` (§9). The channel's colour comes from
 /// `State::clip_colors`.
 pub fn add_audio_clip(s: &mut State, path: &str, track: u16, tick: u32) -> Option<usize> {
-    add_audio_clip_as(s, path, track, tick, "Playlist edit")
+    add_audio_clip_named(s, path, track, tick, None)
+}
+
+/// Add an audio clip with an optional display name (used for downloaded Freesound previews).
+pub fn add_audio_clip_named(s: &mut State, path: &str, track: u16, tick: u32, display_name: Option<&str>) -> Option<usize> {
+    s.playlist.wave(path)?;
+    add_audio_clip_as_named(s, path, track, tick, "Playlist edit", display_name)
+}
+
+/// Finish an asynchronous Freesound drop by swapping the placeholder channel to the downloaded audio and expanding
+/// any untouched placeholder clips to the sample's full length.
+pub fn finish_audio_clip_drop(s: &mut State, channel: u16, placeholder_len: u32, path: &str, seconds: f32) -> bool {
+    let Some(ch) = s.project.channels.iter_mut().find(|c| c.index == channel && c.kind == ChannelKind::AudioClip) else { return false };
+    let old = ch.sample_path.replace(path.to_string());
+    if let Some(old) = old { s.playlist.forget_wave(&old); }
+    let length = (f64::from(seconds.max(0.0)) * f64::from(s.project.tick_tempo(s.tempo.max(1.0)) / 60.0) * f64::from(ppq(s)))
+        .round().clamp(1.0, f64::from(u32::MAX)) as u32;
+    let mut changed = false;
+    for arrangement in &mut s.project.arrangements {
+        for clip in arrangement.clips.iter_mut().filter(|c| c.source == ClipSource::Channel(channel) && c.length == placeholder_len && c.window.is_none()) {
+            clip.length = length;
+            changed = true;
+        }
+    }
+    if changed { s.piano.dirty = true; }
+    true
 }
 
 /// `add_audio_clip` as the undo step `name` (One-click audio recording's "Recorded items").
 pub fn add_audio_clip_as(s: &mut State, path: &str, track: u16, tick: u32, name: &'static str) -> Option<usize> {
+    add_audio_clip_as_named(s, path, track, tick, name, None)
+}
+
+fn add_audio_clip_as_named(s: &mut State, path: &str, track: u16, tick: u32, name: &'static str, display_name: Option<&str>) -> Option<usize> {
     s.playlist.wave(path)?;
     // The step holds the rack side too, so the audio clip channel comes and goes with the clip, as Add audio clip's
     // does (`add_clip_channel`): the playlist snapshot alone would leave the channel behind on an undo.
@@ -2337,7 +2376,7 @@ pub fn add_audio_clip_as(s: &mut State, path: &str, track: u16, tick: u32, name:
     let before = crate::history::Snap::Rack(Box::new(crate::history::RackSide::now(s, row)));
     snapshot_with(s, name, before);
     let index = s.project.channels.iter().map(|c| c.index + 1).max().unwrap_or(0);
-    let name = std::path::Path::new(path).file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Audio".into());
+    let name = display_name.map(str::to_owned).unwrap_or_else(|| std::path::Path::new(path).file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Audio".into()));
     let mixer_track = (s.project.channels.iter().map(|c| c.mixer_track).max().unwrap_or(0) + 1).min(crate::mixer::max_insert(&s.project));
     s.project.channels.push(Channel {
         index,

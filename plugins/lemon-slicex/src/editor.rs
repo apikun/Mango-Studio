@@ -348,6 +348,11 @@ pub struct Logic {
     playing: Option<u8>,
     /// The waveform's columns and the kit version they were made for.
     peaks: (u64, (f64, f64), Vec<(f32, f32)>),
+    /// The spectrum picture (`spectrum::spectrogram`) and deck B's columns, made again when the sample or the view changes.
+    spec: (u64, (f64, f64), Vec<u8>),
+    peaks_b: (u64, (f64, f64), Vec<(f32, f32)>),
+    /// The slice the wave last followed (auto-scroll).
+    followed: Option<usize>,
     /// A knob of the added panels being dragged (its control and position), and whether the pad is.
     ext_drag: Option<(Ctl, f32)>,
     pad_drag: bool,
@@ -376,7 +381,7 @@ pub struct Logic {
 impl Logic {
     pub fn new(params: Arc<SlicexParams>, shared: Arc<Shared>, ctx: Option<Arc<dyn GuiContext>>) -> Self {
         let vals = Vals::new(&*params, params.live.clone(), ctx.clone());
-        Logic { vals, params, shared, view: ViewState::default(), hits: Vec::new(), drag: None, hint: String::new(), copied: None, hosted: false, playing: None, peaks: (u64::MAX, (0.0, 1.0), Vec::new()), ext_drag: None, pad_drag: false, load_deck: 0, graph_drag: None, wave_drag: None, history: Vec::new(), clip: None, edit_file: None, last_frame: None, loop_on: false, said: String::new(), ctx }
+        Logic { vals, params, shared, view: ViewState::default(), hits: Vec::new(), drag: None, hint: String::new(), copied: None, hosted: false, playing: None, peaks: (u64::MAX, (0.0, 1.0), Vec::new()), spec: (u64::MAX, (0.0, 1.0), Vec::new()), peaks_b: (u64::MAX, (0.0, 1.0), Vec::new()), followed: None, ext_drag: None, pad_drag: false, load_deck: 0, graph_drag: None, wave_drag: None, history: Vec::new(), clip: None, edit_file: None, last_frame: None, loop_on: false, said: String::new(), ctx }
     }
 
     pub fn dragging(&self) -> bool {
@@ -576,7 +581,13 @@ impl Logic {
             Ctl::Row(6) => self.edit_ext(|e| e.freeze = !e.freeze),
             Ctl::Row(7) => self.edit_ext(|e| e.snap = (e.snap + 1) % 3),
             Ctl::Row(8) => self.edit_ext(|e| e.slide = !e.slide),
-            Ctl::Info(_) => self.edit_ext(|e| e.click_free = !e.click_free),
+            Ctl::Info(n) => match n {
+                0 => self.edit_ext(|e| e.scrub = !e.scrub),
+                1 => self.edit_ext(|e| e.deck_view = !e.deck_view),
+                2 => self.edit_ext(|e| e.spectrum = !e.spectrum),
+                4 => self.edit_ext(|e| e.auto_scroll = !e.auto_scroll),
+                _ => self.edit_ext(|e| e.click_free = !e.click_free),
+            },
             Ctl::Scroll(d) => self.scroll(d),
             Ctl::Loop => self.loop_on = !self.loop_on,
             Ctl::Row(_) => {}
@@ -718,7 +729,10 @@ impl Logic {
                 9 => "Save the loop as a wave file".into(),
                 _ => "Send the loop to the playlist\tas an audio clip".into(),
             },
-            Ctl::Info(_) => format!("Click-free editing\t{}", tab(x.click_free)),
+            Ctl::Info(n) => {
+                let on = [x.scrub, x.deck_view, x.spectrum, x.click_free, x.auto_scroll][usize::from(n).min(4)];
+                format!("{}\t{}", view::SWITCHES[usize::from(n).min(4)], tab(on))
+            }
             Ctl::Scroll(d) => format!("Scroll {}", if d < 0 { "left" } else { "right" }),
             Ctl::Loop => format!("Loop\t{}", tab(self.loop_on)),
             Ctl::Row(i) => ["Zoom menu", "Whole loop in view", "Add or remove a marker", "Previous region", "Next region", "Show the regions", "Freeze the loop", "Snap", "Slide: a moved marker takes the later ones"][usize::from(i).min(8)].to_string(),
@@ -1761,6 +1775,19 @@ impl Logic {
     /// The wave drag follows the pointer at x.
     fn wave_to(&mut self, d: WaveDrag, x: f32) {
         let (frames, zoom) = (self.frames(), self.view.zoom);
+        // Scrub: the pointer drags over the wave and the slice under it sounds, as it changes.
+        if self.params.ext().scrub && matches!(d, WaveDrag::Pending { .. } | WaveDrag::Select { .. }) {
+            let st = self.state();
+            let i = slice_at(&st, view::frame_at(x, frames, zoom));
+            if i < st.slices.len() {
+                let key = u8::try_from(st.key_of(i)).ok().filter(|&k| k < 128);
+                if key != self.playing {
+                    self.view.chosen = i;
+                    self.play(key);
+                }
+            }
+            return;
+        }
         let f = self.snap(view::frame_at(x, frames, zoom));
         match d {
             WaveDrag::Pending { x0, frame0 } => {
@@ -1966,6 +1993,56 @@ impl Logic {
         &self.peaks.2
     }
 
+    /// The spectrum and deck B's columns, when their switches ask for them (made again when the sample or the view changed).
+    fn extra_views(&mut self) {
+        let v = self.shared.kit_version.load(Ordering::Acquire);
+        let zoom = view::zoom_of(self.view.zoom);
+        let ext = self.params.ext();
+        if ext.spectrum && (self.spec.0 != v || self.spec.1 != zoom) {
+            let cols = view::WAVE.w as usize;
+            let rows = view::SPEC_ROWS;
+            self.spec = (
+                v,
+                zoom,
+                self.shared.sample().map_or_else(Vec::new, |s| {
+                    let n = s.frames();
+                    let (a, b) = (((zoom.0 * n as f64) as usize).min(n), ((zoom.1 * n as f64).ceil() as usize).min(n));
+                    crate::spectrum::spectrogram(&s.left[a..b], &s.right[a..b], s.rate, cols, rows)
+                }),
+            );
+        }
+        if ext.deck_view && (self.peaks_b.0 != v || self.peaks_b.1 != zoom) {
+            let cols = view::WAVE.w as usize;
+            self.peaks_b = (
+                v,
+                zoom,
+                self.shared.sample_b().map_or_else(Vec::new, |s| {
+                    let n = s.frames();
+                    let (a, b) = (((zoom.0 * n as f64) as usize).min(n), ((zoom.1 * n as f64).ceil() as usize).min(n));
+                    peaks(&s.left[a..b], &s.right[a..b], cols)
+                }),
+            );
+        }
+    }
+
+    /// Auto-scroll: a zoomed-in wave shows the slice just chosen (its start), once for each choice, so scrolling by hand is
+    /// not undone.
+    fn follow_chosen(&mut self, st: &State, frames: usize) {
+        let chosen = self.view.chosen;
+        if self.followed == Some(chosen) || frames == 0 {
+            return;
+        }
+        self.followed = Some(chosen);
+        let (z0, z1) = view::zoom_of(self.view.zoom);
+        let Some(s) = st.slices.get(chosen) else { return };
+        let at = f64::from(s.start) / frames as f64;
+        if (z0, z1) != (0.0, 1.0) && (at < z0 || at > z1) {
+            let span = z1 - z0;
+            let a = (at - span * 0.1).clamp(0.0, 1.0 - span);
+            self.view.zoom = (a, a + span);
+        }
+    }
+
     /// Paints the editor; `hint` is drawn when the host does not show it.
     pub fn paint(&mut self, c: &mut os_ui::Canvas, palette: &os_theme::Palette) {
         let st = self.state();
@@ -1973,14 +2050,20 @@ impl Logic {
         let can_dump = self.hosted && frames > 0 && !st.slices.is_empty();
         self.view.chosen = self.chosen(&st);
         self.view.sel.slice = self.view.chosen;
+        if self.params.ext().auto_scroll {
+            self.follow_chosen(&st, frames);
+        } else {
+            self.followed = None;
+        }
         // A value shows over the wave while it is dragged; no tooltips otherwise.
         let hint = if self.hosted || (self.drag.is_none() && self.ext_drag.is_none()) { String::new() } else { self.hint.clone() };
+        self.extra_views();
         self.peaks();
         let ext = self.params.ext();
         let a_name = std::path::Path::new(&st.path()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let b_name = if ext.deck_b.is_empty() { String::new() } else { crate::state::State::parse(&ext.deck_b).map(|s| std::path::Path::new(&s.path()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()).unwrap_or_default() };
         let rate = self.shared.sample().map_or(0, |s| s.rate);
-        let look = view::Look { state: &st, frames, rate, peaks: &self.peaks.2, can_dump, hosted: self.hosted, ext: &ext, decks: [a_name, b_name] };
+        let look = view::Look { state: &st, frames, rate, peaks: &self.peaks.2, spec: &self.spec.2, peaks_b: &self.peaks_b.2, can_dump, hosted: self.hosted, ext: &ext, decks: [a_name, b_name] };
         self.hits = view::paint(c, palette, &self.vals, &self.view, &look, &hint);
     }
 }
@@ -2713,14 +2796,43 @@ mod tests {
         (l, p)
     }
 
+    /// The info strip's five switches: each is a control, a press turns its setting over (and the state keeps it), the
+    /// spectrum fills the well's picture, deck B's wave and the scrub follow the switches, and auto-scroll shows a chosen
+    /// slice that is out of view.
     #[test]
-    fn every_parameter_has_a_control() {
-        let l = logic();
-        // The window has the original's four master faders; attack, decay and the switches stay plugin parameters only.
-        assert!(l.hits.iter().any(|h| matches!(&h.t, Target::Knob(i) if i == params::PITCH_ID)));
-        for t in [Target::Well, Target::Bpm, Target::Beats, Target::Logo, Target::Ext(Ctl::Master), Target::Ext(Ctl::RandLvl), Target::Ext(Ctl::LfoLvl), Target::Ext(Ctl::AutoDump), Target::Ext(Ctl::Crossfade(2)), Target::Ext(Ctl::Menu(0)), Target::Ext(Ctl::Menu(8)), Target::Ext(Ctl::Edit(7)), Target::Ext(Ctl::Edit(8)), Target::Ext(Ctl::PlaySlice)] {
-            centre(&l, &t);
+    fn the_info_strip_switches_work() {
+        let (mut l, p) = loaded();
+        for n in 0..5 {
+            centre(&l, &Target::Ext(Ctl::Info(n)));
         }
+        let flags = |l: &Logic| {
+            let x = l.params.ext();
+            [x.scrub, x.deck_view, x.spectrum, x.click_free, x.auto_scroll]
+        };
+        let before = flags(&l);
+        for n in 0..5u8 {
+            let (x, y) = centre(&l, &Target::Ext(Ctl::Info(n)));
+            l.down(x, y, Btn::Left, Mods::default(), false);
+            l.up(Btn::Left);
+            paint(&mut l);
+            let now = flags(&l);
+            assert_ne!(now[usize::from(n)], before[usize::from(n)], "switch {n} turned over");
+        }
+        assert_eq!(Ext::parse(&l.params.ext().to_bytes()).map(|e| e.scrub), Some(true), "kept in the saved state");
+        // The spectrum: one column of levels for each column of the wave, with something lit.
+        assert_eq!(l.spec.2.len(), view::WAVE.w as usize * view::SPEC_ROWS);
+        assert!(l.spec.2.iter().any(|&v| v > 100), "the loop's clicks show");
+        // Scrub: a drag over the wave plays the slice under the pointer, then the one it moves to.
+        let n = l.state().slices.len();
+        assert!(n > 1, "the test loop has several slices");
+        l.down(view::WAVE.x + 12.0, view::WAVE.cy(), Btn::Left, Mods::default(), false);
+        let first = l.playing;
+        assert!(first.is_some());
+        l.moved(view::WAVE.right() - 4.0, view::WAVE.cy(), Mods::default());
+        assert_ne!(l.playing, first, "the drag moved on to another slice");
+        assert!(l.view.range.is_none(), "scrubbing selects nothing");
+        l.up(Btn::Left);
+        let _ = std::fs::remove_file(p);
     }
 
     #[test]

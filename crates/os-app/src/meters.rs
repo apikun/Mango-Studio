@@ -71,24 +71,42 @@ impl Settings {
 /// Below this a meter is empty.
 pub const SILENT: f32 = -200.0;
 
-/// One track's meter state, in dB.
+/// Slices the colour map keeps: about four seconds at 60 a second.
+pub const HISTORY: usize = 256;
+
+/// One slice in the scrolling waveform / spectrum history.
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WaveSlice {
+    pub amp: f32,
+    pub centroid: f32,
+    pub bands: [f32; 3],
+}
+
+impl Default for WaveSlice {
+    fn default() -> Self {
+        WaveSlice { amp: 0.0, centroid: 1000.0, bands: [0.0; 3] }
+    }
+}
+
+/// One track's meter state, in dB, with rolling waveform history.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Meter {
     pub db: [f32; 2],
     /// Peak-hold line level and how long it has been held (seconds).
     pub hold: [f32; 2],
     pub held: [f32; 2],
+    pub history: std::collections::VecDeque<WaveSlice>,
 }
 
 impl Default for Meter {
     fn default() -> Self {
-        Meter { db: [SILENT; 2], hold: [SILENT; 2], held: [0.0; 2] }
+        Meter { db: [SILENT; 2], hold: [SILENT; 2], held: [0.0; 2], history: std::collections::VecDeque::new() }
     }
 }
 
 impl Meter {
     pub fn active(&self) -> bool {
-        self.db.iter().chain(&self.hold).any(|&d| d > SILENT)
+        self.db.iter().chain(&self.hold).any(|&d| d > SILENT) || self.history.iter().any(|s| s.amp > 0.001)
     }
 }
 
@@ -134,6 +152,25 @@ pub fn step(m: &mut Meter, peak: [f32; 2], dt: f32, c: &Settings) -> bool {
         }
     }
     m.active()
+}
+
+/// Advances one meter and records a wave/spectral history slice.
+pub fn step_with_bands(m: &mut Meter, peak: [f32; 2], bands: [f32; 3], dt: f32, c: &Settings) -> bool {
+    let moving = step(m, peak, dt, c);
+    let amp = peak[0].max(peak[1]);
+    let total_band = bands[0] + bands[1] + bands[2];
+    // The spectral centre on the log-frequency scale the colour map uses (each band at its middle, 100 Hz, 1 kHz, 8 kHz).
+    let centroid = if total_band > 1e-10 {
+        ((bands[0] * 100.0_f32.ln() + bands[1] * 1000.0_f32.ln() + bands[2] * 8000.0_f32.ln()) / total_band).exp()
+    } else {
+        1000.0
+    };
+    // One slice per 60th of a second whatever the tick rate, so the map scrolls at one speed.
+    for _ in 0..((dt * 60.0).round() as usize).clamp(1, 8) {
+        m.history.push_front(WaveSlice { amp, centroid, bands });
+    }
+    m.history.truncate(HISTORY);
+    moving || amp > 0.001 || m.history.iter().any(|s| s.amp > 0.001)
 }
 
 /// The level scale (label positions on the "C" column at the measured 1080p mixer, label centres; spec:
@@ -211,6 +248,27 @@ pub fn db_at(f: f32, floor: f32, alt: bool) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The colour map's history: a slice per 60th of a second whatever the tick rate, newest first, at most `HISTORY`, with the
+    /// spectral centre following the bands (low bands low, high bands high, on the log scale the colour map uses).
+    #[test]
+    fn the_history_scrolls_and_follows_the_spectrum() {
+        let c = Settings::default();
+        let mut m = Meter::default();
+        step_with_bands(&mut m, [0.5, 0.5], [1.0, 0.0, 0.0], 1.0 / 60.0, &c);
+        assert_eq!(m.history.len(), 1, "one tick of a frame, one slice");
+        let low = m.history[0].centroid;
+        step_with_bands(&mut m, [0.5, 0.5], [0.0, 0.0, 1.0], 0.1, &c);
+        assert_eq!(m.history.len(), 1 + 6, "a slow tick (a tenth of a second) adds its six slices");
+        let high = m.history[0].centroid;
+        assert!((low - 100.0).abs() < 1.0 && (high - 8000.0).abs() < 10.0, "{low} Hz and {high} Hz");
+        assert!(m.history[0].amp > 0.4 && m.history.back().is_some_and(|s| s.centroid == low), "newest first");
+        for _ in 0..1000 {
+            step_with_bands(&mut m, [0.0; 2], [0.0; 3], 1.0 / 60.0, &c);
+        }
+        assert_eq!(m.history.len(), HISTORY, "only the last few seconds are kept");
+        assert!(m.history.iter().all(|s| s.amp < 1e-3), "silence has gone through");
+    }
 
     #[test]
     fn law_and_ballistics() {

@@ -317,7 +317,9 @@ impl Layout {
     /// The layout kept in `settings.txt`; the classic one when there is none or it cannot be read. Tests start with
     /// "Caption left", every panel at its home, where they measure the panels.
     pub fn load() -> Layout {
-        let first = if cfg!(test) { PRESETS[CAPTION_LEFT].layout() } else { Layout::classic() };
+        // FL's own toolbar (its menu at the top left, its window buttons at the top right on Windows and Linux, at the top left
+        // on macOS). Tests measure the panels at their homes (Caption left).
+        let first = if cfg!(test) || cfg!(target_os = "macos") { PRESETS[CAPTION_LEFT].layout() } else { PRESETS[MENU_FIRST].layout() };
         crate::settings_file::get(KEY).and_then(|v| Layout::parse(&v)).unwrap_or(first)
     }
 
@@ -476,6 +478,10 @@ pub const PRESETS: [Preset; 9] = [
 
 /// `PRESETS`' "Caption left": every panel at its home.
 pub const CAPTION_LEFT: usize = 8;
+
+/// `PRESETS`' "Menu first": the menu at the top left, the hint panel on the second row with the window buttons, as FL has them on
+/// Windows and Linux.
+pub const MENU_FIRST: usize = 2;
 
 /// Where the user's presets are: the user folder's `Toolbar presets` (in tests the thread's folder, `app::theme_dir`).
 pub fn user_dir() -> Option<PathBuf> {

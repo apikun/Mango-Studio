@@ -336,11 +336,14 @@ fn title_tools(ui: &mut Ui, s: &State, r: Rect) {
     // centres them and the "+" 24 px apart: its inspector sits 10 px further right, the "+" and the combo 16 px.
     let bg = ui.t.window_title;
     let dim = |c: Color| c.mix(bg, f32::from(crate::app::OFF_VEIL) / 255.0);
-    for (icon, dx, name) in [(Icon::Touch, 37.0, "Multi-touch control"), (Icon::Plug, 61.0, "View waveforms")] {
-        let b = Rect::new(r.x + dx - 9.0, y - 9.0, 18.0, 18.0);
-        ui.off(b, name);
-        icons::draw(ui.c, icon, b.inset(1.0), dim(ui.t.tx(0xc4ccd0)));
-    }
+    let b = Rect::new(r.x + 37.0 - 9.0, y - 9.0, 18.0, 18.0);
+    ui.off(b, "Multi-touch control");
+    icons::draw(ui.c, Icon::Touch, b.inset(1.0), dim(ui.t.tx(0xc4ccd0)));
+    // View waveforms: lit (in the theme's accent) while the strips' meters draw waveforms.
+    let b = Rect::new(r.x + 61.0 - 9.0, y - 9.0, 18.0, 18.0);
+    let hov = ui.hit(b, Action::Mix(MHit::ViewWaves), if s.mixer.waves { "View waveforms: on (click for level bars)" } else { "View waveforms: off (click to show waveforms)" });
+    let c = if s.mixer.waves { ui.t.accent } else if hov { ui.t.tx(0xffffff) } else { ui.t.tx(0xc4ccd0) };
+    icons::draw(ui.c, Icon::Plug, b.inset(1.0), c);
     let (ix, px) = if super::lemon(ui) { (10.0, 16.0) } else { (0.0, 0.0) };
     ui.off(Rect::new(r.x + 76.0, y - 9.0, 16.0, 18.0), "Extra volume / stereo properties");
     ui.off(Rect::new(r.x + 92.0 + ix, y - 9.0, 15.0, 18.0), "Track inspector");
@@ -810,9 +813,10 @@ fn strip_body(ui: &mut Ui, s: &State, n: u16, left: f32, w: f32, (head0, head1, 
         ui.c.fill_rect(card, Color::rgb(0x000000));
         let face = Rect::new(card.x + 2.0, card.y + 1.0, card.w - 4.0, card.h - 4.0);
         let (top, low, rim) = if selected {
-            (Color::rgb(0x2a2a2a), Color::rgb(0x1a1a1a), t.accent.mix(super::MANGO_MIXER_RIM, 0.55))
+            (Color::rgb(0x383a3c), Color::rgb(0x313335), t.accent.mix(super::MANGO_MIXER_RIM, 0.55))
         } else {
-            (Color::rgb(0x202020), Color::rgb(0x121212), super::MANGO_MIXER_RIM)
+            // FL's distribution: the body a lighter, nearly flat tone, the head panel above it darker (`head_panel`).
+            (Color::rgb(0x2f3133), Color::rgb(0x2a2c2e), super::MANGO_MIXER_RIM)
         };
         let (top, low) = (tint(top, 0.3), tint(low, 0.22));
         let rad = lk::r_panel(t).min(face.w / 2.0);
@@ -881,17 +885,49 @@ fn strip_body(ui: &mut Ui, s: &State, n: u16, left: f32, w: f32, (head0, head1, 
     (body, hov)
 }
 
-/// The dark head panel behind the meter, name, light and pan knob, with a rounded bottom. Mango's black skin makes it a
-/// soft charcoal, not black: the name and the light on it were hard to see on the near-black the skin maps this grey to.
+/// The dark head panel behind the meter, name, light and pan knob, with a rounded bottom. As in FL it is the darkest part
+/// of the strip, darker than the body under it.
 fn head_panel(ui: &mut Ui, r: Rect, own: Option<Color>) {
-    let panel = if super::lemon(ui) { Color::rgb(0x2b2e31) } else { ui.t.s(0x1d1f21) };
+    let panel = if super::lemon(ui) { Color::rgb(0x17191a) } else { ui.t.s(0x1d1f21) };
     let panel = own.map_or(panel, |o| panel.mix(o, 0.25));
     let rad = 9.0_f32.min(r.w / 2.0);
     ui.c.fill_rrect(r, rad, panel);
     ui.c.fill_rect(Rect::new(r.x, r.y, r.w, 12.0_f32.min(r.h)), panel);
 }
 
-/// Meter slot with its tick marks and the track's peak meter; the selected strip's gets a frame.
+/// A track's recent signal as a waveform in `r`, running down: one row per slice of the last seconds (`meters::HISTORY`), the
+/// newest at the top and older ones scrolling down. A row is as wide as the level of its slice on either side of the centre
+/// line, as an audio clip's waveform is as tall, and a row of the meter takes the loudest of the slices that fall on it, so a
+/// brief peak is not lost. Its colour is the clip's, by General ▸ Display ▸ Colorful waveforms: Color map (the slice's spectral
+/// centre on the theme's Waves gradient), Multiband (its low, mid and high energy mixed), or Off (the theme's accent).
+fn waveform_meter(ui: &mut Ui, s: &State, n: u16, r: Rect) {
+    let Some(m) = s.mixer.meters.get(usize::from(n)) else { return };
+    if m.history.is_empty() || r.h < 1.0 {
+        return;
+    }
+    let waves = crate::waves::current(ui.t);
+    let (plain, centre) = (ui.t.accent, ui.t.glyph_dim.with_alpha(70));
+    let (cx, half) = (r.x + r.w / 2.0, r.w / 2.0);
+    let rows = r.h.floor().max(1.0) as usize;
+    ui.c.push_clip(r);
+    ui.c.fill_rect(Rect::new(cx - 0.5, r.y, 1.0, r.h), centre);
+    for y in 0..rows {
+        let a = y * meters::HISTORY / rows;
+        let b = ((y + 1) * meters::HISTORY / rows).max(a + 1).min(m.history.len());
+        let Some(slice) = (a..b).map(|i| &m.history[i]).max_by(|p, q| p.amp.total_cmp(&q.amp)) else { continue };
+        // The clip waveform's gain (its peaks are drawn 1.7 times), a little lifted so quiet parts show.
+        let w = (slice.amp * 1.7).clamp(0.0, 1.0).powf(0.8) * half;
+        if w < 0.3 {
+            continue;
+        }
+        let c = waves.colour(Some(slice.centroid), Some(slice.bands)).unwrap_or(plain);
+        ui.c.fill_rect(Rect::new(cx - w, r.y + y as f32, 2.0 * w, 1.0), c);
+    }
+    ui.c.pop_clip();
+}
+
+/// Meter slot: the track's signal as a waveform beside the fader, framed in the theme's colour; the selected strip's gets a
+/// brighter frame.
 fn strip_meter(ui: &mut Ui, s: &State, n: u16, meter: Rect, ticks: &[f32]) {
     let t = ui.t;
     let lemon = super::lemon(ui);
@@ -903,22 +939,26 @@ fn strip_meter(ui: &mut Ui, s: &State, n: u16, meter: Rect, ticks: &[f32]) {
         ui.c.fill_rrect(meter, 2.0, ui.t.s(0x191d1e));
         ui.c.fill_rect(Rect::new(meter.x + 2.0, meter.y + 2.0, iw - 1.0, meter.h - 4.0), ui.t.s(0x232729));
     }
-    for &y in ticks {
-        ui.c.fill_rect(Rect::new(meter.x + 3.0, y, meter.w - 7.0, 1.0), ui.t.s(0x111315));
-    }
-    // Per-track peak meter (spec: ui/mixer.md §9): two bars on the same scale as the "C" column.
+    let _ = ticks;
+    // The track's signal as a scrolling waveform (spec: ui/mixer.md §9), coloured as Colorful waveforms colours a clip (`crate::waves`).
     ui.live(Live::Meter, meter);
-    if let Some(m) = s.mixer.meters.get(usize::from(n)) {
+    let inner = Rect::new(meter.x + 2.0, meter.y + 2.0, iw, meter.h - 4.0);
+    if s.mixer.waves {
+        waveform_meter(ui, s, n, inner);
+    } else if let Some(m) = s.mixer.meters.get(usize::from(n)) {
+        // "View waveforms" off: the plain left / right level bars.
         let cfg = &s.mixer.meter_cfg;
-        let (top, bot) = (meter.y + 2.0, meter.bottom() - 2.0);
-        let floor = cfg.v[meters::k::FLOOR_DB];
-        let alt = crate::prefs::check(&crate::prefs::ALTERNATE_METER_SCALE);
-        let ys = |db: f32| bot - meters::frac(db, floor, alt) * (bot - top);
-        let bw = iw / 2.0;
+        let floor = cfg.v[meters::k::FLOOR_DB].min(-1.0);
+        let ys = |db: f32| inner.bottom() - ((db - floor) / -floor).clamp(0.0, 1.0) * inner.h;
+        let bw = (inner.w / 2.0).floor().max(1.0);
+        ui.c.push_clip(inner);
         for i in 0..2 {
-            meter_bar(ui, meter.x + 2.0 + bw * i as f32, bw, bot, m.db[i], m.hold[i], cfg, &ys);
+            meter_bar(ui, inner.x + bw * i as f32, bw, inner.bottom(), m.db[i], m.hold[i], cfg, &ys);
         }
+        ui.c.pop_clip();
     }
+    // A thin outline in the theme's own colour.
+    ui.c.stroke_rrect(meter, if lemon { lk::r_small(t).min(meter.w / 2.0) } else { 2.0 }, 1.0, t.glyph_dim.with_alpha(170));
     if s.selected_mixer == n {
         ui.c.stroke_rrect(Rect::new(meter.x - 1.0, meter.y - 2.0, meter.w + 2.0, meter.h + 4.0), if lemon { lk::r_btn(t) } else { 1.0 }, 2.0, t.accent);
     }
@@ -965,13 +1005,9 @@ fn led(ui: &mut Ui, track: Option<&os_model::MixerTrack>, n: u16, hit: Rect, x: 
 
 fn pan_knob(ui: &mut Ui, s: &State, n: u16, x: f32, y: f32, r: f32, halo: f32) {
     let pan = KnobId::MixPan(n);
-    let hit = if super::lemon(ui) { Rect::new(x - halo, y - 8.0, 2.0 * halo, 16.0) } else { Rect::new(x - (halo - 1.0), y - (halo - 1.0), 2.0 * (halo - 1.0), 2.0 * (halo - 1.0)) };
+    let hit = Rect::new(x - (halo - 1.0), y - (halo - 1.0), 2.0 * (halo - 1.0), 2.0 * (halo - 1.0));
     ui.hit(hit, Action::Knob(pan), s.knob_text(pan));
-    if super::lemon(ui) {
-        centre_bar(ui, x, y, halo, if halo >= 12.0 { 10.0 } else { 8.0 }, s.knob(pan), Bar::Centre);
-    } else {
-        mixer_knob(ui, x, y, r, halo, s.knob(pan), Some(true));
-    }
+    mixer_knob(ui, x, y, r, halo, s.knob(pan), Some(true));
 }
 
 /// Which control a Mango-skin bar is: pan (from the centre), separation (the same, blue on the merged side) or a
@@ -1037,13 +1073,9 @@ fn swap(ui: &mut Ui, track: Option<&os_model::MixerTrack>, n: u16, sx: f32, y: f
 
 fn sep_knob(ui: &mut Ui, s: &State, n: u16, x: f32, y: f32, r: f32, halo: f32) {
     let sep = KnobId::MixSep(n);
-    let hit = if super::lemon(ui) { Rect::new(x - halo, y - 8.0, 2.0 * halo, 16.0) } else { Rect::new(x - halo + 0.5, y - halo + 0.5, 2.0 * halo - 1.0, 2.0 * halo - 1.0) };
+    let hit = Rect::new(x - halo + 0.5, y - halo + 0.5, 2.0 * halo - 1.0, 2.0 * halo - 1.0);
     ui.hit(hit, Action::Knob(sep), s.knob_text(sep));
-    if super::lemon(ui) {
-        centre_bar(ui, x, y, halo, if halo >= 12.0 { 10.0 } else { 8.0 }, s.knob(sep), Bar::Mono);
-    } else {
-        mixer_knob(ui, x, y, r, halo, s.knob(sep), Some(true));
-    }
+    mixer_knob(ui, x, y, r, halo, s.knob(sep), Some(true));
 }
 
 /// Fader: track, gain marks, handle (green on the selected strip, with the track lit below it). In the Mango skin the
@@ -1053,14 +1085,16 @@ fn sep_knob(ui: &mut Ui, s: &State, n: u16, x: f32, y: f32, r: f32, halo: f32) {
 #[allow(clippy::too_many_arguments)]
 fn fader(ui: &mut Ui, s: &State, n: u16, f: &FrameInfo, mx: f32, y0: f32, track_y1: f32, ys: &dyn Fn(f32) -> f32, marks: bool) {
     let t = ui.t;
-    let lemon = super::lemon(ui);
+    // FL's own fader whatever the skin: a thin track with its tick marks and the ribbed grey cap, lit when the strip is
+    // selected (in the theme's accent).
+    let lemon = false;
     let track = s.project.mixer.iter().find(|m| m.index == n);
     let selected = s.selected_mixer == n;
     let trough = Rect::new(mx - 7.0, y0, 14.0, track_y1 - y0);
     if lemon {
         ui.c.fill_rrect(trough, 7.0, ui.t.s(0x141618));
     } else {
-        ui.c.fill_rect(Rect::new(mx - 1.5, trough.y, 3.0, trough.h), ui.t.s(0x141618));
+        ui.c.fill_rect(Rect::new(mx - 1.5, trough.y, 3.0, trough.h), if super::lemon(ui) { Color::rgb(0x1a1b1d) } else { ui.t.s(0x141618) });
     }
     if marks {
         fader_marks(ui, mx, track_y1, ys, lemon);
@@ -1069,25 +1103,11 @@ fn fader(ui: &mut Ui, s: &State, n: u16, f: &FrameInfo, mx: f32, y0: f32, track_
     // max/min, not clamp: a very short window gives track_y1 < y0 (clamp would panic).
     let hy = ys(v).min(track_y1 - 5.0).max(y0 + 5.0);
     let hov = ui.hit(Rect::new(mx - 9.0, y0 - 5.0, 18.0, track_y1 - y0 + 10.0), Action::Fader(n), mx::level_text("Volume", f64::from(v)));
-    if lemon {
-        // FL's fader (issue #151): a dim level bar runs down the trough from the cap, and the cap is the wide light
-        // handle with its centre line, brighter on the selected strip and under the pointer.
-        let main = t.brand_sel(os_theme::design::lemon::MAIN);
-        let held = f.fader_drag == Some(n);
-        let col = if selected || held { main } else { main.mix(ui.t.s(0x141618), 0.35) };
-        let lift = if held { 0.07 } else if hov { 0.12 } else { 0.0 };
-        let level = Rect::new(mx - 4.0, hy, 8.0, (track_y1 - 1.0 - hy).max(0.0));
-        ui.c.fill_rrect(level, 4.0, col.mix(ui.t.s(0x141618), 0.5));
-        let cap = Rect::new(mx - 10.0, hy - 6.0, 20.0, 12.0);
-        let cap_c = if selected || held { ui.t.s(0xdde5ea) } else { ui.t.s(0x9aa6ad) };
-        ui.c.fill_rrect(cap, 6.0, cap_c.shade(lift));
-        ui.c.fill_rect(Rect::new(cap.x + 3.0, hy - 0.75, cap.w - 6.0, 1.5), ui.t.s(0x2a3034));
-    } else {
-        if selected {
-            ui.c.fill_rect(Rect::new(mx - 1.0, hy, 2.0, track_y1 - hy), ui.t.a(0x8ec63a));
-        }
-        fader_handle(ui, mx, hy, selected, hov);
+    let _ = (lemon, f);
+    if selected {
+        ui.c.fill_rect(Rect::new(mx - 1.0, hy, 2.0, track_y1 - hy), ui.t.a(0x8ec63a));
     }
+    fader_handle(ui, mx, hy, selected, hov);
 }
 
 /// The input pin (its top at `pin`) and the latency clock (centred on `clock`): not available yet, greyed out under
@@ -1181,11 +1201,25 @@ fn send_knob(ui: &mut Ui, s: &State, n: u16, kx: f32, ky: f32, level: f64, k: f3
 }
 
 /// The dark round mixer knob: a shaded ball inside a darker halo.
-/// `arc`: Some(true) draws the red value arc from the top (pan style), Some(false) from the start.
+/// `arc`: Some(true) draws the value arc from the top (pan style), Some(false) from the start, in the theme's orange.
 fn mixer_knob(ui: &mut Ui, cx: f32, cy: f32, r: f32, halo: f32, value: f32, arc: Option<bool>) {
     let hov = ui.hovering(Rect::new(cx - halo, cy - halo, 2.0 * halo, 2.0 * halo));
-    let look = os_ui::kit::KnobLook::Mixer { halo, arc: arc.is_some() };
-    os_ui::kit::knob(ui.c, ui.t, cx, cy, r, value, arc.unwrap_or(false), look, os_ui::kit::State::hover(hov));
+    // The ball and halo only: the value arc is drawn below, in the accent (FL's own is red).
+    let look = os_ui::kit::KnobLook::Mixer { halo, arc: false };
+    // FL's round knob whatever the skin: the Citrus shapes in the theme's colours (the Mango skin draws flat ones).
+    let mut fl = ui.t.clone();
+    fl.style = os_theme::Style::CITRUS;
+    os_ui::kit::knob(ui.c, &fl, cx, cy, r, value, arc.unwrap_or(false), look, os_ui::kit::State::hover(hov));
+    if let Some(bipolar) = arc {
+        // The knob's sweep: 270 degrees from the bottom left; a pan-style arc starts at the top.
+        let (start, sweep) = (0.75 * std::f32::consts::PI, 1.5 * std::f32::consts::PI);
+        let v = value.clamp(0.0, 1.0);
+        let a = start + sweep * v;
+        let (a0, a1) = if bipolar { (start + sweep / 2.0, a) } else { (start, a) };
+        if (a1 - a0).abs() > 0.02 {
+            ui.c.arc(cx, cy, halo - 2.0, a0.min(a1), (a1 - a0).abs(), (halo * 0.22).max(2.0), ui.t.accent);
+        }
+    }
 }
 
 /// Text that reads on a track's colour: near black on light colours, white on dark ones.
@@ -1212,7 +1246,9 @@ fn fader_marks(ui: &mut Ui, mx: f32, track_y1: f32, ys: &dyn Fn(f32) -> f32, lem
         .map(|&db| ys(fader_value(db)).floor())
         .filter(|&y| y < track_y1 - 1.0)
         .collect();
-    let (tick, rail) = (ui.t.s(0x181a1c), ui.t.s(0x202324));
+    // FL's rails and ticks are only a shade darker than the strip they are on, so they read as faint grooves; on the Mango
+    // skin's lighter strips the classic near-black ones would show as black lines.
+    let (tick, rail) = if super::lemon(ui) { (Color::rgb(0x232426), Color::rgb(0x2a2c2e)) } else { (ui.t.s(0x181a1c), ui.t.s(0x202324)) };
     if lemon {
         // Short ticks between the trough (7 px either side) and the separation knob on the left, the strip's edge on
         // the right.
@@ -1242,7 +1278,22 @@ fn fader_value(db: f32) -> f32 {
 
 /// Fader handle centred on (cx, cy): 14 × 23.
 fn fader_handle(ui: &mut Ui, cx: f32, cy: f32, selected: bool, hov: bool) {
-    os_ui::kit::fader_handle(ui.c, ui.t, cx, cy, selected, os_ui::kit::State::hover(hov));
+    // FL's cap whatever the skin: light silver with a darker band and a ridge, orange (the theme's accent) on the selected strip.
+    let h = Rect::new(cx - 7.0, cy - 11.0, 14.0, 23.0);
+    ui.c.fill_rrect(h.outset(1.0), 3.0, Color::rgb(0x121416));
+    let (top, mid, low) = if selected {
+        let a = ui.t.accent;
+        (a.shade(0.35), a, a.shade(-0.45))
+    } else if hov {
+        (Color::rgb(0xe6eaed), Color::rgb(0xb4babf), Color::rgb(0x6a7076))
+    } else {
+        (Color::rgb(0xd4d8db), Color::rgb(0xa2a8ad), Color::rgb(0x5c6268))
+    };
+    ui.c.fill_rect_gradient(Rect::new(h.x, h.y, h.w, 10.0), top, mid, 2.5);
+    ui.c.fill_rect_gradient(Rect::new(h.x, h.y + 10.0, h.w, 13.0), mid.shade(-0.2), low, 2.5);
+    ui.c.fill_rect(Rect::new(h.x, h.y + 8.0, h.w, 4.0), mid.shade(-0.12));
+    ui.c.fill_rect(Rect::new(h.x + 2.0, h.y + 16.0, h.w - 4.0, 1.0), low.shade(-0.4));
+    ui.c.fill_rect(Rect::new(h.x + 2.0, h.y + 10.0, h.w - 4.0, 1.0), top.shade(0.1));
 }
 
 fn slot_panel(ui: &mut Ui, s: &State, r: Rect) {
@@ -1329,16 +1380,9 @@ fn slot_panel(ui: &mut Ui, s: &State, r: Rect) {
         let ty = if super::lemon(ui) { (row.cy() + 0.36 * f32::from(fs) - ui.c.ascent(f)).round() } else { row.y + 4.0 * kp };
         ui.c.text_clip(f, row.x + 19.0, ty, 140.0, ink, &name);
         let mix = KnobId::SlotMix(n, k);
-        if super::lemon(ui) {
-            // The Mango skin: a level bar like the mixer's pan and separation bars.
-            let cx = row.right() - 33.0;
-            ui.hit(Rect::new(cx - 16.0, row.y, 32.0, row.h), Action::Knob(mix), s.knob_text(mix));
-            centre_bar(ui, cx, row.cy(), 15.0, 8.0, s.knob(mix), Bar::Level);
-        } else {
             ui.hit(Rect::new(row.right() - 46.0, row.y, 26.0, row.h), Action::Knob(mix), s.knob_text(mix));
             mixer_knob(ui, row.right() - 33.0, row.cy(), 10.5 * q, 12.0 * q, s.knob(mix), Some(false));
             ui.c.stroke_circle(row.right() - 33.0, row.cy(), 11.8 * q, 1.5, ui.t.s(0x55595c));
-        }
         ui.hit(Rect::new(row.right() - 18.0, row.y, 18.0, row.h), Action::Mix(MHit::SlotLed(k)), "Mute / solo  (ctrl)0..9");
         led_small(ui, row.right() - 10.0, row.cy(), track.is_none_or(|m| m.slot_on[i]));
     }

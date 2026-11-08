@@ -279,6 +279,12 @@ pub struct Ext {
     pub slide: bool,
     pub click_free: bool,
     pub freeze: bool,
+    /// The info strip's other switches: a drag over the wave plays the slice under the pointer (scrub), both decks' waves
+    /// show, the wave shows as a spectrum, and the wave follows the chosen slice when zoomed in (auto-scroll).
+    pub scrub: bool,
+    pub deck_view: bool,
+    pub spectrum: bool,
+    pub auto_scroll: bool,
     /// What the window shows (`view::arrange`): 0 everything, 1 without the audio editor, 2 without the region
     /// settings, 3 only the master panel; and whether the keyboard shows.
     pub view: u8,
@@ -309,6 +315,10 @@ impl Default for Ext {
             slide: false,
             click_free: true,
             freeze: false,
+            scrub: false,
+            deck_view: false,
+            spectrum: false,
+            auto_scroll: false,
             view: 0,
             keys: true,
         }
@@ -411,6 +421,9 @@ impl Ext {
             }
             o.b(r.cut);
         }
+        for v in [self.scrub, self.deck_view, self.spectrum, self.auto_scroll] {
+            o.b(u8::from(v));
+        }
         o.0
     }
 
@@ -476,6 +489,10 @@ impl Ext {
                 }
             }
         }
+        // Added later: the info strip's switches.
+        if let (Some(a), Some(b), Some(c), Some(d)) = (i.b(), i.b(), i.b(), i.b()) {
+            (x.scrub, x.deck_view, x.spectrum, x.auto_scroll) = (a != 0, b != 0, c != 0, d != 0);
+        }
         Some(x)
     }
 
@@ -540,12 +557,14 @@ mod tests {
         x.master = 0.5;
         x.view = 2;
         x.keys = false;
+        (x.scrub, x.spectrum, x.auto_scroll) = (true, true, true);
         let b = x.to_bytes();
         assert_eq!(Ext::parse(&b), Some(x.clone()));
         assert_eq!(x.art_of(5), 3);
         assert_eq!(x.art_of(2), 0);
-        assert!(Ext::parse(&b[..b.len() - 329]).is_some_and(|e| e.master == 1.0), "an older state has no master volume");
-        assert!(Ext::parse(&b[..b.len() - 334]).is_none(), "cut short");
+        assert!(Ext::parse(&b[..b.len() - 4]).is_some_and(|e| !e.scrub && !e.spectrum && !e.auto_scroll && e.master == 0.5), "an older state has none of the info strip's switches");
+        assert!(Ext::parse(&b[..b.len() - 333]).is_some_and(|e| e.master == 1.0), "an older state has no master volume");
+        assert!(Ext::parse(&b[..b.len() - 338]).is_none(), "cut short");
         assert!(Ext::parse(b"nope").is_none());
     }
 

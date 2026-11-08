@@ -36,6 +36,8 @@ pub enum MHit {
     AddAfter,
     Options,
     Layout,
+    /// Title bar's "View waveforms": the strips' meters as waveforms or as level bars.
+    ViewWaves,
     /// Effect slot `n` of the current track: name, ▸ arrow, LED.
     SlotName(u8),
     SlotArrow(u8),
@@ -126,6 +128,8 @@ pub enum FxReq {
 pub const LAYOUTS: [&str; 8] = ["Compact", "Compact 2", "Compact alt", "Wide", "Wide 2", "Wide 3", "Wide alt", "Extra large"];
 /// Index of "Wide" (the default).
 pub const WIDE: u8 = 3;
+/// The last of `LAYOUTS`: FL's Extra large.
+pub const EXTRA_LARGE: u8 = 7;
 /// Where the chosen layout is kept (its name).
 const LAYOUT_KEY: &str = "mixer_layout";
 
@@ -155,12 +159,14 @@ pub struct MixerUi {
     pub solo: Option<(Vec<u16>, Vec<(u16, bool)>)>,
     /// The track and effect slot the wheel last moved, and where the mouse was then (`slot_wheel`).
     pub wheel_grab: Option<(u16, u8, (f32, f32))>,
+    /// "View waveforms" (the title bar's button): the strips' meters draw the signal as a waveform, or (off) as level bars.
+    pub waves: bool,
 }
 
 impl Default for MixerUi {
     fn default() -> Self {
         MixerUi { sel: Vec::new(), layout: if cfg!(test) { WIDE } else { saved_layout() }, slot_names: HashMap::new(), pending: Vec::new(), quiet: Default::default(), meters: Vec::new(),
-            meter_cfg: Default::default(), meter_at: None, solo: None, wheel_grab: None }
+            meter_cfg: Default::default(), meter_at: None, solo: None, wheel_grab: None, waves: true }
     }
 }
 
@@ -397,6 +403,10 @@ pub fn hit(app: &mut App, h: MHit) -> Option<String> {
         MHit::Options => {
             s.playlist.popup = Some(options_menu(s, at.0, at.1 + 10.0));
             None
+        }
+        MHit::ViewWaves => {
+            s.mixer.waves = !s.mixer.waves;
+            Some(if s.mixer.waves { "Mixer meters: waveforms".into() } else { "Mixer meters: levels".into() })
         }
         MHit::Layout => {
             s.playlist.popup = Some(layout_menu(s, at.0, at.1 + 10.0));
@@ -1629,7 +1639,7 @@ pub fn key(app: &mut App, key: &winit::keyboard::Key, ctrl: bool, alt: bool) -> 
 
 /// New peaks from the audio thread: meters rise, fall and hold by elapsed time (`meters::step`). True while any meter
 /// is still moving.
-pub fn feed_meters(s: &mut State, peaks: &[[f32; 2]]) -> bool {
+pub fn feed_meters(s: &mut State, peaks: &[[f32; 2]], bands: &[[f32; 3]]) -> bool {
     let now = std::time::Instant::now();
     // Long gaps (the app was idle) count as one frame, so a meter does not vanish in a single step.
     let dt = s.mixer.meter_at.map_or(1.0 / 60.0, |t| now.duration_since(t).as_secs_f32().min(0.1));
@@ -1641,7 +1651,8 @@ pub fn feed_meters(s: &mut State, peaks: &[[f32; 2]]) -> bool {
     let mut moving = false;
     for (i, v) in m.iter_mut().enumerate() {
         let p = peaks.get(i).copied().unwrap_or([0.0; 2]);
-        moving |= crate::meters::step(v, p, dt, &s.mixer.meter_cfg);
+        let b = bands.get(i).copied().unwrap_or([0.0; 3]);
+        moving |= crate::meters::step_with_bands(v, p, b, dt, &s.mixer.meter_cfg);
     }
     if !moving {
         s.mixer.meter_at = None;

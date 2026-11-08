@@ -83,21 +83,29 @@ pub fn restore(s: &mut State) -> bool {
     kept
 }
 
-/// Share of the workspace's height the mixer takes along the bottom of FL's layout (`fl_default`), tall enough for long
-/// faders as in FL; never below its default floating height (`FL_MIXER_MIN_H`) nor above 60 % of the workspace.
-const FL_MIXER_SHARE: f32 = 0.5;
+/// Share of the workspace's height the mixer takes under the Channel rack in the first-start layout (`fl_default`):
+/// FL's default, about 38 %; never below its default floating height (`FL_MIXER_MIN_H`) nor above 60 % of the workspace.
+const FL_MIXER_SHARE: f32 = 0.38;
 const FL_MIXER_MIN_H: f32 = 435.0;
+/// Share of the workspace's width the left column (the Channel rack over the Mixer) takes: FL's, about 23 %, though never
+/// narrower than the Mixer's smallest width and never over half the workspace.
+const FL_COLUMN_SHARE: f32 = 0.23;
 
-/// FL's layout on the workspace there is (a first start, `State::fl_layout`): the Channel rack at its top left, the
-/// Playlist floating right of it the whole height, behind the Mixer, and the Mixer floating along the bottom the whole
-/// width.
+/// The first-start layout on the workspace there is (`State::fl_layout`): the Channel rack at the top left, the Playlist right of
+/// it, both down to where the Mixer starts, and the Mixer along the whole bottom. Proportions, not pixels, so it fits every
+/// monitor.
 pub fn fl_default(s: &mut State) {
     let w = s.work_rect();
-    s.rack_pos = (w.x + 4.0, w.y + 4.0);
-    let mix_h = (w.h * FL_MIXER_SHARE).max(FL_MIXER_MIN_H).min(w.h * 0.6).max(Win::Mixer.min_size().1).round();
+    let gap = 4.0;
+    let (mix_min_w, mix_min_h) = Win::Mixer.min_size();
+    let mix_h = (w.h * FL_MIXER_SHARE).max(FL_MIXER_MIN_H).min(w.h * 0.6).max(mix_min_h).round();
+    let col_w = (w.w * FL_COLUMN_SHARE).max(mix_min_w).max(views::rack::min_w(s) + gap).min(w.w * 0.5).round();
+    s.rack_pos = (w.x + gap, w.y + gap);
+    // The rack fills the column down to the Mixer (a short screen keeps it its minimum height: they overlap there).
+    s.rack_size = ((col_w - gap).max(views::rack::min_w(s)), (w.h - mix_h - 2.0 * gap).max(views::rack::MIN_H));
     s.wins[1] = WinState { rect: Rect::new(w.x, w.bottom() - mix_h, w.w, mix_h), maxed: false, mini: false };
-    let px = s.rack_pos.0 + s.rack_size.0 + 8.0;
-    s.wins[0] = WinState { rect: Rect::new(px, w.y, w.right() - px, w.h), maxed: false, mini: false };
+    let px = w.x + col_w + gap;
+    s.wins[0] = WinState { rect: Rect::new(px, w.y, w.right() - px, (w.h - mix_h).max(Win::Playlist.min_size().1)), maxed: false, mini: false };
 }
 
 /// Keeps where the windows inside the main window are, for the next start. The monitor, tapper and touch controller only
@@ -150,8 +158,8 @@ mod tests {
     use super::*;
     use crate::app::App;
 
-    /// A first start lays the windows out as FL does: the Channel rack at the workspace's top left, the Playlist right of
-    /// it down to the Mixer, the Mixer along the bottom the whole width; none maximized.
+    /// A first start lays the windows out: the Channel rack at the workspace's top left, the Playlist right of it, both down to
+    /// where the Mixer starts, the Mixer along the whole bottom; none maximized.
     #[test]
     fn a_first_start_lays_the_windows_out_as_fl() {
         let mut app = App::new(None);
@@ -160,14 +168,14 @@ mod tests {
         fl_default(s);
         let w = s.work_rect();
         let (pl, mx) = (s.win_rect(Win::Playlist), s.win_rect(Win::Mixer));
-        assert_eq!(s.rack_pos, (w.x + 4.0, w.y + 4.0));
-        assert_eq!((mx.x, mx.w, mx.bottom()), (w.x, w.w, w.bottom()), "the mixer along the bottom");
-        assert_eq!((pl.y, pl.right(), pl.bottom()), (w.y, w.right(), w.bottom()), "the playlist the whole height, to the right edge");
-        let z = |win| s.z.iter().position(|&v| v == win);
-        assert!(z(Win::Playlist) < z(Win::Mixer), "behind the mixer");
-        assert!(pl.x >= s.rack_pos.0 + s.rack_size.0, "right of the channel rack");
+        let rack = (s.rack_pos, s.rack_size);
+        assert_eq!(rack.0, (w.x + 4.0, w.y + 4.0), "the rack at the top left");
+        assert_eq!((mx.x, mx.w, mx.bottom()), (w.x, w.w, w.bottom()), "the mixer along the bottom, the whole width");
+        assert!(rack.0 .1 + rack.1 .1 <= mx.y, "the rack ends where the mixer starts");
+        assert_eq!((pl.y, pl.right(), pl.bottom()), (w.y, w.right(), mx.y), "the playlist from the top to the mixer, to the right edge");
+        assert!(pl.x >= rack.0 .0 + rack.1 .0, "right of the rack");
         assert!(s.wins.iter().take(2).all(|ws| !ws.maxed));
-        assert!((mx.h - (w.h * FL_MIXER_SHARE).round()).abs() < 1.0, "the mixer tall, as in FL: {} of {}", mx.h, w.h);
+        assert!((mx.h - (w.h * FL_MIXER_SHARE).round()).abs() < 1.0, "the mixer under the rack: {} of {}", mx.h, w.h);
     }
 
     /// The main window grown after the first paint (maximized at the start): FL's layout follows the new workspace, until
@@ -180,7 +188,10 @@ mod tests {
         app.paint(&mut small, None);
         app.paint(&mut big, None);
         let w = app.state.work_rect();
+        let pl = app.state.win_rect(Win::Playlist);
+        assert_eq!(pl.right(), w.right(), "the playlist to the new right edge");
         assert_eq!(app.state.win_rect(Win::Mixer).w, w.w, "the mixer the new width");
+        assert_eq!(app.state.win_rect(Win::Mixer).bottom(), w.bottom(), "the mixer at the new bottom");
         app.act(crate::app::Action::WinResize(Win::Mixer, crate::app::EDGE_T));
         app.paint(&mut small, None);
         app.paint(&mut big, None);

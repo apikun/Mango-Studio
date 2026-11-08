@@ -695,6 +695,11 @@ struct MixTrack {
     slot_mix: [i32; 10],
     /// Largest |sample| per side after the fader since the meters last read them.
     peak: [f32; 2],
+    /// Three-band energy (low <250Hz, mid 250Hz..4kHz, high >4kHz) accumulated since last read.
+    bands: [f32; 3],
+    lp_state: f32,
+    hp_state: f32,
+    hp_prev: f32,
     /// The fader matrix's target gains `[[L←L, L←R], [R←L, R←R]]`, and the gains as they glide towards them.
     matrix: [[f32; 2]; 2],
     gains: [[Glide; 2]; 2],
@@ -850,6 +855,10 @@ impl MixTrack {
             slot_on: [true; 10],
             slot_mix: [12800; 10],
             peak: [0.0; 2],
+            bands: [0.0; 3],
+            lp_state: 0.0,
+            hp_state: 0.0,
+            hp_prev: 0.0,
             matrix: unity,
             gains: unity.map(|r| r.map(Glide::new)),
             routes: vec![],
@@ -1774,6 +1783,17 @@ impl Engine {
             o[0] = o[0].max(t.peak[0]);
             o[1] = o[1].max(t.peak[1]);
             t.peak = [0.0; 2];
+        }
+    }
+
+    /// Three-band energy per mixer track since the last call, after each track's fader; resets them.
+    pub fn take_track_bands(&mut self, out: &mut Vec<[f32; 3]>) {
+        out.resize(self.tracks.len(), [0.0; 3]);
+        for (o, t) in out.iter_mut().zip(&mut self.tracks) {
+            o[0] += t.bands[0];
+            o[1] += t.bands[1];
+            o[2] += t.bands[2];
+            t.bands = [0.0; 3];
         }
     }
 
@@ -3427,11 +3447,30 @@ impl Engine {
                 k.clear();
                 k.extend_from_slice(&buf);
             }
-            let pk = &mut self.tracks[t].peak;
+            let tr = &mut self.tracks[t];
+            let rate = self.rate.max(1) as f32;
+            let a_lp = (2.0 * std::f32::consts::PI * 250.0 / rate).clamp(0.001, 0.5);
+            let a_hp = (1.0 / (1.0 + 2.0 * std::f32::consts::PI * 4000.0 / rate)).clamp(0.1, 0.99);
+            let mut b0 = 0.0f32;
+            let mut b1 = 0.0f32;
+            let mut b2 = 0.0f32;
             for f in buf.chunks_exact(2) {
-                pk[0] = pk[0].max(f[0].abs());
-                pk[1] = pk[1].max(f[1].abs());
+                tr.peak[0] = tr.peak[0].max(f[0].abs());
+                tr.peak[1] = tr.peak[1].max(f[1].abs());
+                let m = 0.5 * (f[0] + f[1]);
+                tr.lp_state += a_lp * (m - tr.lp_state);
+                let low = tr.lp_state;
+                tr.hp_state = a_hp * (tr.hp_state + m - tr.hp_prev);
+                tr.hp_prev = m;
+                let high = tr.hp_state;
+                let mid = m - low - high;
+                b0 += low * low;
+                b1 += mid * mid;
+                b2 += high * high;
             }
+            tr.bands[0] += b0;
+            tr.bands[1] += b1;
+            tr.bands[2] += b2;
             // The direct output, after the fader matrix, besides the sends (the master's goes out in `route_out`).
             if let (Some(io), true) = (self.io.as_mut(), t != 0) {
                 if let Some(p) = usize::try_from(self.tracks[t].output).ok().filter(|&p| p < io.pairs) {
@@ -7146,6 +7185,25 @@ mod tests {
         let mut peaks = Vec::new();
         e.take_track_peaks(&mut peaks);
         assert!(peaks[1][0] > 0.0 && peaks[0][0] > 0.0 && peaks[2][0] == 0.0, "track meters: {peaks:?}");
+    }
+
+    /// The mixer's colour map is fed with each track's energy in three bands (low, mid, high) since the last read: a track that
+    /// plays has some, a silent one none, and a read starts them again from nothing.
+    #[test]
+    fn track_bands_follow_the_signal() {
+        let p = insert_project();
+        let mut lib = SampleLibrary::new(None);
+        let mut e = Engine::new(&p, &mut lib, 44100, PlayMode::Pattern(1));
+        let mut buf = vec![0.0f32; 4096];
+        e.process(&mut buf);
+        let mut bands = Vec::new();
+        e.take_track_bands(&mut bands);
+        assert!(bands[1].iter().sum::<f32>() > 0.0, "the playing track: {bands:?}");
+        assert_eq!(bands[2], [0.0; 3], "a silent track has none");
+        assert!(bands[1].iter().all(|b| *b >= 0.0), "energies: {:?}", bands[1]);
+        let mut again = Vec::new();
+        e.take_track_bands(&mut again);
+        assert_eq!(again[1], [0.0; 3], "a read resets them");
     }
 
     /// spec: audio/sidechain.md "Extra output", plugins/fruity-stereo-shaper.md "Difference output": a Stereo Shaper's

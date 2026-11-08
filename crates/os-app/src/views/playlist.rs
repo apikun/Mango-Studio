@@ -347,6 +347,12 @@ pub fn drop_ghost(s: &State, grid: Rect, x: f32, y: f32) -> Option<DropGhost> {
             }
             (len, label)
         }
+        Item::Freesound(id) => {
+            let sound = s.freesound.results.iter().find(|sound| sound.id == *id)?;
+            let ppq = f64::from(s.project.ppq.max(1));
+            let ticks = (f64::from(sound.duration) * f64::from(s.tempo) / 60.0 * ppq).ceil().clamp(1.0, f64::from(u32::MAX)) as u32;
+            (ticks, sound.name.clone())
+        }
         Item::Pattern(n) => {
             let src = ClipSource::Pattern(*n);
             (pl::source_len(s, src), pl::source_name(s, src))
@@ -1101,6 +1107,11 @@ fn waveform(ui: &mut Ui, s: &State, g: &PGeom, c: &Clip, ch: u16, body: Body, co
     let fade_ms = pl::fade_ms_per_tick(s);
     let total_ms = f64::from(c.length) * fade_ms;
     let (fin, fout, gain) = (c.stored_fade_in(), c.stored_fade_out(), f64::from(c.gain()));
+    // Quiet Freesound previews can peak far below full scale. Keep their clip waveform visible while leaving audio
+    // playback gain untouched; loud samples retain their scale. Other samples are drawn as they are.
+    let freesound = s.project.channel(ch).and_then(|c| c.sample_path.as_deref()).is_some_and(crate::freesound::is_cached);
+    let source_peak = w.peaks.iter().fold(0.0f32, |m, &(lo, hi)| m.max(lo.abs()).max(hi.abs()));
+    let display_boost = if freesound && source_peak > 1e-6 { (0.75 / f64::from(source_peak)).clamp(1.0, 32.0) } else { 1.0 };
     // Gain of the fades `d` px into the body (the engine's law, os_model::fade_curve).
     let shape = |d: f64| -> f64 {
         let ms = (side + d) / ppt * fade_ms;
@@ -1148,7 +1159,7 @@ fn waveform(ui: &mut Ui, s: &State, g: &PGeom, c: &Clip, ch: u16, body: Body, co
     while x < x1 {
         let d = j * px;
         let Some((lo, hi)) = range(d, d + px) else { break };
-        let k = shape(d + px * 0.5) * amp;
+        let k = shape(d + px * 0.5) * amp * display_boost;
         let (mut yt, mut yb) = (mid - f64::from((hi * 1.7).clamp(-1.0, 1.0)) * k, mid - f64::from((lo * 1.7).clamp(-1.0, 1.0)) * k);
         // Keep a visible hairline where the column is flat (a DC sample, silence).
         if yb - yt < 1.4 {

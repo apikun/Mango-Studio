@@ -338,19 +338,10 @@ pub fn paint(ui: &mut Ui, s: &State, f: &FrameInfo) {
             rack_led(ui, x + 17.5, ry + 12.5, ch.enabled);
         }
         // Pan and volume knobs (§11).
-        if lemon {
-            // The Mango skin: two bars like the mixer's, panning over volume.
-            let bx = x + 43.0;
-            ui.hit(Rect::new(bx - 16.0, ry + 1.0, 32.0, 12.0), Action::Knob(KnobId::ChanPan(i)), s.knob_text(KnobId::ChanPan(i)));
-            super::mixer::centre_bar(ui, bx, ry + 6.5, 15.0, 8.0, s.knob(KnobId::ChanPan(i)), super::mixer::Bar::Centre);
-            ui.hit(Rect::new(bx - 16.0, ry + 13.0, 32.0, 12.0), Action::Knob(KnobId::ChanVol(i)), s.knob_text(KnobId::ChanVol(i)));
-            super::mixer::centre_bar(ui, bx, ry + 19.5, 15.0, 8.0, s.knob(KnobId::ChanVol(i)), super::mixer::Bar::Level);
-        } else {
-            ui.hit(Rect::new(x + 27.0, ry + 5.0, 15.0, 16.0), Action::Knob(KnobId::ChanPan(i)), s.knob_text(KnobId::ChanPan(i)));
-            row_knob(ui, x + 34.5, ry + 13.0, s.knob(KnobId::ChanPan(i)));
-            ui.hit(Rect::new(x + 44.0, ry + 5.0, 15.0, 16.0), Action::Knob(KnobId::ChanVol(i)), s.knob_text(KnobId::ChanVol(i)));
-            row_knob(ui, x + 51.5, ry + 13.0, s.knob(KnobId::ChanVol(i)));
-        }
+        ui.hit(Rect::new(x + 27.0, ry + 5.0, 15.0, 16.0), Action::Knob(KnobId::ChanPan(i)), s.knob_text(KnobId::ChanPan(i)));
+        row_knob(ui, x + 34.5, ry + 13.0, s.knob(KnobId::ChanPan(i)));
+        ui.hit(Rect::new(x + 44.0, ry + 5.0, 15.0, 16.0), Action::Knob(KnobId::ChanVol(i)), s.knob_text(KnobId::ChanVol(i)));
+        row_knob(ui, x + 51.5, ry + 13.0, s.knob(KnobId::ChanVol(i)));
         // Mixer track box (§12).
         if s.rack.show_mixer {
             let mb = Rect::span(x + 66.0, x + 99.0, ry + 1.0, ry + 25.0);
@@ -792,7 +783,9 @@ fn mini_roll(ui: &mut Ui, block: Rect, notes: &[os_model::Note], ch: u16, per_st
 /// Row knob (§3): dark ball, r 7, light pointer from the centre to the rim.
 fn row_knob(ui: &mut Ui, cx: f32, cy: f32, value: f32) {
     let hov = ui.hovering(Rect::new(cx - 7.5, cy - 7.5, 15.0, 15.0));
-    os_ui::kit::knob(ui.c, ui.t, cx, cy, 7.5, value, false, os_ui::kit::KnobLook::Row, os_ui::kit::State::hover(hov));
+    let mut fl = ui.t.clone();
+    fl.style = os_theme::Style::CITRUS;
+    os_ui::kit::knob(ui.c, &fl, cx, cy, 7.5, value, false, os_ui::kit::KnobLook::Row, os_ui::kit::State::hover(hov));
 }
 
 /// Enable LED: the small round LED of the mixer and the playlist (after FL's).

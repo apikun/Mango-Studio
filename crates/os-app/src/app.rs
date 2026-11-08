@@ -289,6 +289,10 @@ pub enum Action {
     BrowserSearch,
     /// The splitter right of the browser: drag to resize it, double-click for the default width (§9).
     BrowserSplitter,
+    /// The Freesound tab's search button (the browser's search text is the query).
+    FreesoundSearch,
+    /// A Freesound card's waveform (sound id, the waveform's rect): press or drag moves the preview's playhead there.
+    FreesoundSeek(u64, Rect),
     /// The plugin browser (Plugin database tab): filter button `i` (`views::plugin_panel::FILTERS`), a category
     /// (`None`: all of them), the star of row `i`.
     BrowserPlugFilter(usize),
@@ -928,6 +932,8 @@ pub enum Drag {
     PianoSplit { dy: f32, top: f32, h: f32 },
     /// The browser's splitter: `dx` = grab offset from the browser's right edge (spec: ui/browser.md §9).
     BrowserSplit { dx: f32 },
+    /// A Freesound card's waveform held: its playhead follows the mouse and the preview starts there on release.
+    FreesoundSeek { id: u64, wave: Rect },
     /// Monitor debug panel slider.
     MonParam(usize),
     /// Cable physics debug panel slider.
@@ -1131,7 +1137,7 @@ pub struct State {
     pub browser_search: String,
     pub browser_search_focus: bool,
     /// The browser's Freesound side: the query, the last search's sounds (crate::freesound).
-    pub freesound: crate::freesound::Browser,
+    pub freesound: crate::freesound::Fs,
     /// Options-menu toggles that are on (`views::browser::OPT_*`).
     pub browser_opts: std::collections::HashSet<&'static str>,
     /// Navigation history of selected row keys and the position in it.
@@ -2650,7 +2656,6 @@ impl App {
         self.export_tick();
         crate::missing::tick(self);
         crate::zipped::tick(self);
-        crate::freesound::tick(self);
         crate::audio_file::melody_tick(self);
         self.midi_tick();
         self.mixer_tick();
@@ -4272,6 +4277,7 @@ impl App {
     /// The monitor is moving (a signal or a decay), or the tapper's pad fading: the shell should tick at animation rate.
     pub fn animating(&self) -> bool {
         self.transport.playing()
+            || self.state.freesound.playing.is_some()
             || matches!(self.drag, Some(Drag::SongPosHold { .. }))
             || self.state.monitor.active()
             || self.state.mixer.meters.iter().any(|m| m.active())
@@ -4357,6 +4363,37 @@ impl App {
     /// Periodic housekeeping; returns whether a repaint is needed.
     pub fn tick(&mut self) -> bool {
         self.plugin_tick();
+        // The Freesound section's background work: results, downloaded previews, and a click's pending play.
+        let (fs_changed, fs_play, fs_drops) = crate::freesound::poll(&mut self.state.freesound);
+        if let Some((id, path, from, peak, limit)) = fs_play {
+            let duration = self.state.freesound.results.iter().find(|x| x.id == id).map_or(0.0, |x| x.duration);
+            if from > 0.0 {
+                self.preview_freesound_from(&path.to_string_lossy(), from, duration, peak);
+            } else {
+                self.preview_freesound(&path.to_string_lossy(), peak);
+            }
+            if let Some(seconds) = limit {
+                crate::freesound::start(&mut self.state.freesound, id, Some(seconds));
+            } else {
+                crate::freesound::start_at(&mut self.state.freesound, id, from);
+            }
+        }
+        for dropped in fs_drops {
+            let name = self.state.freesound.results.iter().find(|sound| sound.id == dropped.id).map_or_else(|| format!("Freesound {}", dropped.id), |sound| sound.name.clone());
+            let updated = dropped.placeholder.is_some_and(|(channel, old_len)| crate::playlist::finish_audio_clip_drop(&mut self.state, channel, old_len, &dropped.path.to_string_lossy(), dropped.seconds));
+            if updated {
+                self.state.message = Some(format!("Finished loading Freesound sample: {name}"));
+            } else {
+                self.state.message = Some(match crate::playlist::add_audio_clip_named(&mut self.state, &dropped.path.to_string_lossy(), dropped.track, dropped.tick, Some(&name)) {
+                    Some(_) => format!("Added Freesound preview: {name}"),
+                    None => format!("Could not read Freesound preview: {name}"),
+                });
+            }
+        }
+        let fs_sounding = crate::freesound::tick(&mut self.state.freesound);
+        if fs_changed || fs_sounding {
+            self.invalidate();
+        }
         // Playback loops over the time selection, as it is now (spec: ui/recording.md §5).
         self.sync_loop_range();
         #[cfg(all(plugin_windows, not(windows)))]
@@ -4435,8 +4472,8 @@ impl App {
             self.damage_rect(views::tapper::pad_rect(&self.state));
         }
         // Mixer meters (spec: ui/mixer.md §9): fall back after playback stops.
-        let peaks = self.transport.take_track_peaks();
-        if crate::mixer::feed_meters(&mut self.state, &peaks) && self.state.shown(Win::Mixer) {
+        let (peaks, bands) = self.transport.take_track_peaks_and_bands();
+        if crate::mixer::feed_meters(&mut self.state, &peaks, &bands) && self.state.shown(Win::Mixer) {
             self.damage_live(Live::Meter);
         }
         // Audio clips follow their channel's stretch, pitch and the tempo (ui/playlist.md §9c). The lengths are worked
@@ -6057,6 +6094,7 @@ impl App {
                     }
                 }
                 Drag::BrowserSplit { dx } => self.browser_split_drag(x - dx),
+                Drag::FreesoundSeek { id, wave } => self.freesound_scrub(id, wave),
                 Drag::SongPosHold { .. } => {}
                 Drag::PrefSlider { label, x: x0, w } => self.pref_slider_drag(label, x0, w),
                 Drag::Ppi { x0, n0 } => self.ppi_set(crate::ppi::dragged(n0, x - x0, self.px_scale)),
@@ -6218,7 +6256,7 @@ impl App {
             Action::Mix(MHit::SlotName(i)) => crate::mixer::slot_name(&self.state, self.state.selected_mixer, *i).is_some(),
             Action::Mix(h) => matches!(
                 h,
-                MHit::Led(_) | MHit::Polarity(_) | MHit::Swap(_) | MHit::Route(_) | MHit::Unroute(_) | MHit::Add | MHit::AddAfter | MHit::SlotLed(_)
+                MHit::Led(_) | MHit::Polarity(_) | MHit::Swap(_) | MHit::Route(_) | MHit::Unroute(_) | MHit::Add | MHit::AddAfter | MHit::ViewWaves | MHit::SlotLed(_)
             ),
             Action::Dlg(h) => matches!(
                 h,
@@ -6281,6 +6319,7 @@ impl App {
                     | Action::MinWin(_)
                     | Action::MaxWin(_)
                     | Action::BrowserTab(_)
+                    | Action::FreesoundSearch
                     | Action::BrowserCollapse
                     | Action::BrowserReread
                     | Action::PianoUndo
@@ -7138,6 +7177,10 @@ impl App {
         if let Some(Drag::RollSel { .. }) = self.drag.clone() {
             self.drag = None;
             return self.rolling_select_end();
+        }
+        if let Some(Drag::FreesoundSeek { id, .. }) = self.drag.clone() {
+            self.drag = None;
+            return self.freesound_seek_end(id);
         }
         if let Some(Drag::Pl(d)) = self.drag.clone() {
             self.drag = None;
@@ -9098,7 +9141,7 @@ impl App {
                 s.set_knob(id, if s.knob(id) >= 0.5 { 0.0 } else { 1.0 });
                 self.hint = Cow::Owned(s.knob_text(id));
             }
-            Action::Knob(id @ (crate::knobs::KnobId::MixPan(_) | crate::knobs::KnobId::MixSep(_) | crate::knobs::KnobId::ChanPan(_) | crate::knobs::KnobId::ChanVol(_) | crate::knobs::KnobId::SlotMix(..) | crate::knobs::KnobId::MasterVol | crate::knobs::KnobId::MasterPitch)) if os_ui::kit::lemon::on(&self.theme.colors) => {
+            Action::Knob(id @ (crate::knobs::KnobId::MasterVol | crate::knobs::KnobId::MasterPitch)) if os_ui::kit::lemon::on(&self.theme.colors) => {
                 let bar = self.hits.iter().rev().find(|h| h.action == Action::Knob(id)).map(|h| h.rect);
                 if let Some(r) = bar {
                     crate::history::knob(&mut self.state, id, false);
@@ -9265,7 +9308,7 @@ impl App {
                 self.damage_win(Win::PianoRoll);
             }
             Action::CloseWin(w) => s.hide(w),
-            Action::BrowserRow(_) | Action::BrowserTab(_) | Action::BrowserList | Action::BrowserCollapse | Action::BrowserReread | Action::BrowserMenu | Action::BrowserSearch | Action::BrowserSplitter => {}
+            Action::FreesoundSearch | Action::FreesoundSeek(..) | Action::BrowserRow(_) | Action::BrowserTab(_) | Action::BrowserList | Action::BrowserCollapse | Action::BrowserReread | Action::BrowserMenu | Action::BrowserSearch | Action::BrowserSplitter => {}
             Action::BrowserPlugFilter(_) | Action::BrowserPlugCat(_) | Action::BrowserPlugStar(_) | Action::Picker(_) => {}
             Action::TypeIn(t) => crate::typein::click(s, t),
             Action::PlaylistArea | Action::MixerArea | Action::RackArea | Action::Swallow => {}
@@ -10237,6 +10280,17 @@ pub(crate) fn preview_project(path: &str) -> Project {
     p.channels[0].sample_path = Some(path.to_string());
     p.patterns = vec![Pattern { number: 1, notes: vec![Note { length: u32::from(p.ppq.max(4)), ..Note::step(0, 0) }], ..Pattern::default() }];
     p.arrangements.clear();
+    p
+}
+
+/// A Freesound preview's small on-card peak value is used to normalize playback without changing the downloaded file.
+pub(crate) fn freesound_preview_project(path: &str, peak: f32) -> Project {
+    let mut p = preview_project(path);
+    if peak.is_finite() && peak > 1e-6 {
+        let gain = (0.85 / f64::from(peak)).clamp(0.05, 32.0);
+        // Invert the shared channel volume curve so the quiet Freesound preview reaches a sensible listening level.
+        p.channels[0].volume = (10.0 * gain + 1.0).ln() / 11.0f64.ln();
+    }
     p
 }
 
@@ -15603,6 +15657,54 @@ mod tests {
         assert!(du < 5 && v == 0, "while playing: {du} dropouts; {v} voices after Stop");
     }
 
+    /// The browser's Freesound tab: the search button, a card per result stacked `CARD_H` apart, and an empty search
+    /// that starts nothing and says what to do.
+    #[test]
+    fn browser_freesound_tab() {
+        use crate::freesound::Sound;
+        use crate::views::browser::{rows, Item, CARD_H, FREESOUND_TAB};
+        let Ok(mut c) = Canvas::new(1920, 1080, 1.0) else { return };
+        let mut app = App::new(None);
+        app.state.project = test_project();
+        app.state.file = None;
+        app.state.path = None;
+        app.state.z = vec![Win::Playlist];
+        app.state.browser_tab = FREESOUND_TAB;
+        let fs = &mut app.state.freesound;
+        fs.results = vec![
+            Sound { id: 1, name: "Kick one".into(), duration: 0.5, preview: "x".into(), waveform: String::new() },
+            Sound { id: 2, name: "Pad".into(), duration: 65.0, preview: "y".into(), waveform: String::new() },
+        ];
+        fs.peaks.insert(1, vec![0.2, 1.0, 0.5]);
+        frame(&mut app, &mut c, None);
+        assert!(app.hits.iter().any(|h| h.action == Action::FreesoundSearch), "the search button");
+        assert!(app.hits.iter().any(|h| matches!(h.action, Action::FreesoundSeek(1, _))), "the waveform seeks the preview");
+        assert_eq!(rows(&app.state).len(), 2);
+        assert!(matches!(rows(&app.state)[1].item, Item::Freesound(2)));
+        let card = hit_rect(&app, &Action::BrowserRow(0));
+        assert_eq!(hit_rect(&app, &Action::BrowserRow(1)).y - card.y, CARD_H, "the cards are stacked");
+        // A sounding sound: its card shows the stop mark and a line that moves across the waveform.
+        let shot = |c: &Canvas| {
+            let mut v = vec![0u32; 1920 * 1080];
+            c.copy_to_xrgb(&mut v);
+            v
+        };
+        let idle = shot(&c);
+        let back = |secs: f32| std::time::Instant::now().checked_sub(std::time::Duration::from_secs_f32(secs));
+        if let (Some(a), Some(b)) = (back(2.0), back(6.0)) {
+            let playing = |since| Some(crate::freesound::Playing { id: 1, since, secs: 10.0, duration: 10.0, from: 0.0 });
+            app.state.freesound.playing = playing(a);
+            assert!(app.animating(), "the frames run at full speed while a sound plays");
+            frame(&mut app, &mut c, None);
+            let early = shot(&c);
+            app.state.freesound.playing = playing(b);
+            frame(&mut app, &mut c, None);
+            let late = shot(&c);
+            assert_ne!(idle, early, "a sounding card shows the stop mark");
+            assert_ne!(early, late, "the line moves");
+        }
+    }
+
     /// Browser (spec: ui/browser.md): tabs, opening nodes, dragging a pattern and a generator onto the playlist.
     #[test]
     fn browser_tree_and_drag() {
@@ -15617,7 +15719,7 @@ mod tests {
         frame(&mut app, &mut c, None);
         // The all tab lists the roots with content and the preset store, all closed.
         let labels: Vec<String> = rows(&app.state).into_iter().map(|r| r.label).collect();
-        assert_eq!(labels, ["Current project", "Plugin database", "Plugin presets", "Freesound"]);
+        assert_eq!(labels, ["Current project", "Plugin database", "Plugin presets"]);
         // Project tab: Current project opened with its patterns (default like the screenshot), History above them.
         let r0 = hit_rect(&app, &Action::BrowserTab(1));
         click(&mut app, &mut c, r0);
@@ -15671,12 +15773,11 @@ mod tests {
         app.mouse_move(grid.x + 210.0, grid.y + 60.0);
         app.mouse_up();
         assert_eq!(app.state.project.channels.len(), ch0 + 1);
-        // The favorites tab is not available yet: greyed out (no tab hit), its page empty; wheel never scrolls past
-        // the content. There is no online content tab.
-        assert!(!app.hits.iter().any(|h| h.action == Action::BrowserTab(3)));
-        assert!(app.hits.iter().any(|h| h.action == Action::Placeholder("Favorites")));
-        assert!(!app.hits.iter().any(|h| h.action == Action::Placeholder("Online content")));
-        app.act(Action::BrowserTab(3));
+        // FL's Favorites slot is the Freesound tab: a tab of its own, its page empty before a search (it is set by hand
+        // here, a click would search the network); wheel never scrolls past the content.
+        assert!(app.hits.iter().any(|h| h.action == Action::BrowserTab(3)));
+        assert!(!app.hits.iter().any(|h| h.action == Action::Placeholder("Favorites")));
+        app.state.browser_tab = 3;
         assert!(rows(&app.state).is_empty());
         let r0 = hit_rect(&app, &Action::BrowserTab(0));
         click(&mut app, &mut c, r0);
@@ -16795,7 +16896,7 @@ mod tests {
         app.state.z.retain(|w| *w != Win::Mixer);
         frame(&mut app, &mut c, None);
         let split = hit_rect(&app, &Action::BrowserSplitter);
-        assert_eq!((split.x, split.right()), (201.0, 209.0), "the measured splitter");
+        assert_eq!((split.x, split.right()), (362.0, 370.0), "the measured splitter");
         let drag = |app: &mut App, c: &mut Canvas, dx: f32| {
             let s = hit_rect(app, &Action::BrowserSplitter);
             app.mouse_move(s.cx(), s.cy());
@@ -16806,12 +16907,12 @@ mod tests {
             frame(app, c, None);
         };
         drag(&mut app, &mut c, 150.0);
-        assert_eq!(app.state.browser_w, 359.0);
-        assert_eq!(app.state.work_rect().x, 359.0);
-        assert_eq!(hit_rect(&app, &Action::BrowserSplitter).x, 351.0);
-        assert_eq!(hit_rect(&app, &Action::BrowserRow(0)).right(), 351.0, "rows span the wider list");
+        assert_eq!(app.state.browser_w, 520.0);
+        assert_eq!(app.state.work_rect().x, 520.0);
+        assert_eq!(hit_rect(&app, &Action::BrowserSplitter).x, 512.0);
+        assert_eq!(hit_rect(&app, &Action::BrowserRow(0)).right(), 512.0, "rows span the wider list");
         drag(&mut app, &mut c, -500.0);
-        assert_eq!(app.state.browser_w, 209.0, "not narrower than the default");
+        assert_eq!(app.state.browser_w, 370.0, "not narrower than the default");
         drag(&mut app, &mut c, 2000.0);
         assert_eq!(app.state.browser_w, 960.0, "at most half the window");
         let s = hit_rect(&app, &Action::BrowserSplitter);
@@ -16820,7 +16921,7 @@ mod tests {
             app.mouse_down();
             app.mouse_up();
         }
-        assert_eq!(app.state.browser_w, 209.0, "a double click: the default width");
+        assert_eq!(app.state.browser_w, 370.0, "a double click: the default width");
     }
 
     /// A hovered row whose label does not fit scrolls it (spec: ui/browser.md §9): still at first, then moving while the
@@ -16916,7 +17017,7 @@ mod tests {
         // Esc clears the search and leaves the box.
         app.key(&Key::Named(NamedKey::Escape), false, false);
         assert!(app.state.browser_search.is_empty() && !app.state.browser_search_focus);
-        assert_eq!(rows(&app.state).len(), 4);
+        assert_eq!(rows(&app.state).len(), 3);
         // Search box on top moves the list down.
         app.browser_cmd(crate::browser::BCmd::Toggle("top"));
         frame(&mut app, &mut c, None);
@@ -21113,7 +21214,7 @@ mod tests {
         app.state.mixer.meters = (0..18)
             .map(|i| {
                 let db = [crate::meters::to_db(0.12 * i as f32), crate::meters::to_db(0.1 * i as f32)];
-                crate::meters::Meter { db, hold: db.map(|d| if d > crate::meters::SILENT { d + 3.0 } else { d }), held: [0.0; 2] }
+                crate::meters::Meter { db, hold: db.map(|d| if d > crate::meters::SILENT { d + 3.0 } else { d }), held: [0.0; 2], history: Default::default() }
             })
             .collect();
         frame(&mut app, &mut c, None);
@@ -21126,9 +21227,10 @@ mod tests {
         c.pixmap.save_png(dir.join("mx_slot_menu.png")).unwrap();
     }
 
-    /// Mango skin: the pan bar follows the mouse across it (left end hard left, right end hard right, the middle centre).
+    /// The mixer's pan knob is round and is dragged up and down, as in FL (not along like a bar); a small movement moves
+    /// the value a little (no jump to where the mouse is on the knob).
     #[test]
-    fn mixer_pan_bar_follows_the_mouse() {
+    fn the_mixer_pan_knob_drags_up_and_down() {
         let Ok(mut c) = Canvas::new(1920, 1080, 1.0) else { return };
         let mut app = App::new(None);
         app.set_design(Design::Lemon, false);
@@ -21137,16 +21239,66 @@ mod tests {
         frame(&mut app, &mut c, None);
         let id = crate::knobs::KnobId::MixPan(2);
         let r = hit_rect(&app, &Action::Knob(id));
-        app.mouse_move(r.cx(), r.cy());
+        assert!((r.w - r.h).abs() < 1.0, "a round knob's square area: {r:?}");
+        let before = app.state.knob(id);
+        app.mouse_move(r.x + 1.0, r.cy());
         app.mouse_down();
-        app.mouse_move(r.x - 20.0, r.cy());
-        assert_eq!(app.state.knob(id), 0.0, "hard left");
-        app.mouse_move(r.right() + 20.0, r.cy());
-        assert_eq!(app.state.knob(id), 1.0, "hard right");
-        app.mouse_move(r.cx() + 0.5, r.cy() + 30.0);
-        assert_eq!(app.state.knob(id), 0.5, "back to the centre");
+        assert_eq!(app.state.knob(id), before, "pressing on the knob's edge does not move it");
+        app.mouse_move(r.x + 1.0, r.cy() - 20.0);
+        assert!(app.state.knob(id) > before, "dragging up turns it up: {} -> {}", before, app.state.knob(id));
+        app.mouse_move(r.x + 1.0, r.cy() + 40.0);
+        assert!(app.state.knob(id) < before, "dragging down turns it down");
         app.mouse_up();
     }
+
+    /// The mixer's meter is a waveform: a louder signal draws wider than a quiet one, and silence draws nothing (the setting
+    /// Colorful waveforms only picks the colour, so the test leaves it alone).
+    #[test]
+    fn the_mixer_meter_is_a_waveform_as_wide_as_the_level() {
+        let Ok(mut c) = Canvas::new(1920, 1080, 1.0) else { return };
+        let mut app = App::new(None);
+        app.set_design(Design::Lemon, false);
+        app.state.project = test_project();
+        app.state.z = vec![Win::Mixer];
+        app.state.mixer.layout = crate::mixer::EXTRA_LARGE;
+        let shot = |app: &mut App, c: &mut Canvas, amp: f32| {
+            let slice = crate::meters::WaveSlice { amp, centroid: 1000.0, bands: [amp; 3] };
+            app.state.mixer.meters = (0..18).map(|_| crate::meters::Meter { history: (0..crate::meters::HISTORY).map(|_| slice).collect(), ..Default::default() }).collect();
+            frame(app, c, None);
+            let mut v = vec![0u32; 1920 * 1080];
+            c.copy_to_xrgb(&mut v);
+            v
+        };
+        let none = shot(&mut app, &mut c, 0.0);
+        let quiet = shot(&mut app, &mut c, 0.12);
+        let loud = shot(&mut app, &mut c, 0.9);
+        let drawn = |a: &[u32], b: &[u32]| a.iter().zip(b).filter(|(x, y)| x != y).count();
+        let (q, l) = (drawn(&none, &quiet), drawn(&none, &loud));
+        assert!(q > 0, "a quiet signal shows");
+        assert!(l > q * 2, "a loud signal is wider: {q} against {l} pixels");
+    }
+
+    /// The title bar's "View waveforms" button switches the strips' meters between the waveform and the level bars.
+    #[test]
+    fn view_waveforms_button_switches_the_meters() {
+        let Ok(mut c) = Canvas::new(1920, 1080, 1.0) else { return };
+        let mut app = App::new(None);
+        app.set_design(Design::Lemon, false);
+        app.state.project = test_project();
+        app.state.z = vec![Win::Mixer];
+        app.state.mixer.layout = crate::mixer::EXTRA_LARGE;
+        let slice = crate::meters::WaveSlice { amp: 0.6, centroid: 1000.0, bands: [0.6; 3] };
+        app.state.mixer.meters = (0..18).map(|_| crate::meters::Meter { history: (0..crate::meters::HISTORY).map(|_| slice).collect(), ..Default::default() }).collect();
+        frame(&mut app, &mut c, None);
+        let on = app.hits.iter().any(|h| h.action == Action::Mix(crate::mixer::MHit::ViewWaves));
+        assert!(on, "the button is there");
+        assert!(app.state.mixer.waves);
+        crate::mixer::hit(&mut app, crate::mixer::MHit::ViewWaves);
+        assert!(!app.state.mixer.waves, "one click turns the waveforms off");
+        crate::mixer::hit(&mut app, crate::mixer::MHit::ViewWaves);
+        assert!(app.state.mixer.waves);
+    }
+
 
     /// The mixer track menu's Random color, clicked twice, gives the track a new colour each time.
     #[test]

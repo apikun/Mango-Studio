@@ -19,6 +19,7 @@ pub mod extctl;
 pub mod logo;
 pub mod params;
 pub mod slicing;
+pub mod spectrum;
 pub mod state;
 pub mod view;
 
@@ -58,6 +59,11 @@ pub struct Shared {
 impl Shared {
     pub fn sample(&self) -> Option<Arc<Sample>> {
         self.sample.lock().ok().and_then(|s| s.clone())
+    }
+
+    /// Deck B's loop, if one is loaded.
+    pub fn sample_b(&self) -> Option<Arc<Sample>> {
+        self.sample_b.lock().ok().and_then(|s| s.clone())
     }
 
     pub fn loaded_path(&self) -> String {

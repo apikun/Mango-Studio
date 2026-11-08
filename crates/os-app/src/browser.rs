@@ -33,6 +33,9 @@ impl App {
                 self.browser_click = None;
                 s.browser_tab = i;
                 s.browser_scroll = 0.0;
+                if i == view::FREESOUND_TAB && s.freesound.results.is_empty() && !s.freesound.busy {
+                    crate::freesound::search(&mut s.freesound, &s.browser_search);
+                }
             }
             Action::BrowserCollapse => {
                 let tab = format!("{}:", s.browser_tab);
@@ -47,6 +50,11 @@ impl App {
                 s.playlist.popup = if open { None } else { Some(Popup { x, y, items: options_menu(s), sub: None, scroll: [0; 2] }) };
             }
             Action::BrowserSearch => s.browser_search_focus = true,
+            Action::FreesoundSearch => {
+                let q = s.browser_search.clone();
+                crate::freesound::search(&mut s.freesound, &q);
+            }
+            Action::FreesoundSeek(id, wave) => self.freesound_seek_press(id, wave),
             Action::BrowserPlugFilter(i) => {
                 s.browser_plug_filter = i;
                 s.browser_plug_cat = None;
@@ -99,12 +107,6 @@ impl App {
                         s.rack.select_only(c);
                     }
                     Item::History(e) => s.message = crate::history::go_to(s, e),
-                    // The Freesound search row gives the browser's search field to the query (crate::freesound).
-                    Item::FreesoundSearch => {
-                        s.freesound.typing = true;
-                        s.browser_search_focus = true;
-                    }
-                    Item::Freesound(i) => crate::freesound::preview(self, i),
                     _ => {}
                 }
                 if double {
@@ -114,9 +116,31 @@ impl App {
                 if let Item::Sample(path) = &row.item {
                     self.preview_sample(path);
                 }
+                if let Item::Freesound(id) = &row.item {
+                    let id = *id;
+                    if crate::freesound::progress(&self.state.freesound, id).is_some() {
+                        // A click on the sound that sounds stops it.
+                        if let Some(path) = self.state.freesound.files.get(&id).or_else(|| self.state.freesound.quick_files.get(&id)).cloned() {
+                            self.stop_preview_of(&path.to_string_lossy());
+                        }
+                        self.state.freesound.playing = None;
+                    } else {
+                        if let Some(p) = self.state.freesound.playing.take() {
+                            if let Some(path) = self.state.freesound.files.get(&p.id).or_else(|| self.state.freesound.quick_files.get(&p.id)).cloned() {
+                                self.stop_preview_of(&path.to_string_lossy());
+                            }
+                        }
+                        if let Some(path) = crate::freesound::click(&mut self.state.freesound, id) {
+                            let peak = self.state.freesound.levels.get(&id).copied().unwrap_or(0.0);
+                            self.preview_freesound(&path.to_string_lossy(), peak);
+                            let limit = self.state.freesound.quick_files.contains_key(&id).then(|| self.state.freesound.quick_lengths.get(&id).copied()).flatten();
+                            crate::freesound::start(&mut self.state.freesound, id, limit);
+                        }
+                    }
+                }
                 let s = &mut self.state;
                 s.browser_scroll = s.browser_scroll.min(view::max_scroll(s));
-                if !matches!(row.item, Item::None | Item::File(_) | Item::History(_) | Item::FreesoundSearch | Item::Freesound(_)) {
+                if !matches!(row.item, Item::None | Item::File(_) | Item::History(_)) {
                     self.drag = Some(Drag::Browser { item: row.item, label: row.label, m0: self.mouse, started: false });
                 }
             }
@@ -124,6 +148,118 @@ impl App {
         }
         self.invalidate();
         true
+    }
+
+    /// Cuts the preview of `path` off at once (a new preview replaces the one sounding).
+    pub(crate) fn stop_preview_of(&self, path: &str) {
+        let mut p = crate::app::preview_project(path);
+        p.tempo = Some(self.state.tempo);
+        self.transport.preview_for(p, Some(std::time::Duration::from_millis(1)));
+    }
+
+    /// Plays the whole of a preview file (a Freesound sound: its card follows the position and a click stops it).
+    pub(crate) fn preview_full(&self, path: &str) {
+        let mut p = crate::app::preview_project(path);
+        p.tempo = Some(self.state.tempo);
+        crate::preview_track::route(&mut p, &self.state.project, crate::prefs::number(&crate::prefs::BROWSER_PREVIEW_TRACK));
+        self.transport.preview_for(p, None);
+    }
+
+    /// Plays a Freesound sample at a sensible listening level without modifying its cached audio file.
+    pub(crate) fn preview_freesound(&self, path: &str, peak: f32) {
+        let mut p = crate::app::freesound_preview_project(path, peak);
+        p.tempo = Some(self.state.tempo);
+        crate::preview_track::route(&mut p, &self.state.project, crate::prefs::number(&crate::prefs::BROWSER_PREVIEW_TRACK));
+        self.transport.preview_for(p, None);
+    }
+
+    pub(crate) fn preview_freesound_from(&self, path: &str, from: f32, duration: f32, peak: f32) {
+        if duration <= 0.0 {
+            return self.preview_freesound(path, peak);
+        }
+        let tempo = self.state.tempo;
+        let mut p = crate::app::freesound_preview_project(path, peak);
+        let ppq = f64::from(p.ppq.max(1));
+        let secs = f64::from((duration - from).max(0.05));
+        let ticks = (secs * tempo / 60.0 * ppq).ceil().clamp(1.0, f64::from(u32::MAX)) as u32;
+        let a = f64::from(from.max(0.0)) * 1000.0;
+        let clip = os_model::Clip { position: 0, length: ticks, track: 0, source: os_model::ClipSource::Channel(0), muted: false, window: Some((a, a + secs * 1000.0)), raw: os_model::Clip::TEMPLATE };
+        p.arrangements = vec![os_model::Arrangement { clips: vec![clip], ..Default::default() }];
+        p.tempo = Some(tempo);
+        crate::preview_track::route(&mut p, &self.state.project, crate::prefs::number(&crate::prefs::BROWSER_PREVIEW_TRACK));
+        self.transport.preview_song(p);
+    }
+
+    /// The share of a Freesound card's waveform the mouse is at (0..1).
+    fn freesound_frac(&self, wave: Rect) -> f32 {
+        ((self.mouse.0 - wave.x) / wave.w.max(1.0)).clamp(0.0, 1.0)
+    }
+
+    /// A press on a Freesound card's waveform: its playhead follows the mouse, and the preview starts there when the
+    /// button is let go. A preview not downloaded yet is fetched now, so the seek can play as soon as it is in.
+    pub(crate) fn freesound_seek_press(&mut self, id: u64, wave: Rect) {
+        let frac = self.freesound_frac(wave);
+        // Whatever preview sounded gives way to the playhead: it starts again where it is let go.
+        if let Some(p) = self.state.freesound.playing.take() {
+            if let Some(path) = self.state.freesound.files.get(&p.id).or_else(|| self.state.freesound.quick_files.get(&p.id)).cloned() {
+                self.stop_preview_of(&path.to_string_lossy());
+            }
+        }
+        if !self.state.freesound.files.contains_key(&id) {
+            crate::freesound::click_for_seek(&mut self.state.freesound, id);
+            self.state.freesound.waiting_from = Some(frac);
+        }
+        self.state.freesound.scrub = Some((id, frac));
+        self.drag = Some(Drag::FreesoundSeek { id, wave });
+        self.invalidate();
+    }
+
+    /// The mouse moved while a Freesound waveform is held: the playhead follows it (the sound waits for the release).
+    pub(crate) fn freesound_scrub(&mut self, id: u64, wave: Rect) {
+        self.state.freesound.scrub = Some((id, self.freesound_frac(wave)));
+        self.invalidate();
+    }
+
+    /// A Freesound waveform let go: the preview starts at the playhead, or there when its download arrives.
+    pub(crate) fn freesound_seek_end(&mut self, id: u64) {
+        let Some((_, frac)) = self.state.freesound.scrub.take() else { return };
+        let (path, duration) = {
+            let fs = &self.state.freesound;
+            (fs.files.get(&id).cloned(), fs.results.iter().find(|x| x.id == id).map_or(0.0, |x| x.duration))
+        };
+        let Some(path) = path else {
+            // Still downloading: `poll` starts it at the playhead when the file is in.
+            self.state.freesound.waiting_from = Some(frac);
+            self.invalidate();
+            return;
+        };
+        let from = crate::freesound::offset(&self.state.freesound, id, frac);
+        let peak = self.state.freesound.levels.get(&id).copied().unwrap_or(0.0);
+        self.preview_freesound_from(&path.to_string_lossy(), from, duration, peak);
+        crate::freesound::start_at(&mut self.state.freesound, id, from);
+        let name = self.state.freesound.results.iter().find(|x| x.id == id).map_or("", |x| x.name.as_str());
+        self.state.freesound.status = format!("Playing: {name}");
+        self.invalidate();
+    }
+
+    /// Plays a preview file from `from` seconds (a Freesound card's playhead was moved there). A one-clip playlist
+    /// starts the sample at its window, which is how the engine skips into an audio file.
+    pub(crate) fn preview_full_from(&self, path: &str, from: f32, duration: f32) {
+        // Without a length there is nothing to trim to: play it whole, as a normal preview does.
+        if duration <= 0.0 {
+            return self.preview_full(path);
+        }
+        let tempo = self.state.tempo;
+        let mut p = crate::app::preview_project(path);
+        let ppq = f64::from(p.ppq.max(1));
+        let secs = f64::from((duration - from).max(0.05));
+        let ticks = (secs * tempo / 60.0 * ppq).ceil().clamp(1.0, f64::from(u32::MAX)) as u32;
+        let a = f64::from(from.max(0.0)) * 1000.0;
+        let clip = os_model::Clip { position: 0, length: ticks, track: 0, source: os_model::ClipSource::Channel(0), muted: false, window: Some((a, a + secs * 1000.0)), raw: os_model::Clip::TEMPLATE };
+        p.arrangements = vec![os_model::Arrangement { clips: vec![clip], ..Default::default() }];
+        p.tempo = Some(tempo);
+        crate::preview_track::route(&mut p, &self.state.project, crate::prefs::number(&crate::prefs::BROWSER_PREVIEW_TRACK));
+        self.transport.preview_song(p);
     }
 
     /// Clicking a sample plays it once (spec §7): cut off after `PREVIEW_LIMIT` unless "Full sample preview" is ticked.
@@ -292,35 +428,17 @@ impl App {
         }
         let s = &mut self.state;
         if focus {
-            // While the Freesound search row has the typing, the field edits the query (Enter searches, Esc leaves).
-            if s.freesound.typing {
-                match key {
-                    Key::Named(NamedKey::Escape) => {
-                        s.freesound.typing = false;
-                        s.browser_search_focus = false;
-                    }
-                    Key::Named(NamedKey::Enter) => {
-                        s.freesound.typing = false;
-                        s.browser_search_focus = false;
-                        crate::freesound::start_search(self);
-                    }
-                    Key::Named(NamedKey::Backspace) => {
-                        s.freesound.query.pop();
-                    }
-                    Key::Named(NamedKey::Space) => s.freesound.query.push(' '),
-                    Key::Character(c) if !ctrl && !alt => s.freesound.query.push_str(c),
-                    _ => return false,
-                }
-                self.invalidate();
-                return true;
-            }
             match key {
                 Key::Named(NamedKey::Escape) => {
                     s.browser_search.clear();
                     s.browser_search_focus = false;
                 }
                 Key::Named(NamedKey::Enter) => {
-                    if let Some(m) = find(s, 1) {
+                    // On the Freesound tab Enter searches Freesound, as its button does.
+                    if s.browser_tab == view::FREESOUND_TAB {
+                        let q = s.browser_search.clone();
+                        crate::freesound::search(&mut s.freesound, &q);
+                    } else if let Some(m) = find(s, 1) {
                         s.message = Some(m);
                     }
                 }
@@ -517,6 +635,29 @@ impl App {
                     self.sample_to_rack(path, y);
                 }
             }
+            Item::Freesound(id) => {
+                if let Some((track, tick)) = spot {
+                    let name = s.freesound.results.iter().find(|sound| sound.id == id).map_or_else(|| format!("Freesound {id}"), |sound| sound.name.clone());
+                    if let Some(path) = s.freesound.files.get(&id).cloned() {
+                        s.message = Some(match pl::add_audio_clip_named(s, &path.to_string_lossy(), track, tick, Some(&name)) {
+                            Some(_) => format!("Added Freesound preview: {name}"),
+                            None => format!("Could not read Freesound preview: {name}"),
+                        });
+                    } else {
+                        let path = s.freesound.quick_files.get(&id).cloned().or_else(|| crate::freesound::placeholder_audio().ok());
+                        let clip = path.as_ref().and_then(|p| pl::add_audio_clip_named(s, &p.to_string_lossy(), track, tick, Some(&name)));
+                        let channel = match s.playlist.source { Some(ClipSource::Channel(ch)) => Some(ch), _ => None };
+                        let old_length = clip.and_then(|i| pl::clips(s).get(i).map(|c| c.length)).unwrap_or(0);
+                        let placeholder = channel.filter(|_| clip.is_some()).map(|ch| (ch, old_length));
+                        let _ = crate::freesound::drop_sample(&mut s.freesound, id, track, tick, placeholder);
+                        s.message = Some(if clip.is_some() {
+                            format!("Added {name}; finishing the audio download in the background")
+                        } else {
+                            format!("Downloading Freesound preview: {name}; the clip will appear when ready")
+                        });
+                    }
+                }
+            }
             // On the playlist — a track row or its header (issue #2) — the instrument lands there: the channel as
             // the F8 menu adds it, plus a clip of a new pattern named after it on that track, at the drop (on a
             // header, at the song position). On the rack: a new channel at the bottom (spec: ui/plugin-menu.md §5).
@@ -550,9 +691,8 @@ impl App {
                     self.state.message = msg;
                 }
             }
-            // A plugin file was handled before this match (a click or a drop adds it wherever it lands); a Freesound
-            // sound not fetched yet is only a message: nothing to drop.
-            Item::None | Item::File(_) | Item::History(_) | Item::Preset(_) | Item::PlugFile(_) | Item::FreesoundSearch | Item::Freesound(_) => {}
+            // A plugin file was handled before this match (a click or a drop adds it wherever it lands).
+            Item::None | Item::File(_) | Item::History(_) | Item::Preset(_) | Item::PlugFile(_) => {}
         }
     }
 
@@ -619,8 +759,6 @@ impl App {
                     s.rack.select_only(c);
                 }
                 Item::History(e) => return crate::history::go_to(s, e),
-                // What a click on a Freesound row does (crate::freesound): the menu's Preview is the same.
-                Item::Freesound(i) => crate::freesound::preview(self, i),
                 _ => {}
             },
             RowCmd::Pattern(pc) => {
@@ -1006,7 +1144,7 @@ pub fn row_menu(s: &crate::app::State, row: &view::Row) -> Vec<PItem> {
             items.push(if s.hosted_rows.contains(&key) { it } else { it.off() });
         }
         Item::Freesound(_) => items.push(r("Preview", RowCmd::Activate)),
-        Item::None | Item::File(_) | Item::Param(..) | Item::FreesoundSearch => {}
+        Item::None | Item::File(_) | Item::Param(..) => {}
     }
     // The plugin browser's variants and star.
     if s.browser_tab == view::PLUGIN_TAB {
@@ -1237,7 +1375,8 @@ mod tests {
     /// `browser.txt` (spec: ui/browser.md §9): the dragged width, never below the default; anything else is the default.
     #[test]
     fn kept_width() {
-        assert_eq!(parse_width("width=359\n"), 359.0);
+        assert_eq!(parse_width("width=450\n"), 450.0);
+        assert_eq!(parse_width("width=359\n"), crate::views::BROWSER_W, "narrower than the least is the least");
         assert_eq!(parse_width("width=120"), crate::views::BROWSER_W);
         assert_eq!(parse_width("width=wide\n"), crate::views::BROWSER_W);
         assert_eq!(parse_width(""), crate::views::BROWSER_W);
@@ -1262,11 +1401,11 @@ mod tests {
         app.state.browser_folders.push(dir.clone());
         app.state.browser_open.insert(view::disk_key(&dir));
         let keys: Vec<String> = view::rows(&app.state).into_iter().map(|r| r.key).collect();
-        assert_eq!(keys.len(), 9, "the four closed roots, the dropped folder and its four rows");
+        assert_eq!(keys.len(), 8, "the three closed roots, the dropped folder and its four rows");
         // From no selection Down takes the first row: the closed Current project root, nothing heard.
         assert_eq!(move_sel(&mut app.state, 1), None);
         assert_eq!(app.state.browser_sel.as_deref(), Some(keys[0].as_str()));
-        for k in &keys[1..5] {
+        for k in &keys[1..4] {
             assert_eq!(move_sel(&mut app.state, 1), None, "roots and the folder row are silent");
             assert_eq!(app.state.browser_sel.as_deref(), Some(k.as_str()));
         }
@@ -1284,23 +1423,23 @@ mod tests {
         assert_eq!(move_sel(&mut app.state, -1).as_deref(), Some(snare.as_str()));
         assert_eq!(move_sel(&mut app.state, -1).as_deref(), Some(kick.as_str()));
         assert_eq!(move_sel(&mut app.state, -1), None, "the folder row again");
-        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[4].as_str()));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[3].as_str()));
         // Right on the opened folder steps into its first row, the kick, heard.
         assert_eq!(into_sel(&mut app.state).as_deref(), Some(kick.as_str()));
-        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[5].as_str()));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[4].as_str()));
         // Right on a sample replays it, the selection staying where it is.
         assert_eq!(into_sel(&mut app.state).as_deref(), Some(kick.as_str()));
-        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[5].as_str()));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[4].as_str()));
         // Left from the sample back to its parent folder...
         out_sel(&mut app.state);
-        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[4].as_str()));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[3].as_str()));
         // ...and Left on the opened folder closes it.
         out_sel(&mut app.state);
-        assert!(!app.state.browser_open.contains(&keys[4]));
+        assert!(!app.state.browser_open.contains(&keys[3]));
         // Right on the closed folder opens it where the selection stands, nothing heard yet.
         assert_eq!(into_sel(&mut app.state), None);
-        assert!(app.state.browser_open.contains(&keys[4]));
-        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[4].as_str()));
+        assert!(app.state.browser_open.contains(&keys[3]));
+        assert_eq!(app.state.browser_sel.as_deref(), Some(keys[3].as_str()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
