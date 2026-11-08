@@ -403,19 +403,19 @@ fn check(ui: &mut Ui, x: f32, cy: f32, label: &str, on: bool, t: Target) {
     ui.hit(hr, t);
 }
 
-/// A small bar knob with its tiny caption under it, as the envelope bar has them.
+/// A small knob with its tiny caption under it, as the envelope bar has them.
 #[allow(clippy::too_many_arguments)]
 fn knob_small(ui: &mut Ui, t: Target, cx: f32, cy: f32, r: f32, norm: f32, cap: &str, cap_y: f32) {
     let hr = Rect::new(cx - r - 3.0, cy - r - 3.0, 2.0 * r + 6.0, 2.0 * r + 6.0);
     let st = Kst { hover: ui.hover(hr, &t), pressed: ui.st.pressed.as_ref() == Some(&t), ..Kst::NORMAL };
-    lemon::bar_knob(ui.c, cx, cy, r, norm, bipolar_target(&t), brand::MAIN, st);
+    lemon::dial(ui.c, cx, cy, r, 2.6, norm, bipolar_target(&t), brand::MAIN, st);
     let f = Font::new(7);
     let w = ui.c.text_width(f, cap);
     ui.c.text(f, (cx - w / 2.0).round(), cap_y, SOFT, cap);
     ui.hit(hr, t);
 }
 
-/// Whether a control's value runs both ways from its middle (its bar fills from the middle).
+/// Whether a control's value runs both ways from its middle (its arc grows from the top).
 fn bipolar_target(t: &Target) -> bool {
     match t {
         Target::Ext(Ctl::CutEnv | Ctl::Amt | Ctl::PadX | Ctl::PadY) => true,
@@ -424,12 +424,12 @@ fn bipolar_target(t: &Target) -> bool {
     }
 }
 
-/// A knob as a bar, with its caption under it.
+/// A round knob with its caption under it.
 #[allow(clippy::too_many_arguments)]
 fn knob(ui: &mut Ui, t: Target, cx: f32, cy: f32, r: f32, norm: f32, cap: &str, cap_y: f32, ink: Color) {
     let hr = Rect::new(cx - r - 3.0, cy - r - 3.0, 2.0 * r + 6.0, 2.0 * r + 6.0);
     let st = Kst { hover: ui.hover(hr, &t), pressed: ui.st.pressed.as_ref() == Some(&t), ..Kst::NORMAL };
-    lemon::bar_knob(ui.c, cx, cy, r, norm, bipolar_target(&t), brand::MAIN, st);
+    lemon::dial(ui.c, cx, cy, r, 2.8, norm, bipolar_target(&t), brand::MAIN, st);
     if !cap.is_empty() {
         let w = ui.c.text_width(SMALL.bold(), cap);
         ui.c.text(SMALL.bold(), (cx - w / 2.0).round(), cap_y, ink, cap);
