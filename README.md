@@ -429,6 +429,20 @@ ordinary suite because it requires a display; it does not certify every third-pa
 The watermark test (`cargo test -p watermark`) checks that every source file opens with its header: a copyright line
 for each of its copyright holders, its SPDX licence identifier and the project's name.
 
+### Benchmarks
+
+```bash
+cargo run -p os-bench --release
+```
+
+`crates/os-bench` measures the engine (opening and rendering synthetic songs: empty,
+tone channels, a chain of effect slots, automation, decoded samplers), every built-in
+mixer effect on its own, project save/load and note editing, and the WAV writer. Runs
+print a terminal table; `--json` and `--markdown` write machine- and paste-ready
+reports, and `--filter`, `--quick`, `--seconds` and `--rate` scope a run. Workloads are
+built in code from a fixed seed, so runs on one machine compare honestly. Methodology,
+how to read the numbers and current findings live in `docs/benchmarks.md`.
+
 ### Command-line tools
 
 | Tool | Purpose |
@@ -787,6 +801,11 @@ Mango Studio is developed independently. File-format and behaviour details neede
 interoperability are first written down as specifications, and the product code is implemented
 from those specifications and public documentation. All artwork, icons and interface graphics
 in this repository are original or come from the openly licensed projects listed below.
+
+`SKILL.md` at the repository root is a condensed instruction manual for coding agents
+(and new contributors): the workspace map, architecture, conventions, recipes for
+common changes, and the traps that break builds. Point any AI assistant at it before
+it touches the code.
 ## Contributing
 
 Pull requests are welcome from developers who are comfortable with Rust and the pull-request workflow. These rules
