@@ -1,0 +1,15 @@
+[package]
+name = "os-bench"
+description = "Benchmarks: engine render, mixer effects, project model and WAV export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "os-bench"
+path = "src/main.rs"
+
+[dependencies]
+os-model.workspace = true
+os-flp.workspace = true
+os-engine.workspace = true
