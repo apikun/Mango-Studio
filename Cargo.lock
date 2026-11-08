@@ -3391,6 +3391,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "os-bench"
+version = "0.6.1"
+dependencies = [
+ "os-engine",
+ "os-flp",
+ "os-model",
+]
+
+[[package]]
 name = "os-clap"
 version = "0.6.1"
 dependencies = [
