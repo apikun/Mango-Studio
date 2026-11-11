@@ -54,7 +54,7 @@ jobs:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           name: Mango Studio ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           body: |
-            Mango Studio for Windows (x64), Linux (x64) and Android (arm64): the portable builds run on Windows 10 and
+            Mango Studio for Windows (x64), Linux (x64) and Android (arm64 + armv7): the portable builds run on Windows 10 and
             11, Linux on X11 or Wayland, and — new in v0.4 — natively on Android, no Wine needed.
 
             Mango Studio is based on Lemon Studio by ItsAlphaNeon (https://github.com/ItsAlphaNeon/Lemon-Studio), free software
@@ -106,7 +106,7 @@ jobs:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           name: Mango Studio ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           body: |
-            Mango Studio for Windows (x64), Linux (x64) and Android (arm64): the portable builds run on Windows 10 and
+            Mango Studio for Windows (x64), Linux (x64) and Android (arm64 + armv7): the portable builds run on Windows 10 and
             11, Linux on X11 or Wayland, and — new in v0.4 — natively on Android, no Wine needed.
 
             Mango Studio is based on Lemon Studio by ItsAlphaNeon (https://github.com/ItsAlphaNeon/Lemon-Studio), free software
@@ -126,7 +126,7 @@ jobs:
           fail_on_unmatched_files: true
 
   android:
-    name: Android arm64
+    name: Android (arm64 + armv7)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -146,10 +146,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android, armv7-linux-androideabi
 
       - uses: Swatinem/rust-cache@v2
 
+      # One universal APK carrying both ARM ABIs (arm64-v8a + armeabi-v7a); the script builds the
+      # native library for each target in turn and packs them side by side.
       - name: Build and package
         run: tools/android-dist.sh
 
@@ -159,7 +161,7 @@ jobs:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           name: Mango Studio ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           body: |
-            Mango Studio for Windows (x64), Linux (x64) and Android (arm64): the portable builds run on Windows 10 and
+            Mango Studio for Windows (x64), Linux (x64) and Android (arm64 + armv7): the portable builds run on Windows 10 and
             11, Linux on X11 or Wayland, and — new in v0.4 — natively on Android, no Wine needed.
 
             Mango Studio is based on Lemon Studio by ItsAlphaNeon (https://github.com/ItsAlphaNeon/Lemon-Studio), free software
@@ -175,5 +177,5 @@ jobs:
             - Desktop audio is unchanged; on Android the device plays through AAudio at the device's own settings.
             - If it will not start, `%APPDATA%\Mango Studio\panic-log.txt` (Windows), `~/.config/Mango Studio/panic-log.txt`
               (Linux) or the app folder's panic-log.txt (Android) says why.
-          files: Mango-Studio-android-arm64.apk
+          files: Mango-Studio-android.apk
           fail_on_unmatched_files: true

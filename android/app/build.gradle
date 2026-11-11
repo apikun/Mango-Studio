@@ -21,7 +21,10 @@ android {
         versionCode = major * 1000000 + minor * 1000 + patch
         versionName = "${major}.${minor}.${patch}"
         resValue 'string', 'app_name', 'Mango Studio'
-        ndk { abiFilters 'arm64-v8a' }
+        // The native library .so files are produced per ABI by tools/android-dist.sh, which passes
+        // the ABI list in MANGO_ANDROID_ABIS. Default to the universal pair (64- and 32-bit ARM).
+        def abiList = (System.getenv('MANGO_ANDROID_ABIS') ?: 'arm64-v8a armeabi-v7a').trim().split(/\s+/)
+        ndk { abiFilters.addAll(abiList) }
     }
 
     // The committed keystore signs both builds, so an update installs over the last one. It is a public
@@ -56,7 +59,9 @@ android {
 
 tasks.register('verifyNativeInputs') {
     doLast {
-        for (path in ['jniLibs/arm64-v8a/libos_android.so']) {
+        def abiList = (System.getenv('MANGO_ANDROID_ABIS') ?: 'arm64-v8a armeabi-v7a').trim().split(/\s+/)
+        for (abi in abiList) {
+            def path = "jniLibs/${abi}/libos_android.so"
             if (!layout.buildDirectory.file(path).get().asFile.isFile()) {
                 throw new GradleException("Missing ${path}; build with tools/android-dist.sh")
             }
