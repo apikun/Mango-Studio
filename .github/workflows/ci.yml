@@ -64,7 +64,7 @@ jobs:
   # The Android port (crates/os-android + os-app's lib): a check, so the mobile build cannot rot while
   # desktop work lands. The APK itself is built by release.yml (and tools/android-dist.sh locally).
   android:
-    name: Android arm64 (check)
+    name: Android arm64 + armv7 (check)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -75,16 +75,26 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android, armv7-linux-androideabi
 
       - uses: Swatinem/rust-cache@v2
 
+      # Both ABIs the universal APK ships (release.yml / tools/android-dist.sh): 64-bit arm64-v8a
+      # and 32-bit armeabi-v7a. armv7's NDK clang driver is "armv7a-...-androideabi" and its cargo
+      # linker/CC variable is CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_* / CC_armv7_linux_androideabi.
       - name: Check
         run: |
           export TC=$ANDROID_HOME/ndk/28.1.13356709/toolchains/llvm/prebuilt/linux-x86_64
+          unset CPATH BINDGEN_EXTRA_CLANG_ARGS C_INCLUDE_PATH CPLUS_INCLUDE_PATH
+
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$TC/bin/aarch64-linux-android26-clang
           export CC_aarch64_linux_android=$TC/bin/aarch64-linux-android26-clang
           export CXX_aarch64_linux_android=$TC/bin/aarch64-linux-android26-clang++
           export AR_aarch64_linux_android=$TC/bin/llvm-ar
-          unset CPATH BINDGEN_EXTRA_CLANG_ARGS C_INCLUDE_PATH CPLUS_INCLUDE_PATH
           cargo check --workspace --target aarch64-linux-android --locked
+
+          export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER=$TC/bin/armv7a-linux-androideabi26-clang
+          export CC_armv7_linux_androideabi=$TC/bin/armv7a-linux-androideabi26-clang
+          export CXX_armv7_linux_androideabi=$TC/bin/armv7a-linux-androideabi26-clang++
+          export AR_armv7_linux_androideabi=$TC/bin/llvm-ar
+          cargo check --workspace --target armv7-linux-androideabi --locked
