@@ -6631,7 +6631,7 @@ impl App {
         if let crate::knobs::KnobId::Param(key, index) = id {
             let steps = self.state.params.lists.get(&key).and_then(|l| l.params.get(index)).map_or(0, |e| e.steps);
             if steps > 0 {
-                v = (v * f32::from(steps)).round() / f32::from(steps);
+                v = (v * steps as f32).round() / steps as f32;
             }
         }
         self.state.set_knob(id, v);
@@ -6650,7 +6650,7 @@ impl App {
         if let crate::knobs::KnobId::Param(key, index) = id {
             let steps = self.state.params.lists.get(&key).and_then(|l| l.params.get(index)).map_or(0, |e| e.steps);
             if steps > 0 {
-                return (v.clamp(0.0, 1.0) * f32::from(steps)).round() / f32::from(steps);
+                return (v.clamp(0.0, 1.0) * steps as f32).round() / steps as f32;
             }
         }
         v
@@ -12997,7 +12997,7 @@ mod tests {
         app.mouse_up();
         let v = app.state.knob(id);
         let steps = app.state.params.lists.get(&key).and_then(|l| l.params.get(0)).map_or(0, |e| e.steps);
-        let want = if steps > 0 { (0.9 * f32::from(steps)).round() / f32::from(steps) } else { 0.9 };
+        let want = if steps > 0 { (0.9 * steps as f32).round() / steps as f32 } else { 0.9 };
         assert!((v - want).abs() < 1e-4, "the bar set the parameter from the x: {v}");
     }
 
