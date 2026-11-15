@@ -45,6 +45,9 @@ pub enum KnobId {
     /// A control of the LFO of the automation clip on channel row `.0` (model `Automation::lfo`; spec:
     /// audio/automation.md "The LFO"). Its switch and mode are two-position controls that a click flips.
     AutoLfo(usize, LfoKnob),
+    /// Parameter `.1` (its automation index) of hosted instance `.0`, as the docked effect window's parameter bars
+    /// turn it (Android, issue #117). Normalised 0..1 as the instance reports it (`crate::params`).
+    Param(usize, usize),
 }
 
 /// The controls of an automation clip's LFO, each over its stored range: switch (off, on), mode (multiply, add),
@@ -254,6 +257,8 @@ impl State {
             KnobId::Arp(k) => self.arp.set.get(k),
             KnobId::PianoDlg(k) => self.piano_dlg.get(k),
             KnobId::AutoLfo(row, k) => k.pos(self.clip_lfo(row).unwrap_or(&os_model::clip_lfo::ClipLfo::default())),
+            // The instance's own normalised value; where it is gone (unhosted), the middle.
+            KnobId::Param(key, i) => crate::params::param_value(self, key, i).map_or(0.5, |v| v as f32),
         }
     }
 
@@ -274,6 +279,8 @@ impl State {
         match id {
             KnobId::ChanVol(row) if self.is_clip_row(row) => 1.0,
             KnobId::ChanPan(row) if self.is_clip_row(row) => 0.0,
+            // A plugin parameter goes back to the plugin's own default (`params::Entry::default`).
+            KnobId::Param(key, i) => self.params.lists.get(&key).and_then(|l| l.params.get(i)).map_or(0.5, |e| e.default as f32),
             _ => id.default_value(),
         }
     }
@@ -371,6 +378,11 @@ impl State {
                     self.piano.dirty = true;
                 }
             }
+            // A plugin parameter: the hosted instance takes it at once. The undo step the gesture records carries the
+            // value back (`history::knob` restores through `set_knob_value`, which lands here too).
+            KnobId::Param(key, i) => {
+                crate::params::set_param_value(self, key, i, f64::from(v));
+            }
         }
     }
 
@@ -424,6 +436,15 @@ impl State {
             KnobId::Arp(k) => self.arp.set.text(k),
             KnobId::PianoDlg(k) => self.piano_dlg.text(k, u32::from(self.project.ppq.max(4))),
             KnobId::AutoLfo(row, k) => k.text(self.clip_lfo(row).unwrap_or(&os_model::clip_lfo::ClipLfo::default())),
+            // "<parameter>: <the plugin's own text>" ("Amount: 64%"); a plain percent where the instance is gone.
+            KnobId::Param(key, i) => {
+                let name = self.params.lists.get(&key).and_then(|l| l.params.get(i)).map_or_else(|| "Parameter".into(), |e| e.name.clone());
+                let text = crate::params::target_of(self, key, i).and_then(|t| crate::params::value_text(self, os_model::target::decode(t), f64::from(n)));
+                match text {
+                    Some(x) => format!("{name}: {x}"),
+                    None => format!("{name}: {:.0}%", n * 100.0),
+                }
+            }
         }
     }
 }

@@ -1877,8 +1877,12 @@ impl App {
         if self.state.plugin_fx == Some((track, slot)) && self.state.shown(crate::app::Win::Plugin) {
             self.state.hide(crate::app::Win::Plugin);
         } else {
+            // The parameter list reads the instance's parameters (`views::channel_win::paint_fx`), so its rows are
+            // known before the window paints; the list starts at its top.
+            self.params_tick();
             select(&mut self.state, track, false);
             self.state.plugin_fx = Some((track, slot));
+            self.state.fx_param_scroll = 0.0;
             self.state.raise(crate::app::Win::Plugin);
         }
         self.invalidate();

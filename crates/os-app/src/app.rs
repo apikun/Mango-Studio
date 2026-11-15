@@ -243,6 +243,8 @@ pub enum Action {
     Fader(u16),
     /// A mixer control (spec: ui/mixer.md).
     Mix(crate::mixer::MHit),
+    /// The docked effect window's parameter list background (Android, issue #117): a drag or the wheel scrolls it.
+    FxParamList,
     ChannelSelect(usize),
     ChannelEnable(usize),
     Step(usize, u32),
@@ -641,6 +643,7 @@ fn hover_is_visible(a: &Action) -> bool {
             | Action::Scrollbar(_)
             | Action::RackResize(_)
             | Action::RackGraphArea
+            | Action::FxParamList
             | Action::WinDrag(_)
             | Action::WinResize(..)
             | Action::Tapper(crate::tapper::TapAct::Pad)
@@ -905,6 +908,8 @@ pub enum Drag {
     /// Change a channel's mixer track (spec: ui/channel-rack.md §5).
     RackMixer { ch: usize, y0: f32, v0: u16 },
     Fader { track: u16, y0: f32, v0: f64 },
+    /// The docked effect window's parameter list scroll (Android, issue #117): the list follows the cursor.
+    FxParams { y0: f32, scroll0: f32 },
     /// A press on a track's equaliser graph `g`: band `band` follows the cursor.
     EqGraph { track: u16, band: u8, g: Rect },
     /// The Limit dialog's keys held (either button): the key under the mouse becomes the green key; its name strip held:
@@ -1079,6 +1084,8 @@ pub struct State {
     /// The mixer slot the plugin window shows instead of a channel: where plugin editor windows do not open
     /// (Android, issue #117), the slot's docked window takes their place.
     pub plugin_fx: Option<(u16, u8)>,
+    /// The docked effect window's parameter list scroll, pixels (Android, issue #117). Runtime state; never saved.
+    pub fx_param_scroll: f32,
     /// The audio-to-MIDI conversion running (issue #64): the clip's sample is being analysed on its thread.
     pub pitch_job: Option<crate::pitch_job::Job>,
     /// The plugin window was moved by hand: it reopens there instead of next to the rack (spec: ui/channel-rack.md
@@ -1497,6 +1504,7 @@ impl App {
                 rack_roll_view: false,
                 plugin_channel: 0,
                 plugin_fx: None,
+                fx_param_scroll: 0.0,
                 pitch_job: None,
                 plugin_moved: false,
                 plugin_pos: (560.0, 260.0),
@@ -5665,6 +5673,8 @@ impl App {
                 let label = text.split_once(':').map_or(text.as_str(), |(a, _)| a);
                 (target::mixer(t, param), format!("{} - {label}", mix_name(t)), f64::from(s.knob(k)))
             }
+            // A plugin parameter of the docked effect window's bars (Android, issue #117).
+            Action::Knob(crate::knobs::KnobId::Param(key, index)) => crate::params::automation(s, key, index)?,
             _ => return None,
         })
     }
@@ -6003,6 +6013,11 @@ impl App {
                     self.damage_band(HINT_RECT);
                 }
                 Drag::KnobX { id, x0, w } => self.knob_x(id, x0, w, x),
+                Drag::FxParams { y0, scroll0 } => {
+                    let max = views::channel_win::param_scroll_max(&self.state);
+                    self.state.fx_param_scroll = (scroll0 - (y - y0)).clamp(0.0, max);
+                    self.damage_rect(views::channel_win::rect(&self.state));
+                }
                 Drag::LimitKeys => {
                     let k = views::piano_dlg::kb_key(&self.state, x, y, false);
                     crate::piano_dlg::set_green(&mut self.state, k);
@@ -6603,9 +6618,21 @@ impl App {
     /// A bar control set from the mouse's x across it (`Drag::KnobX`); near the middle it snaps to the centre.
     fn knob_x(&mut self, id: crate::knobs::KnobId, x0: f32, w: f32, x: f32) {
         let mut v = ((x - x0) / w).clamp(0.0, 1.0);
-        // Pan and separation snap to the centre; a level does not.
-        if !matches!(id, crate::knobs::KnobId::ChanVol(_) | crate::knobs::KnobId::SlotMix(..) | crate::knobs::KnobId::MasterVol) && (v - 0.5).abs() * w < 2.0 {
+        // Pan and separation snap to the centre; a level does not. A parameter bar spans the parameter's whole
+        // range: no centre there either (its steps snap below).
+        if !matches!(
+            id,
+            crate::knobs::KnobId::ChanVol(_) | crate::knobs::KnobId::SlotMix(..) | crate::knobs::KnobId::MasterVol | crate::knobs::KnobId::Param(..)
+        ) && (v - 0.5).abs() * w < 2.0
+        {
             v = 0.5;
+        }
+        // A stepped plugin parameter (a switch, a 4-way list) lands on its steps.
+        if let crate::knobs::KnobId::Param(key, index) = id {
+            let steps = self.state.params.lists.get(&key).and_then(|l| l.params.get(index)).map_or(0, |e| e.steps);
+            if steps > 0 {
+                v = (v * f32::from(steps)).round() / f32::from(steps);
+            }
         }
         self.state.set_knob(id, v);
         self.record_knob(id);
@@ -6616,6 +6643,17 @@ impl App {
             None => self.invalidate(),
         }
         self.damage_band(HINT_RECT);
+    }
+
+    /// A stepped plugin parameter's value pulled onto its steps (a switch has 1, a 4-way list 3); others keep `v`.
+    fn snap_param_steps(&self, id: crate::knobs::KnobId, v: f32) -> f32 {
+        if let crate::knobs::KnobId::Param(key, index) = id {
+            let steps = self.state.params.lists.get(&key).and_then(|l| l.params.get(index)).map_or(0, |e| e.steps);
+            if steps > 0 {
+                return (v.clamp(0.0, 1.0) * f32::from(steps)).round() / f32::from(steps);
+            }
+        }
+        v
     }
 
     /// True while a drag moves a value rather than the cursor (knobs, the tempo, scroll-bar right-drags): the shell
@@ -7760,6 +7798,15 @@ impl App {
             piano::clamp_scroll(&mut self.state, g.grid.h);
             return Some(Win::PianoRoll);
         }
+        // The docked effect window's parameter list scrolls (Android, issue #117); a wheel notch is a row.
+        if let Some(Action::FxParamList) = area {
+            let max = views::channel_win::param_scroll_max(&self.state);
+            if max > 0.0 {
+                self.state.fx_param_scroll = (self.state.fx_param_scroll + dy * views::channel_win::PARAM_ROW).clamp(0.0, max);
+                self.damage_rect(views::channel_win::rect(&self.state));
+            }
+            return None;
+        }
         if let Some(Action::Knob(id)) = area {
             let mut v = self.state.knob(id);
             if id == crate::knobs::KnobId::MasterPitch {
@@ -7768,6 +7815,8 @@ impl App {
             // Ctrl turns the notch into a tenth of one, the fine adjustment (issue #152).
             let fine = if ctrl { 0.1 } else { 1.0 };
             let v = v + dy.signum() * id.notch() * fine * if dy == 0.0 { 0.0 } else { 1.0 };
+            // A stepped plugin parameter (a switch, a 4-way list) lands on its steps.
+            let v = self.snap_param_steps(id, v);
             if v.clamp(0.0, 1.0) != self.state.knob(id) {
                 crate::history::knob(&mut self.state, id, true);
             }
@@ -9098,7 +9147,7 @@ impl App {
                 s.set_knob(id, if s.knob(id) >= 0.5 { 0.0 } else { 1.0 });
                 self.hint = Cow::Owned(s.knob_text(id));
             }
-            Action::Knob(id @ (crate::knobs::KnobId::MixPan(_) | crate::knobs::KnobId::MixSep(_) | crate::knobs::KnobId::ChanPan(_) | crate::knobs::KnobId::ChanVol(_) | crate::knobs::KnobId::SlotMix(..) | crate::knobs::KnobId::MasterVol | crate::knobs::KnobId::MasterPitch)) if os_ui::kit::lemon::on(&self.theme.colors) => {
+            Action::Knob(id @ (crate::knobs::KnobId::MixPan(_) | crate::knobs::KnobId::MixSep(_) | crate::knobs::KnobId::ChanPan(_) | crate::knobs::KnobId::ChanVol(_) | crate::knobs::KnobId::SlotMix(..) | crate::knobs::KnobId::MasterVol | crate::knobs::KnobId::MasterPitch | crate::knobs::KnobId::Param(..))) if os_ui::kit::lemon::on(&self.theme.colors) => {
                 let bar = self.hits.iter().rev().find(|h| h.action == Action::Knob(id)).map(|h| h.rect);
                 if let Some(r) = bar {
                     crate::history::knob(&mut self.state, id, false);
@@ -9110,6 +9159,10 @@ impl App {
                 crate::history::knob(s, id, false);
                 self.drag = Some(Drag::Knob { id, y0: self.mouse.1, v0: s.knob(id) });
                 self.hint = Cow::Owned(s.knob_text(id));
+            }
+            // The docked effect window's parameter list: a drag scrolls it (Android, issue #117).
+            Action::FxParamList => {
+                self.drag = Some(Drag::FxParams { y0: self.mouse.1, scroll0: s.fx_param_scroll });
             }
             Action::PianoLaneMenu => s.lane_menu = true,
             Action::PianoToolsMenu => {
@@ -12898,6 +12951,54 @@ mod tests {
         app.open_channel_window(2);
         assert_eq!(app.state.plugin_fx, None, "the channel window cleared the slot");
         assert!(app.state.shown(Win::Plugin));
+    }
+
+    /// The docked effect window's parameter bars (issue #117): a hosted slot's plugin lists its parameters, the
+    /// window sizes itself for them, the wheel turns a parameter by a notch, and a drag across a bar sets the
+    /// parameter from the x.
+    #[test]
+    fn docked_fx_window_shows_the_plugins_parameters() {
+        let Ok(mut c) = Canvas::new(1920, 1080, 1.0) else { return };
+        let mut app = App::new(None);
+        app.plugins.effects = crate::plugins::builtin_effects();
+        app.master_into_default_start();
+        app.mixer_tick();
+        let key = crate::plugins::fx_key(0, 0);
+        assert!(app.plugins.hosted.contains_key(&key), "Mango Master hosted");
+        app.toggle_fx_window(0, 0);
+        assert!(app.state.shown(Win::Plugin));
+        app.params_tick();
+        frame(&mut app, &mut c, None);
+        let rows = app.state.params.visible(key).count() as f32;
+        assert!(rows > 0.0, "the hosted plugin has parameters");
+        // The window sizes itself: the fixed rows plus one row a parameter, at least its old size.
+        let win = views::channel_win::rect(&app.state);
+        assert_eq!(
+            win.h,
+            (30.0 + 104.0 + rows * views::channel_win::PARAM_ROW + 8.0).max(views::channel_win::SIZE.1),
+            "sized for the parameters"
+        );
+        // The first parameter's bar painted; its text names the parameter.
+        let id = crate::knobs::KnobId::Param(key, 0);
+        let bar = hit_rect(&app, &Action::Knob(id));
+        assert!(bar.w > 30.0, "the parameter bar painted");
+        assert!(app.state.knob_text(id).contains(':'), "{}", app.state.knob_text(id));
+        // The wheel over the bar turns it a notch, as one undo step ("Plugin parameter").
+        app.mouse_move(bar.cx(), bar.cy());
+        let v0 = app.state.knob(id);
+        let (dir, want) = if v0 > id.notch() { (-1.0, v0 - id.notch()) } else { (1.0, v0 + id.notch()) };
+        app.wheel(0.0, dir, false, false);
+        assert!((app.state.knob(id) - want).abs() < 1e-6, "a notch per wheel row: {} -> {}", v0, app.state.knob(id));
+        // A drag across the bar sets it from the x (the press itself already does); a stepped parameter lands on
+        // its steps.
+        app.mouse_move(bar.x + bar.w / 2.0, bar.cy());
+        app.mouse_down();
+        app.mouse_move(bar.x + bar.w * 0.9, bar.cy());
+        app.mouse_up();
+        let v = app.state.knob(id);
+        let steps = app.state.params.lists.get(&key).and_then(|l| l.params.get(0)).map_or(0, |e| e.steps);
+        let want = if steps > 0 { (0.9 * f32::from(steps)).round() / f32::from(steps) } else { 0.9 };
+        assert!((v - want).abs() < 1e-4, "the bar set the parameter from the x: {v}");
     }
 
     /// The pattern clips' pitch cache (issue #137): a pattern's sorted distinct keys come back shared while its

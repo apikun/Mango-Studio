@@ -19,14 +19,38 @@ use crate::icons::{self, Icon};
 pub const SIZE: (f32, f32) = (430.0, 200.0);
 /// An automation clip's window: room for the LFO's row.
 pub const CLIP_SIZE: (f32, f32) = (430.0, 236.0);
+/// The docked effect window's parameter rows start this far into its body (issue #117): below the Target and State
+/// lines, the enable switch and the menu, and the "Parameters" caption.
+const FX_LIST_Y: f32 = 104.0;
+/// Height of one parameter row of the docked effect window (its name, its bar, its value).
+pub const PARAM_ROW: f32 = 30.0;
 
 pub fn rect(s: &State) -> Rect {
-    let (w, h) = if s.is_clip_row(s.plugin_channel) { CLIP_SIZE } else { SIZE };
-    Rect::new(s.plugin_pos.0, s.plugin_pos.1, w, h)
+    let h = match s.plugin_fx {
+        // The docked effect window grows for its parameter list (issue #117).
+        Some(_) => fx_win_h(s),
+        _ if s.is_clip_row(s.plugin_channel) => CLIP_SIZE.1,
+        _ => SIZE.1,
+    };
+    Rect::new(s.plugin_pos.0, s.plugin_pos.1, SIZE.0, h)
 }
 
 pub fn bounds(s: &State) -> Rect {
     rect(s).outset(1.0)
+}
+
+/// The docked effect window's height: its fixed rows and the parameter list, at most the workspace's (issue #117).
+fn fx_win_h(s: &State) -> f32 {
+    let rows = s.plugin_fx.map_or(0, |(t, k)| s.params.visible(crate::plugins::fx_key(t, k)).count());
+    let want = 30.0 + FX_LIST_Y + rows as f32 * PARAM_ROW + 8.0;
+    want.max(SIZE.1).min(s.work_rect().h.max(SIZE.1))
+}
+
+/// How far the docked effect window's parameter list can scroll (issue #117).
+pub fn param_scroll_max(s: &State) -> f32 {
+    let rows = s.plugin_fx.map_or(0, |(t, k)| s.params.visible(crate::plugins::fx_key(t, k)).count());
+    let view = rect(s).h - 30.0 - FX_LIST_Y - 8.0;
+    (rows as f32 * PARAM_ROW - view).max(0.0)
 }
 
 pub fn paint(ui: &mut Ui, s: &State, _f: &FrameInfo) {
@@ -164,7 +188,9 @@ fn fx_name(s: &State, track: u16, slot: u8) -> String {
 }
 
 /// The docked effect window's body (Android, issue #117): the effect's target, its enable switch and its menu
-/// (presets, replace, remove). The controls are the mixer slot's own actions, so they work wherever the mixer's do.
+/// (presets, replace, remove), then the hosted plugin's parameters, one bar a row — the editor surface where plugin
+/// editor windows do not open. The controls are the mixer slot's own actions and the parameter bars are knobs
+/// (`KnobId::Param`), so they work wherever the mixer's and the knobs' do.
 fn paint_fx(ui: &mut Ui, s: &State, body: Rect, track: u16, slot: u8) {
     let t = ui.t;
     let on = s.project.mixer.iter().find(|m| m.index == track).is_some_and(|m| m.slot_on[usize::from(slot)]);
@@ -176,13 +202,58 @@ fn paint_fx(ui: &mut Ui, s: &State, body: Rect, track: u16, slot: u8) {
         ui.c.text_clip(f, body.x + 100.0, ly, body.w - 120.0, t.text, v);
     }
     // The enable switch: the slot's LED and the mixer's own action.
-    let sw = Rect::new(body.x + 12.0, body.y + 74.0, 110.0, 20.0);
+    let sw = Rect::new(body.x + 12.0, body.y + 58.0, 110.0, 20.0);
     ui.hit(sw, crate::app::Action::Mix(crate::mixer::MHit::SlotLed(slot)), "Enable or bypass the effect");
     led(ui, sw.x + 6.0, sw.cy(), on);
     ui.c.text(Font::new(13), sw.x + 18.0, sw.y + 3.0, t.text, if on { "On" } else { "Bypassed" });
     // The slot's menu (presets, replace, remove): the mixer slot's arrow action.
-    let menu = Rect::new(body.x + 12.0, body.y + 110.0, 110.0, 24.0);
+    let menu = Rect::new(body.x + 134.0, body.y + 56.0, 110.0, 24.0);
     let hov = ui.hit(menu, crate::app::Action::Mix(crate::mixer::MHit::SlotArrow(slot)), "The effect's menu");
     ui.c.fill_rrect(menu, 4.0, if hov { t.button_hi } else { t.button });
     ui.c.text_center(Font::new(13), menu, if hov { t.tx(0xffffff) } else { t.text }, "Menu");
+
+    // The parameters: name, bar, value. The gaps between the bars are the list's scroll (a drag or the wheel); a bar
+    // turns its parameter where the knobs' drags do (Action::Knob), and its right-click opens the knob menu
+    // (automation, type in value). Without a hosted instance (or without visible parameters) nothing follows.
+    let key = crate::plugins::fx_key(track, slot);
+    let params: Vec<(usize, String)> = s.params.visible(key).map(|(i, e)| (i, e.name.clone())).collect();
+    if params.is_empty() {
+        return;
+    }
+    ui.c.text(Font::new(13), body.x + 12.0, body.y + 84.0, t.text_dim, "Parameters");
+    let list = Rect::span(body.x, body.right(), body.y + FX_LIST_Y, body.bottom());
+    ui.hit(list, Action::FxParamList, "The effect's parameters: drag or the wheel scrolls them");
+    let scroll = s.fx_param_scroll.min(param_scroll_max(s));
+    for (i, (index, name)) in params.iter().enumerate() {
+        let ry = list.y + PARAM_ROW * i as f32 - scroll;
+        if ry + PARAM_ROW < list.y || ry > list.bottom() {
+            continue;
+        }
+        let cy = ry + PARAM_ROW / 2.0;
+        ui.c.text_clip(Font::new(14), body.x + 12.0, ry + 7.0, 148.0, t.text, name);
+        let bar = Rect::span(body.x + 166.0, body.right() - 74.0, cy - 2.5, cy + 2.5);
+        let id = KnobId::Param(key, *index);
+        ui.hit(Rect::span(bar.x - 4.0, bar.right() + 4.0, ry + 2.0, ry + PARAM_ROW - 2.0), Action::Knob(id), s.knob_text(id));
+        param_bar(ui, bar, s.knob(id));
+        let v = s.knob(id);
+        let text = crate::params::target_of(s, key, *index).and_then(|t| crate::params::value_text(s, os_model::target::decode(t), f64::from(v)));
+        ui.c.text_clip(Font::new(12), body.right() - 68.0, ry + 8.0, 62.0, t.text_dim, &text.unwrap_or_else(|| format!("{:.0}%", v * 100.0)));
+    }
+}
+
+/// A parameter bar of the docked effect window: the track, the fill up to the value, the handle at it (the settings
+/// sliders' looks, `views::settings::slider_track`).
+fn param_bar(ui: &mut Ui, bar: Rect, v: f32) {
+    let t = ui.t;
+    if super::lemon(ui) {
+        ui.c.fill_rrect(bar, 2.0, t.s(0x161819));
+        ui.c.fill_rrect(Rect::new(bar.x, bar.y, bar.w * v.clamp(0.0, 1.0), bar.h), 2.0, t.accent);
+    } else {
+        ui.c.fill_rect(bar, t.s(0x161819));
+        ui.c.fill_rect(Rect::new(bar.x, bar.y, bar.w * v.clamp(0.0, 1.0), bar.h), t.h(0xc8312e));
+    }
+    let hx = bar.x + bar.w * v.clamp(0.0, 1.0);
+    ui.c.fill_circle(hx, bar.cy(), 8.0, t.s(0x111213));
+    ui.c.fill_circle(hx, bar.cy(), 7.0, t.s(0x4a4d50));
+    ui.c.fill_rect(Rect::new(hx - 0.5, bar.cy() - 6.0, 1.0, 5.0), t.s(0x1a1b1c));
 }
