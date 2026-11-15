@@ -88,9 +88,10 @@ pack_needed() { # <abi> <rust triple (the sysroot's lib dir name)>
 build_abi arm64-v8a aarch64-linux-android
 build_abi armeabi-v7a armv7-linux-androideabi
 # Both ABIs are in place before gradle runs: its splits (see android/app/build.gradle) pack one
-# APK per ABI from its jniLibs dir alone, and verifyNativeInputs requires both.
+# APK per ABI from its jniLibs dir alone, and verifyNativeInputs requires both. The sysroot's
+# lib dir names differ from the rust triples for 32-bit arm (arm-linux-androideabi, no `v7`).
 pack_needed arm64-v8a aarch64-linux-android
-pack_needed armeabi-v7a armv7-linux-androideabi
+pack_needed armeabi-v7a arm-linux-androideabi
 
 android/gradlew -p android --no-daemon "$task"
 
