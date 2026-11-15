@@ -159,6 +159,11 @@ pub const BACKUP_LOCATION: Combo = Combo {
 /// Studio's is 1 to 999. Spec: ui/settings-choices.md "Backup files".
 pub const BACKUP_MAXIMUM: Number = Number { key: "backup_maximum", label: "Maximum", min: 1, max: 999, default: 100 };
 
+/// File ▸ Browser: the browser's footer shows the strip with the logo and the app's name; off, the file list reaches
+/// down to the footer (`views::browser::footer_h`). Mango Studio's own setting: FL's browser has no logo strip (issue
+/// #160).
+pub const BROWSER_LOGO: Check = Check { key: "show_logo_in_browser", label: "Show the logo in the browser", default: true };
+
 /// General ▸ Miscellaneous: unsolo puts back the mute states from before the first solo (channel rack, playlist,
 /// mixer); off, unsolo turns everything on. Spec: ui/settings-choices.md "Miscellaneous: what four checks do".
 pub const RESTORE_AFTER_SOLO: Check = Check { key: "restore_after_solo", label: "Restore previous state after solo", default: false };
@@ -564,6 +569,7 @@ pub fn rolling_secs() -> f32 {
 
 /// The declared checks.
 pub const CHECKS: &[&Check] = &[
+    &BROWSER_LOGO,
     &RESTORE_AFTER_SOLO,
     &SELECT_FIRST_CHANNEL,
     &AUTO_ZOOM_PIANO,

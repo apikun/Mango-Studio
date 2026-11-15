@@ -915,6 +915,7 @@ pub fn page(tab: usize, s: &State) -> Vec<Group> {
                 ]),
                 g("User data folder", vec![txt(user)]),
                 g(crate::factory_folder::GROUP, vec![FactoryFolder]),
+                g("Browser", vec![Check(crate::prefs::BROWSER_LOGO.label, true)]),
                 g("Browser extra search folders", vec![SearchFolders(crate::search_folders::shown_rows(s))]),
                 g("External tools", vec![
                     dim("External tools", List(vec![("File", 30.0), ("Name", 320.0)], vec![], 4)),
