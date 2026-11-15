@@ -9147,7 +9147,16 @@ impl App {
                 s.set_knob(id, if s.knob(id) >= 0.5 { 0.0 } else { 1.0 });
                 self.hint = Cow::Owned(s.knob_text(id));
             }
-            Action::Knob(id @ (crate::knobs::KnobId::MixPan(_) | crate::knobs::KnobId::MixSep(_) | crate::knobs::KnobId::ChanPan(_) | crate::knobs::KnobId::ChanVol(_) | crate::knobs::KnobId::SlotMix(..) | crate::knobs::KnobId::MasterVol | crate::knobs::KnobId::MasterPitch | crate::knobs::KnobId::Param(..))) if os_ui::kit::lemon::on(&self.theme.colors) => {
+            // The docked effect window's parameter bar sets from the x in both themes: the bar is the control.
+            Action::Knob(id @ crate::knobs::KnobId::Param(..)) => {
+                let bar = self.hits.iter().rev().find(|h| h.action == Action::Knob(id)).map(|h| h.rect);
+                if let Some(r) = bar {
+                    crate::history::knob(&mut self.state, id, false);
+                    self.drag = Some(Drag::KnobX { id, x0: r.x, w: r.w.max(1.0) });
+                    self.knob_x(id, r.x, r.w.max(1.0), self.mouse.0);
+                }
+            }
+            Action::Knob(id @ (crate::knobs::KnobId::MixPan(_) | crate::knobs::KnobId::MixSep(_) | crate::knobs::KnobId::ChanPan(_) | crate::knobs::KnobId::ChanVol(_) | crate::knobs::KnobId::SlotMix(..) | crate::knobs::KnobId::MasterVol | crate::knobs::KnobId::MasterPitch)) if os_ui::kit::lemon::on(&self.theme.colors) => {
                 let bar = self.hits.iter().rev().find(|h| h.action == Action::Knob(id)).map(|h| h.rect);
                 if let Some(r) = bar {
                     crate::history::knob(&mut self.state, id, false);
