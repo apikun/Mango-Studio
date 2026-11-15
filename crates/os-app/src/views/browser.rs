@@ -20,10 +20,16 @@ pub const ROW_H: f32 = 23.0;
 const INDENT: f32 = 13.0;
 /// Top of the list area.
 pub const LIST_Y: f32 = 142.0;
-/// Footer height below the list.
+/// Footer height below the list: the footer row plus the brand strip, which `prefs::BROWSER_LOGO` hides.
 pub const FOOTER_H: f32 = 28.0 + BRAND_H;
-/// The strip over the footer with the logo and "Mango Studio".
+/// The strip over the footer with the logo and "Mango Studio" (`prefs::BROWSER_LOGO`).
 pub const BRAND_H: f32 = 34.0;
+
+/// The browser's footer height now: with the strip (`prefs::BROWSER_LOGO` on), or without it, the list reaching down
+/// to the footer row.
+pub fn footer_h() -> f32 {
+    if crate::prefs::check(&crate::prefs::BROWSER_LOGO) { FOOTER_H } else { FOOTER_H - BRAND_H }
+}
 
 /// Category colour indices (`cat_color`); 255 = folder.
 const FOLDER: u8 = 255;
@@ -575,7 +581,7 @@ fn plugin_rows(s: &State, root: &str, cat: u8, out: &mut Vec<Row>) {
 
 /// Height of the list viewport for a browser of height `h` (from `WORK_Y`).
 pub fn list_h(s: &State) -> f32 {
-    (s.screen.1 - list_top(s) - FOOTER_H - info_h(&rows(s), s)).max(0.0)
+    (s.screen.1 - list_top(s) - footer_h() - info_h(&rows(s), s)).max(0.0)
 }
 
 /// The selected disk entry, shown in the info panel (spec §6).
@@ -758,20 +764,23 @@ pub fn paint(ui: &mut Ui, s: &State, r: Rect) {
         search_box(ui, s, Rect::new(13.0, LIST_Y + dy + 4.0, bw - 38.0, 20.0));
     }
     if s.browser_tab == PLUGIN_TAB {
-        super::plugin_panel::paint(ui, s, Rect::span(0.0, bw - 1.0, top - super::plugin_panel::CHIPS_H, r.bottom() - FOOTER_H));
+        super::plugin_panel::paint(ui, s, Rect::span(0.0, bw - 1.0, top - super::plugin_panel::CHIPS_H, r.bottom() - footer_h()));
     } else {
         paint_tree(ui, s, r, bw, top);
     }
     // Footer: the search field takes the width the splitter adds.
     let fy = r.bottom() - 27.0;
-    // Over it, in the window's bottom-left corner: the logo and the app's name.
-    let by = fy - BRAND_H;
-    ui.c.fill_rect(Rect::span(13.0, bw - 1.0, by, fy), t.browser_list);
-    let lr = 11.0;
-    icons::logo_colour(ui.c, 13.0 + lr, by + BRAND_H / 2.0, lr);
-    let f = os_ui::Font::new(16);
-    let ty = (by + (BRAND_H - ui.c.line_height(f)) / 2.0).round();
-    ui.c.text(f, 13.0 + 2.0 * lr + 8.0, ty, t.text, "Mango Studio");
+    // Over it, in the window's bottom-left corner: the logo and the app's name (`prefs::BROWSER_LOGO`; off, the list
+    // above reaches down to here).
+    if crate::prefs::check(&crate::prefs::BROWSER_LOGO) {
+        let by = fy - BRAND_H;
+        ui.c.fill_rect(Rect::span(13.0, bw - 1.0, by, fy), t.browser_list);
+        let lr = 11.0;
+        icons::logo_colour(ui.c, 13.0 + lr, by + BRAND_H / 2.0, lr);
+        let f = os_ui::Font::new(16);
+        let ty = (by + (BRAND_H - ui.c.line_height(f)) / 2.0).round();
+        ui.c.text(f, 13.0 + 2.0 * lr + 8.0, ty, t.text, "Mango Studio");
+    }
     ui.c.fill_rect(Rect::new(0.0, fy, bw, 27.0), t.browser_footer);
     // Tags: not available yet, greyed out.
     let tags = Rect::new(13.0, fy + 4.0, 41.0, 20.0);
@@ -801,7 +810,7 @@ fn paint_tree(ui: &mut Ui, s: &State, r: Rect, bw: f32, top: f32) {
     let rows = rows(s);
     let info = info_path(&rows, s);
     let ih = if info.is_some() { INFO_H } else { 0.0 };
-    let list = Rect::span(13.0, bw - 1.0, top, r.bottom() - FOOTER_H - ih);
+    let list = Rect::span(13.0, bw - 1.0, top, r.bottom() - footer_h() - ih);
     ui.c.fill_rect(Rect::new(0.0, top, 13.0, list.h), t.browser_tabs.shade(0.02));
     ui.c.fill_rect(list, t.browser_list);
     ui.hit(Rect::new(0.0, top, bw, list.h), Action::BrowserList, "");
@@ -971,5 +980,17 @@ mod tests {
         let at = |t: f32| marquee_offset(t, over);
         assert_eq!([at(0.5), at(2.0), at(3.5), at(5.0), at(6.0), at(8.0)], [0.0, 30.0, 60.0, 30.0, 0.0, 30.0]);
         assert_eq!(marquee_offset(3.0, 0.0), 0.0, "a label that fits stays");
+    }
+
+    /// The logo setting (`prefs::BROWSER_LOGO`, issue #160): the strip is in the footer by default; off, the list
+    /// reaches down to the footer row, BRAND_H taller.
+    #[test]
+    fn the_logo_setting_sets_the_footer_height() {
+        assert!(crate::prefs::check(&crate::prefs::BROWSER_LOGO), "the logo shows until it is turned off");
+        assert_eq!(footer_h(), FOOTER_H);
+        crate::prefs::set_check(&crate::prefs::BROWSER_LOGO, false);
+        assert_eq!(footer_h(), FOOTER_H - BRAND_H);
+        crate::prefs::set_check(&crate::prefs::BROWSER_LOGO, true);
+        assert_eq!(footer_h(), FOOTER_H);
     }
 }
