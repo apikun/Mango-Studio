@@ -140,6 +140,8 @@ fn target_text(t: Target) -> String {
             KnobId::ChanPan(r) => format!("chanpan:{r}"),
             KnobId::Swing => "swing".into(),
             KnobId::Eq(m, b, f) => format!("eq:{m}:{b}:{f}"),
+            // The docked effect window's parameter bars: the parameter's own encoding (read back as `Target::Param`).
+            KnobId::Param(key, i) => format!("param:{key}:{i}"),
             KnobId::Strum(_) | KnobId::Arp(_) | KnobId::PianoDlg(_) | KnobId::AutoLfo(..) => "none".into(),
         },
         Target::Fader(m) => format!("fader:{m}"),

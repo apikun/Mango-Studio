@@ -72,8 +72,8 @@ fn unit(t: Target) -> Unit {
         Target::Knob(KnobId::Send(..)) | Target::Fader(_) => Unit::Db(Law::Fader),
         Target::Knob(KnobId::Swing | KnobId::SlotMix(..)) => Unit::Percent,
         Target::Knob(KnobId::MasterPitch) => Unit::Hz,
-        // The equaliser's settings take the plain 0..1 position for now.
-        Target::Param(..) | Target::Knob(KnobId::Eq(..) | KnobId::Strum(_) | KnobId::Arp(_) | KnobId::PianoDlg(_) | KnobId::AutoLfo(..)) => Unit::Plain,
+        // The equaliser's settings and a plugin parameter take the plain 0..1 position for now.
+        Target::Param(..) | Target::Knob(KnobId::Eq(..) | KnobId::Strum(_) | KnobId::Arp(_) | KnobId::PianoDlg(_) | KnobId::AutoLfo(..) | KnobId::Param(..)) => Unit::Plain,
     }
 }
 
