@@ -1,6 +1,7 @@
 # Builds Mango Studio for Windows, Linux and Android and attaches the builds to a GitHub release: a `v*` tag pushed
 # to the repository (or a manual dispatch) becomes a release with `Mango-Studio-windows-x64.zip`,
-# `Mango-Studio-linux-x64.zip` and `Mango-Studio-android-arm64.apk`. The builds are the ones CI checks (see ci.yml): Windows 10+, x64 — the build Winlator
+# `Mango-Studio-linux-x64.zip`, `Mango-Studio-android-arm64.apk` and `Mango-Studio-android-arm32.apk`. The builds are
+# the ones CI checks (see ci.yml): Windows 10+, x64 — the build Winlator
 # (Wine on Android) runs, since nothing needs the GPU — and Linux on X11 or Wayland, x64.
 name: Release
 
@@ -54,8 +55,8 @@ jobs:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           name: Mango Studio ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           body: |
-            Mango Studio for Windows (x64), Linux (x64) and Android (arm64): the portable builds run on Windows 10 and
-            11, Linux on X11 or Wayland, and — new in v0.4 — natively on Android, no Wine needed.
+            Mango Studio for Windows (x64), Linux (x64) and Android (arm64, or 32-bit arm): the portable builds run on
+            Windows 10 and 11, Linux on X11 or Wayland, and — new in v0.4 — natively on Android, no Wine needed.
 
             Mango Studio is based on Lemon Studio by ItsAlphaNeon (https://github.com/ItsAlphaNeon/Lemon-Studio), free software
             under the GPL 3.0 or later. The Android port's scaffolding follows daijro's honeydew
@@ -68,6 +69,8 @@ jobs:
               manipulator) joins the effects, automation clips gained Ableton-style shapes and an LFO, and the piano
               roll draws slide and portamento notes (the Note properties menu).
             - Desktop audio is unchanged; on Android the device plays through AAudio at the device's own settings.
+            - 32-bit ARM Android phones (armeabi-v7a) are supported natively too: install `Mango-Studio-android-arm32.apk`
+              on a 32-bit device; arm64 devices install `Mango-Studio-android-arm64.apk` as before.
             - If it will not start, `%APPDATA%\Mango Studio\panic-log.txt` (Windows), `~/.config/Mango Studio/panic-log.txt`
               (Linux) or the app folder's panic-log.txt (Android) says why.
           files: Mango-Studio-windows-x64.zip
@@ -106,8 +109,8 @@ jobs:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           name: Mango Studio ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           body: |
-            Mango Studio for Windows (x64), Linux (x64) and Android (arm64): the portable builds run on Windows 10 and
-            11, Linux on X11 or Wayland, and — new in v0.4 — natively on Android, no Wine needed.
+            Mango Studio for Windows (x64), Linux (x64) and Android (arm64, or 32-bit arm): the portable builds run on
+            Windows 10 and 11, Linux on X11 or Wayland, and — new in v0.4 — natively on Android, no Wine needed.
 
             Mango Studio is based on Lemon Studio by ItsAlphaNeon (https://github.com/ItsAlphaNeon/Lemon-Studio), free software
             under the GPL 3.0 or later. The Android port's scaffolding follows daijro's honeydew
@@ -120,13 +123,15 @@ jobs:
               manipulator) joins the effects, automation clips gained Ableton-style shapes and an LFO, and the piano
               roll draws slide and portamento notes (the Note properties menu).
             - Desktop audio is unchanged; on Android the device plays through AAudio at the device's own settings.
+            - 32-bit ARM Android phones (armeabi-v7a) are supported natively too: install `Mango-Studio-android-arm32.apk`
+              on a 32-bit device; arm64 devices install `Mango-Studio-android-arm64.apk` as before.
             - If it will not start, `%APPDATA%\Mango Studio\panic-log.txt` (Windows), `~/.config/Mango Studio/panic-log.txt`
               (Linux) or the app folder's panic-log.txt (Android) says why.
           files: Mango-Studio-linux-x64.zip
           fail_on_unmatched_files: true
 
   android:
-    name: Android arm64
+    name: Android arm64 + arm32
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -146,7 +151,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android,armv7-linux-androideabi
 
       - uses: Swatinem/rust-cache@v2
 
@@ -159,8 +164,8 @@ jobs:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           name: Mango Studio ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           body: |
-            Mango Studio for Windows (x64), Linux (x64) and Android (arm64): the portable builds run on Windows 10 and
-            11, Linux on X11 or Wayland, and — new in v0.4 — natively on Android, no Wine needed.
+            Mango Studio for Windows (x64), Linux (x64) and Android (arm64, or 32-bit arm): the portable builds run on
+            Windows 10 and 11, Linux on X11 or Wayland, and — new in v0.4 — natively on Android, no Wine needed.
 
             Mango Studio is based on Lemon Studio by ItsAlphaNeon (https://github.com/ItsAlphaNeon/Lemon-Studio), free software
             under the GPL 3.0 or later. The Android port's scaffolding follows daijro's honeydew
@@ -173,7 +178,11 @@ jobs:
               manipulator) joins the effects, automation clips gained Ableton-style shapes and an LFO, and the piano
               roll draws slide and portamento notes (the Note properties menu).
             - Desktop audio is unchanged; on Android the device plays through AAudio at the device's own settings.
+            - 32-bit ARM Android phones (armeabi-v7a) are supported natively too: install `Mango-Studio-android-arm32.apk`
+              on a 32-bit device; arm64 devices install `Mango-Studio-android-arm64.apk` as before.
             - If it will not start, `%APPDATA%\Mango Studio\panic-log.txt` (Windows), `~/.config/Mango Studio/panic-log.txt`
               (Linux) or the app folder's panic-log.txt (Android) says why.
-          files: Mango-Studio-android-arm64.apk
+          files: |
+            Mango-Studio-android-arm64.apk
+            Mango-Studio-android-arm32.apk
           fail_on_unmatched_files: true
