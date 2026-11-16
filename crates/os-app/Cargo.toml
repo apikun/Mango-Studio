@@ -56,6 +56,7 @@ lemon-slicex = { path = "../../plugins/lemon-slicex", features = ["linked"] }
 lemon-drum-sampler = { path = "../../plugins/lemon-drum-sampler", features = ["linked"] }
 # The loop slicer (a recreation of FL's Fruity Slicer): a loop cut into slices, slice n plays on key C5 + n.
 lemon-slicer = { path = "../../plugins/lemon-slicer", features = ["linked"] }
+lemon-granulizer = { path = "../../plugins/lemon-granulizer", features = ["linked"] }
 # The retro sound effect generator (a port of sfxr), compiled in like the other small generators.
 mango-sfxr = { path = "../../plugins/mango-sfxr", features = ["linked"] }
 mango-master = { path = "../../plugins/mango-master", features = ["linked"] }
