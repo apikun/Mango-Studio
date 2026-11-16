@@ -2084,6 +2084,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "lemon-granulizer"
+version = "0.6.1"
+dependencies = [
+ "nih_plug",
+ "os-engine",
+ "os-hostlink",
+ "os-plugkit",
+ "os-theme",
+ "os-ui",
+ "rfd",
+ "serde",
+ "serde_json",
+ "tiny-skia",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "lemon-keys"
 version = "0.6.1"
 dependencies = [
@@ -3315,6 +3332,7 @@ dependencies = [
  "lemon-filter",
  "lemon-flanger",
  "lemon-formula-controller",
+ "lemon-granulizer",
  "lemon-keys",
  "lemon-kick",
  "lemon-limiter",

@@ -363,6 +363,7 @@ pub fn builtin() -> Vec<Available> {
     static DASHBOARD: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static DIRECTWAVE: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static DRUMSAMPLER: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
+    static GRANULIZER: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static SLICER: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static SFXR: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
     static SLICEX: OnceLock<Option<Arc<os_clap::Library>>> = OnceLock::new();
@@ -412,6 +413,8 @@ pub fn builtin() -> Vec<Available> {
     v.extend(linked(&DRUMSAMPLER, &lemon_drum_sampler::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Drum Sampler"));
     // The loop slicer (a recreation of FL's Fruity Slicer): a loop cut into slices, slice n plays on key C5 + n.
     v.extend(linked(&SLICER, &lemon_slicer::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Slicer"));
+    // The granular sample player (a recreation of FL's Granulizer): a held note walks the sample as a cloud of grains, the grain length, spacing, random start window, pan spread and hold shape it.
+    v.extend(linked(&GRANULIZER, &lemon_granulizer::LINKED_CLAP_ENTRY as *const _ as *const std::ffi::c_void, "Mango Granulizer"));
     v
 }
 
